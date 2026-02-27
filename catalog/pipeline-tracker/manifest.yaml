@@ -1,0 +1,16 @@
+name: pipeline-tracker
+version: 1.0.0
+description: Track sales pipeline
+category: sales-crm
+author: nyaya-official
+permissions:
+- notion.query
+- llm.query
+intent_filters:
+- actions:
+  - check
+  - track
+  targets:
+  - pipeline
+  - deals
+  priority: 10

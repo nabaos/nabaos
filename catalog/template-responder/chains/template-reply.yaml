@@ -1,0 +1,23 @@
+id: template-reply
+description: Match email to template and send reply
+steps:
+- id: read-email
+  ability: gmail.read
+  params:
+    message_id: '{{input.message_id}}'
+  on_failure: abort
+- id: match-template
+  ability: llm.query
+  params:
+    prompt: 'Match this email to the best response template and customize: {{read-email.output}}'
+  depends_on:
+  - read-email
+  on_failure: abort
+- id: send-reply
+  ability: gmail.send
+  params:
+    to: '{{read-email.output.from}}'
+    body: '{{match-template.output}}'
+  depends_on:
+  - match-template
+  on_failure: abort

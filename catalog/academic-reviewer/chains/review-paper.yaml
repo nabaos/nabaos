@@ -1,0 +1,15 @@
+id: review-paper
+description: Find and summarize academic papers
+steps:
+- id: search-papers
+  ability: search.web
+  params:
+    query: '{{input.topic}} site:arxiv.org OR site:scholar.google.com'
+  on_failure: abort
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Summarize the key findings, methodology, and implications of: {{search-papers.output}}'
+  depends_on:
+  - search-papers
+  on_failure: abort

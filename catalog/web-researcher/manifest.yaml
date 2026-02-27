@@ -1,0 +1,16 @@
+name: web-researcher
+version: 1.0.0
+description: Deep web research on a topic
+category: research-analysis
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - research
+  - investigate
+  targets:
+  - topic
+  - subject
+  priority: 10

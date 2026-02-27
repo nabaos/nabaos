@@ -1,0 +1,15 @@
+id: generate-infra
+description: Generate infrastructure configuration files
+steps:
+- id: analyze-requirements
+  ability: llm.query
+  params:
+    prompt: 'Analyze infrastructure requirements: {{input.requirements}}'
+  on_failure: abort
+- id: generate-config
+  ability: llm.query
+  params:
+    prompt: 'Generate {{input.format}} configuration for: {{analyze-requirements.output}}'
+  depends_on:
+  - analyze-requirements
+  on_failure: abort

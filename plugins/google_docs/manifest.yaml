@@ -1,0 +1,54 @@
+name: google_docs
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Google Docs API integration for document creation, reading, editing, and export"
+
+abilities:
+  gdocs.create_document:
+    type: cloud
+    endpoint: "https://docs.googleapis.com/v1/documents"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GOOGLE_DOCS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      title: { type: string, required: true }
+    description: "Create a new Google Docs document"
+    receipt_fields: [document_id]
+
+  gdocs.read_document:
+    type: cloud
+    endpoint: "https://docs.googleapis.com/v1/documents/{{document_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GOOGLE_DOCS_TOKEN}}"
+    params:
+      document_id: { type: string, required: true }
+    description: "Read the contents of a Google Docs document"
+    receipt_fields: [title, content]
+
+  gdocs.append_content:
+    type: cloud
+    endpoint: "https://docs.googleapis.com/v1/documents/{{document_id}}:batchUpdate"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GOOGLE_DOCS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      document_id: { type: string, required: true }
+      requests: { type: "list", required: true }
+    description: "Append or modify content in a Google Docs document"
+    receipt_fields: [replies]
+
+  gdocs.export_pdf:
+    type: cloud
+    endpoint: "https://www.googleapis.com/drive/v3/files/{{file_id}}/export"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GOOGLE_DOCS_TOKEN}}"
+    params:
+      file_id: { type: string, required: true }
+      mimeType: { type: string, default: "application/pdf" }
+    description: "Export a Google Docs document as PDF"
+    receipt_fields: [file_size]

@@ -1,0 +1,15 @@
+id: monitor-satisfaction
+description: Analyze support emails for satisfaction trends
+steps:
+- id: search-feedback
+  ability: gmail.search
+  params:
+    query: feedback OR satisfaction OR complaint OR thank
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze customer satisfaction trends from: {{search-feedback.output}}'
+  depends_on:
+  - search-feedback
+  on_failure: abort

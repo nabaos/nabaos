@@ -1,0 +1,16 @@
+id: check-compliance
+description: Research and check compliance requirements
+steps:
+- id: research
+  ability: search.web
+  params:
+    query: '{{input.regulation}} compliance requirements'
+  on_failure: continue
+- id: check
+  ability: llm.query
+  params:
+    prompt: 'Check compliance with {{input.regulation}} based on: Research: {{research.output}}.
+      Current practices: {{input.practices}}'
+  depends_on:
+  - research
+  on_failure: abort

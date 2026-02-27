@@ -1,0 +1,13 @@
+name: inbox-triage
+version: 1.0.0
+description: Prioritize and categorize unread emails
+category: daily-productivity
+author: nyaya-official
+permissions:
+- gmail.read
+- gmail.labels
+- llm.query
+triggers:
+  scheduled:
+  - chain: inbox-triage
+    interval: 30m

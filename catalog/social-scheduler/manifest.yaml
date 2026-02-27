@@ -1,0 +1,16 @@
+name: social-scheduler
+version: 1.0.0
+description: Schedule social media posts
+category: content-creation
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - schedule
+  - plan
+  targets:
+  - social
+  - post
+  - tweet
+  priority: 10

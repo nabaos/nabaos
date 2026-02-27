@@ -1,0 +1,26 @@
+id: track-habits
+description: Query habit data, analyze streaks, log today's entry
+steps:
+- id: query-habits
+  ability: notion.query
+  params:
+    database: habits
+    sort: date_desc
+    limit: 30
+  on_failure: abort
+- id: analyze-streaks
+  ability: llm.query
+  params:
+    prompt: 'Analyze habit streaks and provide a status report: {{query-habits.output}}'
+  depends_on:
+  - query-habits
+  on_failure: abort
+- id: log-entry
+  ability: notion.create_page
+  params:
+    database: habits
+    title: Habits - {{input.date}}
+    content: '{{analyze-streaks.output}}'
+  depends_on:
+  - analyze-streaks
+  on_failure: abort

@@ -1,0 +1,70 @@
+name: twitter
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Twitter/X API integration for posting, timeline retrieval, search, and analytics"
+
+abilities:
+  twitter.post_tweet:
+    type: cloud
+    endpoint: "https://api.x.com/2/tweets"
+    method: POST
+    headers:
+      Authorization: "Bearer {{TWITTER_BEARER_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      text: { type: string, required: true }
+      reply_to: { type: string, required: false }
+      media_ids: { type: "list[string]", required: false }
+    description: "Post a new tweet"
+    receipt_fields: [tweet_id, created_at]
+
+  twitter.get_timeline:
+    type: cloud
+    endpoint: "https://api.x.com/2/users/{{user_id}}/tweets"
+    method: GET
+    headers:
+      Authorization: "Bearer {{TWITTER_BEARER_TOKEN}}"
+    params:
+      user_id: { type: string, required: true }
+      max_results: { type: int, default: 10 }
+    description: "Retrieve timeline tweets for a user"
+    receipt_fields: [tweet_count]
+
+  twitter.search_tweets:
+    type: cloud
+    endpoint: "https://api.x.com/2/tweets/search/recent"
+    method: GET
+    headers:
+      Authorization: "Bearer {{TWITTER_BEARER_TOKEN}}"
+    params:
+      query: { type: string, required: true }
+      max_results: { type: int, default: 10 }
+    description: "Search recent tweets by query"
+    receipt_fields: [result_count]
+
+  twitter.get_analytics:
+    type: cloud
+    endpoint: "https://api.x.com/2/tweets/{{tweet_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{TWITTER_BEARER_TOKEN}}"
+    params:
+      tweet_id: { type: string, required: true }
+      tweet_fields: { type: string, default: "public_metrics" }
+    description: "Get analytics and metrics for a specific tweet"
+    receipt_fields: [like_count, retweet_count, reply_count]
+
+  twitter.schedule_tweet:
+    type: cloud
+    endpoint: "https://api.x.com/2/tweets"
+    method: POST
+    headers:
+      Authorization: "Bearer {{TWITTER_BEARER_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      text: { type: string, required: true }
+      scheduled_at: { type: datetime, required: true }
+      media_ids: { type: "list[string]", required: false }
+    description: "Schedule a tweet for future posting"
+    receipt_fields: [scheduled_tweet_id]

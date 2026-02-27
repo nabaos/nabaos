@@ -1,0 +1,16 @@
+name: study-planner
+version: 1.0.0
+description: Create study schedules
+category: education
+author: nyaya-official
+permissions:
+- calendar.create
+- llm.query
+intent_filters:
+- actions:
+  - plan
+  - create
+  targets:
+  - study
+  - study-schedule
+  priority: 10

@@ -1,0 +1,67 @@
+name: linkedin
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "LinkedIn API integration for posts, profiles, messaging, and company updates"
+
+abilities:
+  linkedin.post_update:
+    type: cloud
+    endpoint: "https://api.linkedin.com/v2/ugcPosts"
+    method: POST
+    headers:
+      Authorization: "Bearer {{LINKEDIN_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      text: { type: string, required: true }
+      visibility: { type: string, default: "PUBLIC" }
+    description: "Post an update to LinkedIn"
+    receipt_fields: [post_id, created_at]
+
+  linkedin.get_profile:
+    type: cloud
+    endpoint: "https://api.linkedin.com/v2/me"
+    method: GET
+    headers:
+      Authorization: "Bearer {{LINKEDIN_ACCESS_TOKEN}}"
+    params:
+      projection: { type: string, required: false }
+    description: "Get authenticated user's profile information"
+    receipt_fields: [user_id, profile_name]
+
+  linkedin.search_people:
+    type: cloud
+    endpoint: "https://api.linkedin.com/v2/people"
+    method: GET
+    headers:
+      Authorization: "Bearer {{LINKEDIN_ACCESS_TOKEN}}"
+    params:
+      keywords: { type: string, required: false }
+      title: { type: string, required: false }
+      company: { type: string, required: false }
+    description: "Search for people on LinkedIn"
+    receipt_fields: [result_count]
+
+  linkedin.get_company_updates:
+    type: cloud
+    endpoint: "https://api.linkedin.com/v2/organizations/{{org_id}}/posts"
+    method: GET
+    headers:
+      Authorization: "Bearer {{LINKEDIN_ACCESS_TOKEN}}"
+    params:
+      org_id: { type: string, required: true }
+    description: "Retrieve company updates and posts"
+    receipt_fields: [post_count]
+
+  linkedin.send_message:
+    type: cloud
+    endpoint: "https://api.linkedin.com/v2/messages"
+    method: POST
+    headers:
+      Authorization: "Bearer {{LINKEDIN_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      recipients: { type: "list[string]", required: true }
+      body: { type: string, required: true }
+    description: "Send a direct message to LinkedIn contacts"
+    receipt_fields: [message_id]

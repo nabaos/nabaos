@@ -1,0 +1,8 @@
+id: handle-alert
+description: Analyze security alert and recommend action
+steps:
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze this home security alert and recommend action: {{input.alert}}'
+  on_failure: abort

@@ -1,0 +1,30 @@
+name: cronometer
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Cronometer nutrition API integration for dietary tracking and food logging"
+
+abilities:
+  cronometer.get_diary:
+    type: cloud
+    endpoint: "https://cronometer.com/api/v1/diary"
+    method: GET
+    headers:
+      Authorization: "Bearer {{CRONOMETER_API_KEY}}"
+    params:
+      date: { type: string, required: true, description: "Date in YYYY-MM-DD format" }
+    description: "Get diary entries (food logs) for a specific date"
+    receipt_fields: [food_entry_count, total_nutrients]
+
+  cronometer.add_food:
+    type: cloud
+    endpoint: "https://cronometer.com/api/v1/diary"
+    method: POST
+    headers:
+      Authorization: "Bearer {{CRONOMETER_API_KEY}}"
+    params:
+      food_id: { type: string, required: true }
+      serving_size: { type: number, required: true }
+      date: { type: string, required: true, description: "Date in YYYY-MM-DD format" }
+    description: "Log a food entry to the diary"
+    receipt_fields: [entry_id]

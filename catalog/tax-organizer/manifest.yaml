@@ -1,0 +1,12 @@
+name: tax-organizer
+version: 1.0.0
+description: Organize tax-related documents
+category: finance-budgeting
+author: nyaya-official
+permissions:
+- gmail.search
+- llm.query
+triggers:
+  scheduled:
+  - chain: organize-taxes
+    interval: 30d

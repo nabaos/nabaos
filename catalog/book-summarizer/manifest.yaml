@@ -1,0 +1,15 @@
+name: book-summarizer
+version: 1.0.0
+description: Summarize books and articles
+category: education
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - summarize
+  targets:
+  - book
+  - article
+  priority: 10

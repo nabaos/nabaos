@@ -1,0 +1,16 @@
+id: research-hashtags
+description: Find trending and relevant hashtags
+steps:
+- id: search
+  ability: search.web
+  params:
+    query: '{{input.topic}} trending hashtags {{input.platform}}'
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Recommend the best hashtags for {{input.topic}} on {{input.platform}}:
+      {{search.output}}'
+  depends_on:
+  - search
+  on_failure: abort

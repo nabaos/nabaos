@@ -1,0 +1,16 @@
+id: generate-readme
+description: Analyze repo and generate README
+steps:
+- id: fetch-repo
+  ability: github.prs
+  params:
+    repo: '{{input.repo}}'
+  on_failure: abort
+- id: generate
+  ability: llm.query
+  params:
+    prompt: 'Generate a comprehensive README.md for this project: {{fetch-repo.output}}.
+      Include installation, usage, API reference, and contributing guidelines.'
+  depends_on:
+  - fetch-repo
+  on_failure: abort

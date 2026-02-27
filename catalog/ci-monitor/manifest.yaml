@@ -1,0 +1,13 @@
+name: ci-monitor
+version: 1.0.0
+description: Monitor CI/CD pipeline status
+category: developer-devops
+author: nyaya-official
+permissions:
+- github.prs
+- github.notifications
+- llm.query
+triggers:
+  scheduled:
+  - chain: check-ci
+    interval: 10m

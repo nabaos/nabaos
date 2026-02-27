@@ -1,0 +1,15 @@
+id: check-medications
+description: Check medication schedule and create reminders
+steps:
+- id: check-schedule
+  ability: llm.query
+  params:
+    prompt: 'Check medication schedule for upcoming doses: {{input.medications}}'
+  on_failure: abort
+- id: create-reminder
+  ability: calendar.create
+  params:
+    event: '{{check-schedule.output}}'
+  depends_on:
+  - check-schedule
+  on_failure: abort

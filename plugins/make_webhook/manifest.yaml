@@ -1,0 +1,16 @@
+name: make_webhook
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Make (Integromat) webhook integration for automation and scenario triggers"
+
+abilities:
+  make.trigger:
+    type: cloud
+    endpoint: "https://hook.us1.make.com/{{webhook_id}}"
+    method: POST
+    params:
+      webhook_id: { type: string, required: true }
+      payload: { type: string, required: true, description: "JSON payload" }
+    description: "Trigger Make scenario via webhook"
+    receipt_fields: [trigger_success]

@@ -1,0 +1,30 @@
+name: meeting-scheduler-constitution
+description: Constitution for meeting-scheduler
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within meeting-scheduler designated scope
+  trigger_actions:
+  - schedule
+  - book
+  trigger_targets:
+  - call
+  - meeting
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside meeting-scheduler scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: calendar.list, calendar.create, gmail.send,
+    llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - calendar.list
+  - calendar.create
+  - gmail.send
+  - llm.query

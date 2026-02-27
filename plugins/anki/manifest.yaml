@@ -1,0 +1,35 @@
+name: anki
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "AnkiConnect integration for spaced repetition flashcard management"
+
+abilities:
+  anki.add_note:
+    type: local
+    endpoint: "http://localhost:8765"
+    method: POST
+    params:
+      deckName: { type: string, required: true }
+      modelName: { type: string, required: true }
+      fields: { type: string, required: true }
+    description: "Add a new note (flashcard) to an Anki deck"
+    receipt_fields: [note_id]
+
+  anki.get_due_count:
+    type: local
+    endpoint: "http://localhost:8765"
+    method: POST
+    params:
+      action: { type: string, required: true, default: "deckNamesAndIds" }
+    description: "Get all deck names and their IDs"
+    receipt_fields: [deck_count]
+
+  anki.sync:
+    type: local
+    endpoint: "http://localhost:8765"
+    method: POST
+    params:
+      action: { type: string, required: true, default: "sync" }
+    description: "Synchronize Anki data with AnkiWeb"
+    receipt_fields: [sync_status]

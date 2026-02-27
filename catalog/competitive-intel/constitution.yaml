@@ -1,0 +1,27 @@
+name: competitive-intel-constitution
+description: Constitution for competitive-intel
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within competitive-intel designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - competitive-intel
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside competitive-intel scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: search.web, news.search, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - search.web
+  - news.search
+  - llm.query

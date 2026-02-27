@@ -1,0 +1,73 @@
+name: pagerduty
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "PagerDuty API integration for incident management"
+
+abilities:
+  pagerduty.list_incidents:
+    type: cloud
+    endpoint: "https://api.pagerduty.com/incidents"
+    method: GET
+    headers:
+      Authorization: "Token token={{PAGERDUTY_TOKEN}}"
+      Accept: "application/vnd.pagerduty+json;version=2"
+    params:
+      statuses: { type: string, required: false }
+      service_ids: { type: string, required: false }
+      urgencies: { type: string, required: false }
+    description: "List incidents from PagerDuty"
+    receipt_fields: [incident_count]
+
+  pagerduty.create_incident:
+    type: cloud
+    endpoint: "https://api.pagerduty.com/incidents"
+    method: POST
+    headers:
+      Authorization: "Token token={{PAGERDUTY_TOKEN}}"
+      Accept: "application/vnd.pagerduty+json;version=2"
+      Content-Type: "application/json"
+    params:
+      service_id: { type: string, required: true }
+      title: { type: string, required: true }
+      urgency: { type: string, required: false }
+    description: "Create an incident in PagerDuty"
+    receipt_fields: [incident_id]
+
+  pagerduty.acknowledge:
+    type: cloud
+    endpoint: "https://api.pagerduty.com/incidents/{{incident_id}}"
+    method: PUT
+    headers:
+      Authorization: "Token token={{PAGERDUTY_TOKEN}}"
+      Accept: "application/vnd.pagerduty+json;version=2"
+      Content-Type: "application/json"
+    params:
+      incident_id: { type: string, required: true }
+    description: "Acknowledge a PagerDuty incident"
+    receipt_fields: [incident_status]
+
+  pagerduty.resolve:
+    type: cloud
+    endpoint: "https://api.pagerduty.com/incidents/{{incident_id}}"
+    method: PUT
+    headers:
+      Authorization: "Token token={{PAGERDUTY_TOKEN}}"
+      Accept: "application/vnd.pagerduty+json;version=2"
+      Content-Type: "application/json"
+    params:
+      incident_id: { type: string, required: true }
+    description: "Resolve a PagerDuty incident"
+    receipt_fields: [incident_status]
+
+  pagerduty.get_oncall:
+    type: cloud
+    endpoint: "https://api.pagerduty.com/oncalls"
+    method: GET
+    headers:
+      Authorization: "Token token={{PAGERDUTY_TOKEN}}"
+      Accept: "application/vnd.pagerduty+json;version=2"
+    params:
+      schedule_ids: { type: string, required: false }
+    description: "Get on-call schedules from PagerDuty"
+    receipt_fields: [oncall_user_count]

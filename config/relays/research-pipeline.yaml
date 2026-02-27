@@ -1,0 +1,13 @@
+relay:
+  name: "Research Pipeline"
+  stages:
+    - agent: "sherlock"
+      task: "Research and gather relevant facts, data, and evidence"
+      pass_to_next: "research_findings"
+    - agent: "ambedkar"
+      task: "Analyze findings for structural patterns, gaps, and implications"
+      pass_to_next: "analysis_report"
+    - agent: "ironman"
+      task: "Synthesize analysis into a clear, actionable response"
+      pass_to_next: "final_response"
+  error_handling: "retry_stage"

@@ -1,0 +1,15 @@
+id: analyze-logs
+description: Parse and analyze log data
+steps:
+- id: parse
+  ability: llm.query
+  params:
+    prompt: 'Parse and categorize these logs: {{input.logs}}'
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze log patterns and identify issues: {{parse.output}}'
+  depends_on:
+  - parse
+  on_failure: abort

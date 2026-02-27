@@ -1,0 +1,16 @@
+name: patent-scout
+version: 1.0.0
+description: Search and analyze patents
+category: research-analysis
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - search
+  - find
+  targets:
+  - patent
+  - invention
+  priority: 10

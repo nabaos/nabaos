@@ -1,0 +1,16 @@
+id: create-runbook
+description: Generate an operational runbook
+steps:
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze the operational scenario and identify key procedures: {{input.scenario}}'
+  on_failure: abort
+- id: create
+  ability: llm.query
+  params:
+    prompt: 'Create a detailed operational runbook with step-by-step procedures, escalation
+      paths, and rollback plans: {{analyze.output}}'
+  depends_on:
+  - analyze
+  on_failure: abort

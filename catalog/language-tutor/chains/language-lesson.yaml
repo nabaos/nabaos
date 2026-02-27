@@ -1,0 +1,9 @@
+id: language-lesson
+description: Provide a language learning interaction
+steps:
+- id: tutor
+  ability: llm.query
+  params:
+    prompt: 'Act as a {{input.language}} tutor. Level: {{input.level}}. Topic: {{input.topic}}.
+      Provide vocabulary, grammar explanations, and practice exercises.'
+  on_failure: abort

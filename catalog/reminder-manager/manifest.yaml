@@ -1,0 +1,16 @@
+name: reminder-manager
+version: 1.0.0
+description: Create and manage reminders
+category: daily-productivity
+author: nyaya-official
+permissions:
+- calendar.create
+- llm.query
+intent_filters:
+- actions:
+  - create
+  - set
+  targets:
+  - reminder
+  - alarm
+  priority: 10

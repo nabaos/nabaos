@@ -1,0 +1,28 @@
+name: search
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Web search via SearXNG (self-hosted) or Brave Search"
+
+abilities:
+  search.web:
+    type: cloud
+    endpoint: "{{SEARCH_ENDPOINT}}/search"
+    method: GET
+    params:
+      q: { type: string, required: true }
+      format: { type: string, default: "json" }
+      categories: { type: string, default: "general" }
+    description: "Search the web"
+    receipt_fields: [result_count]
+
+  search.images:
+    type: cloud
+    endpoint: "{{SEARCH_ENDPOINT}}/search"
+    method: GET
+    params:
+      q: { type: string, required: true }
+      format: { type: string, default: "json" }
+      categories: { type: string, default: "images" }
+    description: "Search for images"
+    receipt_fields: [result_count]

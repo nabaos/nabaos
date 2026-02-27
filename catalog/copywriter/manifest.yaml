@@ -1,0 +1,16 @@
+name: copywriter
+version: 1.0.0
+description: Write marketing copy
+category: content-creation
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - write
+  - create
+  targets:
+  - copy
+  - ad
+  - marketing
+  priority: 10

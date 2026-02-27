@@ -1,0 +1,15 @@
+name: contact-enricher
+version: 1.0.0
+description: Enrich contact info from email signatures
+category: email-communication
+author: nyaya-official
+permissions:
+- gmail.read
+- notion.create_page
+- llm.query
+triggers:
+  events:
+  - 'on': DataChanged
+    filter:
+      namespace: gmail
+    chain: enrich-contact

@@ -1,0 +1,19 @@
+name: fact-checker
+version: 1.0.0
+description: Verify claims and statements
+category: research-analysis
+author: nyaya-official
+permissions:
+- search.web
+- news.search
+- llm.query
+intent_filters:
+- actions:
+  - verify
+  - fact-check
+  - check
+  targets:
+  - claim
+  - statement
+  - fact
+  priority: 10

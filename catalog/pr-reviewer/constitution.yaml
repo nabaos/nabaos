@@ -1,0 +1,27 @@
+name: pr-reviewer-constitution
+description: Constitution for pr-reviewer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within pr-reviewer designated scope
+  trigger_actions:
+  - review
+  trigger_targets:
+  - code
+  - pr
+  - pull-request
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside pr-reviewer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: github.prs, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - github.prs
+  - llm.query

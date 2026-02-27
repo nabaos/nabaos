@@ -1,0 +1,18 @@
+name: meeting-scheduler
+version: 1.0.0
+description: Find optimal meeting times
+category: email-communication
+author: nyaya-official
+permissions:
+- calendar.list
+- calendar.create
+- gmail.send
+- llm.query
+intent_filters:
+- actions:
+  - schedule
+  - book
+  targets:
+  - meeting
+  - call
+  priority: 10

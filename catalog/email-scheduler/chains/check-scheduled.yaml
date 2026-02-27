@@ -1,0 +1,15 @@
+id: check-scheduled
+description: Check for emails due to be sent and send them
+steps:
+- id: check-queue
+  ability: llm.query
+  params:
+    prompt: Check the scheduled email queue for emails due to send now
+  on_failure: abort
+- id: send-due
+  ability: gmail.send
+  params:
+    emails: '{{check-queue.output}}'
+  depends_on:
+  - check-queue
+  on_failure: abort

@@ -1,0 +1,27 @@
+name: podcast-notes-constitution
+description: Constitution for podcast-notes
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within podcast-notes designated scope
+  trigger_actions:
+  - summarize
+  - create
+  trigger_targets:
+  - podcast
+  - episode
+  - shownotes
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside podcast-notes scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - llm.query

@@ -1,0 +1,13 @@
+name: competitor-alert
+version: 1.0.0
+description: Alert on competitor activity
+category: sales-crm
+author: nyaya-official
+permissions:
+- news.search
+- search.web
+- llm.query
+triggers:
+  scheduled:
+  - chain: check-competitors
+    interval: 12h

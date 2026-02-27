@@ -1,0 +1,22 @@
+id: monitor-regulations
+description: Search for regulatory updates
+steps:
+- id: search-regs
+  ability: search.web
+  params:
+    query: '{{input.industry}} regulation update new rule'
+  on_failure: continue
+- id: search-news
+  ability: news.search
+  params:
+    query: '{{input.industry}} regulation policy'
+  on_failure: continue
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Summarize regulatory changes for {{input.industry}}: Web: {{search-regs.output}},
+      News: {{search-news.output}}'
+  depends_on:
+  - search-regs
+  - search-news
+  on_failure: abort

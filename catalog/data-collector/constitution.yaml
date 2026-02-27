@@ -1,0 +1,31 @@
+name: data-collector-constitution
+description: Constitution for data-collector
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within data-collector designated scope
+  trigger_actions:
+  - gather
+  - scrape
+  - collect
+  trigger_targets:
+  - data
+  - information
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside data-collector scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: search.web, browser.navigate, browser.extract,
+    llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - search.web
+  - browser.navigate
+  - browser.extract
+  - llm.query

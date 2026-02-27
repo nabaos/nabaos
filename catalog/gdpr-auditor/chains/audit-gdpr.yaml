@@ -1,0 +1,16 @@
+id: audit-gdpr
+description: Research GDPR requirements and audit compliance
+steps:
+- id: research
+  ability: search.web
+  params:
+    query: GDPR compliance checklist latest requirements
+  on_failure: continue
+- id: audit
+  ability: llm.query
+  params:
+    prompt: 'Conduct a GDPR compliance audit. Requirements: {{research.output}}. Current
+      state: {{input.current_state}}'
+  depends_on:
+  - research
+  on_failure: abort

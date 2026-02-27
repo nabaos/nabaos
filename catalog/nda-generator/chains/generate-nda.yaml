@@ -1,0 +1,9 @@
+id: generate-nda
+description: Generate a non-disclosure agreement
+steps:
+- id: generate
+  ability: llm.query
+  params:
+    prompt: 'Generate a {{input.nda_type}} NDA between {{input.party_a}} and {{input.party_b}}.
+      Duration: {{input.duration}}. Jurisdiction: {{input.jurisdiction}}'
+  on_failure: abort

@@ -1,0 +1,17 @@
+name: presentation-builder
+version: 1.0.0
+description: Create presentation outlines
+category: content-creation
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - create
+  - build
+  targets:
+  - presentation
+  - slides
+  - deck
+  priority: 10

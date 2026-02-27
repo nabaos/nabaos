@@ -1,0 +1,10 @@
+{
+  "0": "add_shopping",
+  "1": "check_calendar",
+  "2": "check_email",
+  "3": "check_price",
+  "4": "check_weather",
+  "5": "control_lights",
+  "6": "send_email",
+  "7": "set_reminder"
+}

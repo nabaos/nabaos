@@ -1,0 +1,28 @@
+name: changelog-writer-constitution
+description: Constitution for changelog-writer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within changelog-writer designated scope
+  trigger_actions:
+  - generate
+  - write
+  trigger_targets:
+  - release-notes
+  - changelog
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside changelog-writer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: github.prs, github.issues, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - github.prs
+  - github.issues
+  - llm.query

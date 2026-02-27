@@ -1,0 +1,25 @@
+name: commission-calculator-constitution
+description: Constitution for commission-calculator
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within commission-calculator designated scope
+  trigger_actions:
+  - calculate
+  trigger_targets:
+  - commission
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside commission-calculator scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: notion.query, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - notion.query
+  - llm.query

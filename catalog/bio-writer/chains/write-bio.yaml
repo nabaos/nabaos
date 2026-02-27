@@ -1,0 +1,9 @@
+id: write-bio
+description: Create a social media bio
+steps:
+- id: write
+  ability: llm.query
+  params:
+    prompt: 'Write a compelling {{input.platform}} bio for {{input.name}}. Role: {{input.role}}.
+      Tone: {{input.tone}}. Include: {{input.highlights}}'
+  on_failure: abort

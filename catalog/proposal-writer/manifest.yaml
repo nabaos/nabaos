@@ -1,0 +1,14 @@
+name: proposal-writer
+version: 1.0.0
+description: Draft sales proposals
+category: sales-crm
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - write
+  - create
+  targets:
+  - proposal
+  priority: 10

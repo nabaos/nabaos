@@ -1,0 +1,41 @@
+name: garmin
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Garmin wellness API integration for activity, sleep, and fitness data"
+
+abilities:
+  garmin.get_activity:
+    type: cloud
+    endpoint: "https://apis.garmin.com/wellness-api/rest/activities/{{activity_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GARMIN_ACCESS_TOKEN}}"
+    params:
+      activity_id: { type: string, required: true }
+    description: "Get details for a specific activity"
+    receipt_fields: [activity_name, duration, calories]
+
+  garmin.get_sleep:
+    type: cloud
+    endpoint: "https://apis.garmin.com/wellness-api/rest/dailySleepData"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GARMIN_ACCESS_TOKEN}}"
+    params:
+      uploadStartTimeInSeconds: { type: number, required: true }
+      uploadEndTimeInSeconds: { type: number, required: true }
+    description: "Get daily sleep data within a time range"
+    receipt_fields: [sleep_sessions, total_sleep_duration]
+
+  garmin.list_activities:
+    type: cloud
+    endpoint: "https://apis.garmin.com/wellness-api/rest/activities"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GARMIN_ACCESS_TOKEN}}"
+    params:
+      uploadStartTimeInSeconds: { type: number, required: true }
+      uploadEndTimeInSeconds: { type: number, required: true }
+    description: "List activities within a time range"
+    receipt_fields: [activity_count]

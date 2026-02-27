@@ -1,0 +1,28 @@
+name: lead-scorer-constitution
+description: Constitution for lead-scorer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within lead-scorer designated scope
+  trigger_actions:
+  - prioritize
+  - score
+  trigger_targets:
+  - lead
+  - prospect
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside lead-scorer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: gmail.search, notion.query, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - gmail.search
+  - notion.query
+  - llm.query

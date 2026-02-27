@@ -1,0 +1,17 @@
+name: wishlist-manager
+version: 1.0.0
+description: Manage shopping wishlists
+category: shopping
+author: nyaya-official
+permissions:
+- notion.create_page
+- notion.query
+- llm.query
+intent_filters:
+- actions:
+  - add
+  - check
+  targets:
+  - wishlist
+  - want
+  priority: 10

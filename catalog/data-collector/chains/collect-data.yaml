@@ -1,0 +1,29 @@
+id: collect-data
+description: Search, navigate to sources, and extract structured data
+steps:
+- id: search
+  ability: search.web
+  params:
+    query: '{{input.query}}'
+  on_failure: abort
+- id: navigate
+  ability: browser.navigate
+  params:
+    url: '{{search.output.top_url}}'
+  depends_on:
+  - search
+  on_failure: abort
+- id: extract
+  ability: browser.extract
+  params:
+    selector: '{{input.selector}}'
+  depends_on:
+  - navigate
+  on_failure: abort
+- id: structure
+  ability: llm.query
+  params:
+    prompt: 'Structure this extracted data into {{input.format}}: {{extract.output}}'
+  depends_on:
+  - extract
+  on_failure: abort

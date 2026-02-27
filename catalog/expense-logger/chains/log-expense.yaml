@@ -1,0 +1,17 @@
+id: log-expense
+description: Parse and log a travel expense
+steps:
+- id: parse
+  ability: llm.query
+  params:
+    prompt: 'Parse this expense: {{input.text}}. Extract amount, category, currency,
+      date.'
+  on_failure: abort
+- id: log
+  ability: notion.create_page
+  params:
+    database: travel-expenses
+    content: '{{parse.output}}'
+  depends_on:
+  - parse
+  on_failure: abort

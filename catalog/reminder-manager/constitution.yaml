@@ -1,0 +1,27 @@
+name: reminder-manager-constitution
+description: Constitution for reminder-manager
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within reminder-manager designated scope
+  trigger_actions:
+  - set
+  - create
+  trigger_targets:
+  - reminder
+  - alarm
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside reminder-manager scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: calendar.create, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - calendar.create
+  - llm.query

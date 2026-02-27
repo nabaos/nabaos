@@ -1,0 +1,28 @@
+name: academic-reviewer-constitution
+description: Constitution for academic-reviewer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within academic-reviewer designated scope
+  trigger_actions:
+  - summarize
+  - review
+  trigger_targets:
+  - research
+  - study
+  - paper
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside academic-reviewer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: search.web, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - search.web
+  - llm.query

@@ -1,0 +1,63 @@
+name: datadog
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Datadog API integration for metrics, monitors, and logs"
+
+abilities:
+  datadog.query_metrics:
+    type: cloud
+    endpoint: "https://api.datadoghq.com/api/v1/query"
+    method: GET
+    headers:
+      DD-API-KEY: "{{DATADOG_API_KEY}}"
+      DD-APPLICATION-KEY: "{{DATADOG_APP_KEY}}"
+    params:
+      query: { type: string, required: true }
+      from: { type: int, required: true }
+      to: { type: int, required: true }
+    description: "Query metrics from Datadog"
+    receipt_fields: [metric_count]
+
+  datadog.get_monitors:
+    type: cloud
+    endpoint: "https://api.datadoghq.com/api/v1/monitor"
+    method: GET
+    headers:
+      DD-API-KEY: "{{DATADOG_API_KEY}}"
+      DD-APPLICATION-KEY: "{{DATADOG_APP_KEY}}"
+    params:
+      name: { type: string, required: false }
+      status: { type: string, required: false }
+    description: "Get monitors from Datadog"
+    receipt_fields: [monitor_count]
+
+  datadog.search_logs:
+    type: cloud
+    endpoint: "https://api.datadoghq.com/api/v2/logs/events/search"
+    method: POST
+    headers:
+      DD-API-KEY: "{{DATADOG_API_KEY}}"
+      DD-APPLICATION-KEY: "{{DATADOG_APP_KEY}}"
+      Content-Type: "application/json"
+    params:
+      query: { type: string, required: true }
+      from: { type: int, required: true }
+      to: { type: int, required: true }
+    description: "Search logs in Datadog"
+    receipt_fields: [log_count]
+
+  datadog.create_event:
+    type: cloud
+    endpoint: "https://api.datadoghq.com/api/v1/events"
+    method: POST
+    headers:
+      DD-API-KEY: "{{DATADOG_API_KEY}}"
+      DD-APPLICATION-KEY: "{{DATADOG_APP_KEY}}"
+      Content-Type: "application/json"
+    params:
+      title: { type: string, required: true }
+      text: { type: string, required: true }
+      alert_type: { type: string, required: false }
+    description: "Create an event in Datadog"
+    receipt_fields: [event_id]

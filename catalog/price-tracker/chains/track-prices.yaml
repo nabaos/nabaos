@@ -1,0 +1,15 @@
+id: track-prices
+description: Search for current prices and compare
+steps:
+- id: search-prices
+  ability: search.web
+  params:
+    query: '{{input.product}} price buy'
+  on_failure: abort
+- id: compare-prices
+  ability: llm.query
+  params:
+    prompt: 'Extract and compare prices for {{input.product}} from: {{search-prices.output}}'
+  depends_on:
+  - search-prices
+  on_failure: abort

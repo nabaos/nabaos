@@ -1,0 +1,17 @@
+name: resume-screener
+version: 1.0.0
+description: Screen resumes against job requirements
+category: hr-recruiting
+author: nyaya-official
+permissions:
+- gmail.read
+- llm.query
+intent_filters:
+- actions:
+  - screen
+  - review
+  targets:
+  - resume
+  - cv
+  - application
+  priority: 10

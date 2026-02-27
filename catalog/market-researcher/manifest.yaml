@@ -1,0 +1,17 @@
+name: market-researcher
+version: 1.0.0
+description: Market research for business decisions
+category: research-analysis
+author: nyaya-official
+permissions:
+- search.web
+- news.search
+- finance.stock_quote
+- llm.query
+intent_filters:
+- actions:
+  - research
+  targets:
+  - market
+  - industry
+  priority: 10

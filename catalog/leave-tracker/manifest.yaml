@@ -1,0 +1,18 @@
+name: leave-tracker
+version: 1.0.0
+description: Track leave and PTO
+category: hr-recruiting
+author: nyaya-official
+permissions:
+- calendar.list
+- notion.query
+- llm.query
+intent_filters:
+- actions:
+  - check
+  - track
+  targets:
+  - leave
+  - pto
+  - vacation
+  priority: 10

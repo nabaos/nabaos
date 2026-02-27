@@ -1,0 +1,26 @@
+name: crypto-tracker-constitution
+description: Constitution for crypto-tracker
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within crypto-tracker designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - crypto-tracker
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside crypto-tracker scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: finance.crypto_price, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - finance.crypto_price
+  - llm.query

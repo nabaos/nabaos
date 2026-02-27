@@ -1,0 +1,15 @@
+name: quiz-generator
+version: 1.0.0
+description: Generate quizzes from content
+category: education
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - create
+  - generate
+  targets:
+  - quiz
+  - test
+  priority: 10

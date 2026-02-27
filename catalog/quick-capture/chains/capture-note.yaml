@@ -1,0 +1,17 @@
+id: capture-note
+description: Process and store a quick note
+steps:
+- id: process-note
+  ability: llm.query
+  params:
+    prompt: 'Clean up and tag this note: {{input.text}}'
+  on_failure: abort
+- id: store-note
+  ability: notion.create_page
+  params:
+    database: quick-notes
+    title: Note - {{input.timestamp}}
+    content: '{{process-note.output}}'
+  depends_on:
+  - process-note
+  on_failure: abort

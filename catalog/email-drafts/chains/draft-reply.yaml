@@ -1,0 +1,16 @@
+id: draft-reply
+description: Read email thread and draft a reply
+steps:
+- id: read-thread
+  ability: gmail.read
+  params:
+    thread_id: '{{input.thread_id}}'
+  on_failure: abort
+- id: draft-reply
+  ability: llm.query
+  params:
+    prompt: 'Draft a professional reply to this email thread: {{read-thread.output}}.
+      Tone: {{input.tone}}'
+  depends_on:
+  - read-thread
+  on_failure: abort

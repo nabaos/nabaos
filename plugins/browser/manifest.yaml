@@ -1,0 +1,34 @@
+name: browser
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Headless browser automation via CDP (Chrome DevTools Protocol)"
+
+abilities:
+  browser.navigate:
+    type: cloud
+    endpoint: "http://localhost:9222/json/new"
+    method: PUT
+    params:
+      url: { type: string, required: true }
+    description: "Navigate to a URL in headless browser"
+    receipt_fields: [page_id]
+
+  browser.screenshot:
+    type: cloud
+    endpoint: "http://localhost:9222/screenshot"
+    method: GET
+    params:
+      page_id: { type: string, required: true }
+    description: "Take a screenshot of a page"
+    receipt_fields: [image_size]
+
+  browser.extract:
+    type: cloud
+    endpoint: "http://localhost:9222/extract"
+    method: POST
+    params:
+      page_id: { type: string, required: true }
+      selector: { type: string, required: true }
+    description: "Extract text content from a page"
+    receipt_fields: [text_length]

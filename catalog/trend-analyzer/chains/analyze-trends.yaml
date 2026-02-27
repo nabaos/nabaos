@@ -1,0 +1,22 @@
+id: analyze-trends
+description: Search for trend data and analyze
+steps:
+- id: search-trends
+  ability: search.web
+  params:
+    query: '{{input.topic}} trends 2024 2025'
+  on_failure: continue
+- id: search-news
+  ability: news.search
+  params:
+    query: '{{input.topic}} trend'
+  on_failure: continue
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze trends for {{input.topic}} based on: Web: {{search-trends.output}},
+      News: {{search-news.output}}'
+  depends_on:
+  - search-trends
+  - search-news
+  on_failure: abort

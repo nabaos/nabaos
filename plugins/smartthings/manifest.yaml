@@ -1,0 +1,51 @@
+name: smartthings
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Samsung SmartThings API integration for device control and scene automation"
+
+abilities:
+  smartthings.get_device:
+    type: cloud
+    endpoint: "https://api.smartthings.com/v1/devices/{{device_id}}/status"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SMARTTHINGS_TOKEN}}"
+    params:
+      device_id: { type: string, required: true }
+    description: "Get status of a smart device"
+    receipt_fields: [device_name, device_state]
+
+  smartthings.control_device:
+    type: cloud
+    endpoint: "https://api.smartthings.com/v1/devices/{{device_id}}/commands"
+    method: POST
+    headers:
+      Authorization: "Bearer {{SMARTTHINGS_TOKEN}}"
+    params:
+      device_id: { type: string, required: true }
+      capability: { type: string, required: true }
+      command: { type: string, required: true }
+    description: "Send command to control a smart device"
+    receipt_fields: [command_result]
+
+  smartthings.list_scenes:
+    type: cloud
+    endpoint: "https://api.smartthings.com/v1/scenes"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SMARTTHINGS_TOKEN}}"
+    params: {}
+    description: "List all available scenes"
+    receipt_fields: [scene_count]
+
+  smartthings.execute_scene:
+    type: cloud
+    endpoint: "https://api.smartthings.com/v1/scenes/{{scene_id}}/execute"
+    method: POST
+    headers:
+      Authorization: "Bearer {{SMARTTHINGS_TOKEN}}"
+    params:
+      scene_id: { type: string, required: true }
+    description: "Execute a smart scene"
+    receipt_fields: [execution_status]

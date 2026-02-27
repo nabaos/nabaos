@@ -1,0 +1,12 @@
+name: price-tracker
+version: 1.0.0
+description: Track prices across retailers
+category: research-analysis
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+triggers:
+  scheduled:
+  - chain: track-prices
+    interval: 12h

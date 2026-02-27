@@ -1,0 +1,25 @@
+name: google_patents
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Google Patents API integration for patent search and prior art discovery"
+
+abilities:
+  patents.search:
+    type: cloud
+    endpoint: "https://patents.google.com/xhr/query"
+    method: GET
+    params:
+      q: { type: string, required: true, description: "Patent search query" }
+      num: { type: number, required: false, default: 10 }
+    description: "Search Google Patents database"
+    receipt_fields: [result_count]
+
+  patents.get_patent:
+    type: cloud
+    endpoint: "https://patents.google.com/patent/{{patent_id}}"
+    method: GET
+    params:
+      patent_id: { type: string, required: true }
+    description: "Get full details of a specific patent"
+    receipt_fields: [patent_title, filing_date]

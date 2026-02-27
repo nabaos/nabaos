@@ -1,0 +1,16 @@
+id: check-prices
+description: Check tracked product prices for drops
+steps:
+- id: check-price
+  ability: search.web
+  params:
+    query: '{{input.product}} price buy'
+  on_failure: abort
+- id: compare
+  ability: llm.query
+  params:
+    prompt: 'Compare current price to target price {{input.target_price}} for {{input.product}}:
+      {{check-price.output}}'
+  depends_on:
+  - check-price
+  on_failure: abort

@@ -1,0 +1,17 @@
+name: changelog-writer
+version: 1.0.0
+description: Generate changelogs from commits
+category: documentation
+author: nyaya-official
+permissions:
+- github.prs
+- github.issues
+- llm.query
+intent_filters:
+- actions:
+  - generate
+  - write
+  targets:
+  - changelog
+  - release-notes
+  priority: 10

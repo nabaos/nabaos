@@ -1,0 +1,16 @@
+id: compare-products
+description: Research and compare products
+steps:
+- id: search-products
+  ability: search.web
+  params:
+    query: '{{input.product_a}} vs {{input.product_b}} comparison review'
+  on_failure: abort
+- id: compare
+  ability: llm.query
+  params:
+    prompt: 'Create a detailed comparison of {{input.product_a}} vs {{input.product_b}}
+      using: {{search-products.output}}'
+  depends_on:
+  - search-products
+  on_failure: abort

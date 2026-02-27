@@ -1,0 +1,30 @@
+id: weekly-review
+description: Gather week's data and produce summary
+steps:
+- id: get-calendar
+  ability: calendar.list
+  params:
+    range: past_7d
+  on_failure: continue
+- id: get-emails
+  ability: gmail.read
+  params:
+    max_results: 100
+    range: past_7d
+  on_failure: continue
+- id: get-tasks
+  ability: notion.query
+  params:
+    database: tasks
+    filter: past_7d
+  on_failure: continue
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Create a weekly review: Calendar: {{get-calendar.output}}, Emails: {{get-emails.output}},
+      Tasks: {{get-tasks.output}}'
+  depends_on:
+  - get-calendar
+  - get-emails
+  - get-tasks
+  on_failure: abort

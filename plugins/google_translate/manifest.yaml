@@ -1,0 +1,33 @@
+name: google_translate
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Google Translate API integration for text translation and language detection"
+
+abilities:
+  translate.translate:
+    type: cloud
+    endpoint: "https://translation.googleapis.com/language/translate/v2"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    params:
+      q: { type: string, required: true }
+      target: { type: string, required: true }
+      source: { type: string, required: false }
+      format: { type: string, default: "text" }
+      key: { type: string, required: false }
+    description: "Translate text using Google Translate"
+    receipt_fields: [translated_text]
+
+  translate.detect:
+    type: cloud
+    endpoint: "https://translation.googleapis.com/language/translate/v2/detect"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    params:
+      q: { type: string, required: true }
+      key: { type: string, required: false }
+    description: "Detect the language of text"
+    receipt_fields: [language, confidence]

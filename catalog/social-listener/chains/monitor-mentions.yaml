@@ -1,0 +1,15 @@
+id: monitor-mentions
+description: Search web for brand mentions
+steps:
+- id: search
+  ability: search.web
+  params:
+    query: '{{input.brand}} mentions reviews'
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze social media mentions and sentiment for {{input.brand}}: {{search.output}}'
+  depends_on:
+  - search
+  on_failure: abort

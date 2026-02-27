@@ -1,0 +1,27 @@
+name: social-scheduler-constitution
+description: Constitution for social-scheduler
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within social-scheduler designated scope
+  trigger_actions:
+  - schedule
+  - plan
+  trigger_targets:
+  - post
+  - tweet
+  - social
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside social-scheduler scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - llm.query

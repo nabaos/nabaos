@@ -1,0 +1,17 @@
+name: lead-scorer
+version: 1.0.0
+description: Score and prioritize leads
+category: sales-crm
+author: nyaya-official
+permissions:
+- gmail.search
+- notion.query
+- llm.query
+intent_filters:
+- actions:
+  - score
+  - prioritize
+  targets:
+  - lead
+  - prospect
+  priority: 10

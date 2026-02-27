@@ -1,0 +1,61 @@
+name: outlook_calendar
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Microsoft 365 Outlook Calendar integration"
+
+abilities:
+  outlook_calendar.list_events:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/calendarView"
+    method: GET
+    headers:
+      Authorization: "Bearer {{OUTLOOK_ACCESS_TOKEN}}"
+    params:
+      startDateTime: { type: string, required: true }
+      endDateTime: { type: string, required: true }
+      top: { type: int, default: 10 }
+    description: "List calendar events within a date range"
+    receipt_fields: [event_count]
+
+  outlook_calendar.create_event:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/events"
+    method: POST
+    headers:
+      Authorization: "Bearer {{OUTLOOK_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      subject: { type: string, required: true }
+      start: { type: string, required: true }
+      end: { type: string, required: true }
+      attendees: { type: string, required: false }
+      isOnlineMeeting: { type: string, required: false }
+    description: "Create a new calendar event"
+    receipt_fields: [event_id]
+
+  outlook_calendar.find_free_slot:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/findMeetingTimes"
+    method: POST
+    headers:
+      Authorization: "Bearer {{OUTLOOK_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      attendees: { type: string, required: true }
+      duration: { type: int, required: true }
+    description: "Find available meeting time slots for attendees"
+    receipt_fields: [slot_count]
+
+  outlook_calendar.accept_decline:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/events/{{event_id}}/{{response}}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{OUTLOOK_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      event_id: { type: string, required: true }
+      response: { type: string, required: true }
+    description: "Accept or decline a calendar meeting invitation"
+    receipt_fields: [event_id]

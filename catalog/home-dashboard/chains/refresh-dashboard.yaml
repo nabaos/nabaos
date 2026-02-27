@@ -1,0 +1,35 @@
+id: refresh-dashboard
+description: Gather all dashboard data and format
+steps:
+- id: get-weather
+  ability: weather.current
+  params:
+    location: '{{input.location}}'
+  on_failure: continue
+- id: get-calendar
+  ability: calendar.list
+  params:
+    range: today
+  on_failure: continue
+- id: get-emails
+  ability: gmail.read
+  params:
+    unread: true
+    max_results: 5
+  on_failure: continue
+- id: get-stocks
+  ability: finance.stock_quote
+  params:
+    symbols: '{{input.watchlist}}'
+  on_failure: continue
+- id: format-dashboard
+  ability: llm.query
+  params:
+    prompt: 'Format a dashboard summary: Weather: {{get-weather.output}}, Calendar:
+      {{get-calendar.output}}, Email: {{get-emails.output}}, Stocks: {{get-stocks.output}}'
+  depends_on:
+  - get-weather
+  - get-calendar
+  - get-emails
+  - get-stocks
+  on_failure: abort

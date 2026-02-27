@@ -1,0 +1,36 @@
+name: mqtt
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "MQTT protocol integration for IoT messaging and device communication"
+
+abilities:
+  mqtt.publish:
+    type: local
+    endpoint: "{{MQTT_BROKER_URL}}"
+    method: POST
+    params:
+      topic: { type: string, required: true, description: "MQTT topic path" }
+      message: { type: string, required: true, description: "Message payload" }
+      retain: { type: bool, required: false, default: false }
+    description: "Publish message to MQTT broker"
+    receipt_fields: [publish_status]
+
+  mqtt.subscribe_once:
+    type: local
+    endpoint: "{{MQTT_BROKER_URL}}"
+    method: GET
+    params:
+      topic: { type: string, required: true, description: "MQTT topic to subscribe" }
+      timeout: { type: number, required: false, default: 5 }
+    description: "Subscribe to topic and receive single message"
+    receipt_fields: [message_received, message_payload]
+
+  mqtt.get_retained:
+    type: local
+    endpoint: "{{MQTT_BROKER_URL}}"
+    method: GET
+    params:
+      topic: { type: string, required: true, description: "MQTT topic with retained message" }
+    description: "Get retained message from MQTT broker"
+    receipt_fields: [retained_message]

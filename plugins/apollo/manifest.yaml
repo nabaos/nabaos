@@ -1,0 +1,43 @@
+name: apollo
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Apollo sales intelligence API integration for contact and company enrichment"
+
+abilities:
+  apollo.search_people:
+    type: cloud
+    endpoint: "https://api.apollo.io/v1/mixed_people/search"
+    method: POST
+    headers:
+      api_key: "{{APOLLO_API_KEY}}"
+    params:
+      q_keywords: { type: string, required: false }
+      person_titles: { type: string, required: false }
+      organization_domains: { type: string, required: false }
+    description: "Search for people with specified criteria"
+    receipt_fields: [person_count]
+
+  apollo.enrich_contact:
+    type: cloud
+    endpoint: "https://api.apollo.io/v1/people/match"
+    method: POST
+    headers:
+      api_key: "{{APOLLO_API_KEY}}"
+    params:
+      email: { type: string, required: false }
+      first_name: { type: string, required: false }
+      last_name: { type: string, required: false }
+    description: "Enrich contact information"
+    receipt_fields: [contact_found, enriched_fields]
+
+  apollo.get_company:
+    type: cloud
+    endpoint: "https://api.apollo.io/v1/organizations/enrich"
+    method: GET
+    headers:
+      api_key: "{{APOLLO_API_KEY}}"
+    params:
+      domain: { type: string, required: true }
+    description: "Enrich company information from domain"
+    receipt_fields: [company_name, company_size]

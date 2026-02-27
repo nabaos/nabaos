@@ -1,0 +1,12 @@
+name: gdpr-auditor
+version: 1.0.0
+description: GDPR compliance audit
+category: legal-compliance
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+triggers:
+  scheduled:
+  - chain: audit-gdpr
+    interval: 30d

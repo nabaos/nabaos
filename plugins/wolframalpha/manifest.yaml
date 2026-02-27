@@ -1,0 +1,29 @@
+name: wolframalpha
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Wolfram Alpha computational knowledge engine"
+
+abilities:
+  wolframalpha.query:
+    type: cloud
+    endpoint: "https://api.wolframalpha.com/v2/query"
+    method: GET
+    params:
+      input: { type: string, required: true }
+      appid: { type: string, required: true }
+      output: { type: string, default: "json" }
+    description: "Query Wolfram Alpha for computational answers"
+    receipt_fields: [success, result]
+
+  wolframalpha.solve_math:
+    type: cloud
+    endpoint: "https://api.wolframalpha.com/v2/query"
+    method: GET
+    params:
+      input: { type: string, required: true }
+      appid: { type: string, required: true }
+      podstate: { type: string, default: "Step-by-step+solution" }
+      output: { type: string, default: "json" }
+    description: "Solve math problems with step-by-step solutions"
+    receipt_fields: [success, steps]

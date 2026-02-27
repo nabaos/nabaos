@@ -1,0 +1,17 @@
+name: bulk-unsubscribe
+version: 1.0.0
+description: Find and unsubscribe from mailing lists
+category: email-communication
+author: nyaya-official
+permissions:
+- gmail.search
+- gmail.read
+- llm.query
+intent_filters:
+- actions:
+  - unsubscribe
+  - clean
+  targets:
+  - email
+  - inbox
+  priority: 10

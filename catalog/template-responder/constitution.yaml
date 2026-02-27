@@ -1,0 +1,27 @@
+name: template-responder-constitution
+description: Constitution for template-responder
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within template-responder designated scope
+  trigger_actions:
+  - respond
+  - reply
+  trigger_targets:
+  - template
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside template-responder scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: gmail.read, gmail.send, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - gmail.read
+  - gmail.send
+  - llm.query

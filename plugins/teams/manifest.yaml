@@ -1,0 +1,57 @@
+name: teams
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Microsoft Teams API integration for messaging, channels, meetings, and presence"
+
+abilities:
+  teams.send_message:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/teams/{{team_id}}/channels/{{channel_id}}/messages"
+    method: POST
+    headers:
+      Authorization: "Bearer {{TEAMS_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      team_id: { type: string, required: true }
+      channel_id: { type: string, required: true }
+      body: { type: string, required: true }
+    description: "Send a message to a Teams channel"
+    receipt_fields: [message_id]
+
+  teams.list_channels:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/teams/{{team_id}}/channels"
+    method: GET
+    headers:
+      Authorization: "Bearer {{TEAMS_ACCESS_TOKEN}}"
+    params:
+      team_id: { type: string, required: true }
+    description: "List all channels in a Teams group"
+    receipt_fields: [channel_count]
+
+  teams.create_meeting:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/onlineMeetings"
+    method: POST
+    headers:
+      Authorization: "Bearer {{TEAMS_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      subject: { type: string, required: true }
+      startDateTime: { type: datetime, required: true }
+      endDateTime: { type: datetime, required: true }
+      participants: { type: "list[string]", required: false }
+    description: "Create an online Teams meeting"
+    receipt_fields: [meeting_id, join_url]
+
+  teams.get_presence:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/users/{{user_id}}/presence"
+    method: GET
+    headers:
+      Authorization: "Bearer {{TEAMS_ACCESS_TOKEN}}"
+    params:
+      user_id: { type: string, required: true }
+    description: "Get user presence status in Teams"
+    receipt_fields: [availability, activity]

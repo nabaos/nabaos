@@ -1,0 +1,47 @@
+name: deepl
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "DeepL API integration for translation and language detection"
+
+abilities:
+  deepl.translate:
+    type: cloud
+    endpoint: "https://api-free.deepl.com/v2/translate"
+    method: POST
+    headers:
+      Authorization: "DeepL-Auth-Key {{DEEPL_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      text: { type: string, required: true }
+      target_lang: { type: string, required: true }
+      source_lang: { type: string, required: false }
+      formality: { type: string, required: false }
+    description: "Translate text using DeepL"
+    receipt_fields: [translated_text]
+
+  deepl.translate_document:
+    type: cloud
+    endpoint: "https://api-free.deepl.com/v2/document"
+    method: POST
+    headers:
+      Authorization: "DeepL-Auth-Key {{DEEPL_API_KEY}}"
+      Content-Type: "multipart/form-data"
+    params:
+      file: { type: path, required: true }
+      target_lang: { type: string, required: true }
+    description: "Translate a document using DeepL"
+    receipt_fields: [document_id, status]
+
+  deepl.detect_language:
+    type: cloud
+    endpoint: "https://api-free.deepl.com/v2/translate"
+    method: POST
+    headers:
+      Authorization: "DeepL-Auth-Key {{DEEPL_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      text: { type: string, required: true }
+      target_lang: { type: string, default: "EN" }
+    description: "Detect the language of text"
+    receipt_fields: [detected_language]

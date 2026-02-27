@@ -1,0 +1,12 @@
+name: subscription-auditor
+version: 1.0.0
+description: Audit and optimize subscriptions
+category: finance-budgeting
+author: nyaya-official
+permissions:
+- gmail.search
+- llm.query
+triggers:
+  scheduled:
+  - chain: audit-subscriptions
+    interval: 30d

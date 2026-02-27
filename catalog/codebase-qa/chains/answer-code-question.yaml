@@ -1,0 +1,24 @@
+id: answer-code-question
+description: Search codebase context and answer questions
+steps:
+- id: search-issues
+  ability: github.issues
+  params:
+    query: '{{input.question}}'
+    repo: '{{input.repo}}'
+  on_failure: continue
+- id: search-prs
+  ability: github.prs
+  params:
+    query: '{{input.question}}'
+    repo: '{{input.repo}}'
+  on_failure: continue
+- id: answer
+  ability: llm.query
+  params:
+    prompt: 'Answer this question about the codebase: {{input.question}}. Context
+      - Issues: {{search-issues.output}}, PRs: {{search-prs.output}}'
+  depends_on:
+  - search-issues
+  - search-prs
+  on_failure: abort

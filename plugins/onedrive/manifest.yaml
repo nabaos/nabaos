@@ -1,0 +1,41 @@
+name: onedrive
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "OneDrive API integration for file listing, reading, and uploading"
+
+abilities:
+  onedrive.list_files:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/drive/root/children"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ONEDRIVE_ACCESS_TOKEN}}"
+    params:
+      select: { type: string, required: false }
+      top: { type: int, default: 10 }
+    description: "List files in OneDrive root directory"
+    receipt_fields: [file_count]
+
+  onedrive.read_file:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/drive/items/{{item_id}}/content"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ONEDRIVE_ACCESS_TOKEN}}"
+    params:
+      item_id: { type: string, required: true }
+    description: "Download/read a file from OneDrive"
+    receipt_fields: [file_size]
+
+  onedrive.upload_file:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/drive/root:/{{path}}:/content"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ONEDRIVE_ACCESS_TOKEN}}"
+      Content-Type: "application/octet-stream"
+    params:
+      path: { type: path, required: true }
+    description: "Upload a file to OneDrive"
+    receipt_fields: [file_id, created_date_time]

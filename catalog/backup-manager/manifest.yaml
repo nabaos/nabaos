@@ -1,0 +1,11 @@
+name: backup-manager
+version: 1.0.0
+description: Monitor and manage backups
+category: developer-devops
+author: nyaya-official
+permissions:
+- llm.query
+triggers:
+  scheduled:
+  - chain: check-backups
+    interval: 24h

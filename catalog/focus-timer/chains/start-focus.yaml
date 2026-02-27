@@ -1,0 +1,17 @@
+id: start-focus
+description: Start a focus session and log it
+steps:
+- id: plan-session
+  ability: llm.query
+  params:
+    prompt: 'Plan a focus session for: {{input.task}}. Duration: {{input.duration}}'
+  on_failure: abort
+- id: log-session
+  ability: notion.create_page
+  params:
+    database: focus-sessions
+    title: Focus - {{input.task}}
+    content: '{{plan-session.output}}'
+  depends_on:
+  - plan-session
+  on_failure: abort

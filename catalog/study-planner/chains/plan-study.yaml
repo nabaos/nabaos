@@ -1,0 +1,16 @@
+id: plan-study
+description: Create a study schedule with calendar events
+steps:
+- id: plan
+  ability: llm.query
+  params:
+    prompt: 'Create a study schedule for {{input.subject}}. Exam date: {{input.exam_date}}.
+      Available hours: {{input.hours_per_day}}'
+  on_failure: abort
+- id: create-events
+  ability: calendar.create
+  params:
+    events: '{{plan.output}}'
+  depends_on:
+  - plan
+  on_failure: abort

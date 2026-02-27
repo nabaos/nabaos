@@ -1,0 +1,26 @@
+name: book-summarizer-constitution
+description: Constitution for book-summarizer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within book-summarizer designated scope
+  trigger_actions:
+  - summarize
+  trigger_targets:
+  - article
+  - book
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside book-summarizer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: search.web, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - search.web
+  - llm.query

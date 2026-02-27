@@ -1,0 +1,13 @@
+name: portfolio-monitor
+version: 1.0.0
+description: Monitor investment portfolio
+category: finance-budgeting
+author: nyaya-official
+permissions:
+- finance.stock_quote
+- finance.crypto_price
+- llm.query
+triggers:
+  scheduled:
+  - chain: monitor-portfolio
+    interval: 1h

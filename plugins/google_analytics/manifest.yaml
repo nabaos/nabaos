@@ -1,0 +1,46 @@
+name: google_analytics
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Google Analytics Data API integration for reporting and event analysis"
+
+abilities:
+  ga.get_report:
+    type: cloud
+    endpoint: "https://analyticsdata.googleapis.com/v1beta/properties/{{property_id}}:runReport"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GOOGLE_ANALYTICS_TOKEN}}"
+    params:
+      property_id: { type: string, required: true }
+      dimensions: { type: string, required: true, description: "Comma-separated dimension names" }
+      metrics: { type: string, required: true, description: "Comma-separated metric names" }
+      dateRanges: { type: string, required: false }
+    description: "Run analytics report with dimensions and metrics"
+    receipt_fields: [row_count, report_complete]
+
+  ga.get_realtime:
+    type: cloud
+    endpoint: "https://analyticsdata.googleapis.com/v1beta/properties/{{property_id}}:runRealtimeReport"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GOOGLE_ANALYTICS_TOKEN}}"
+    params:
+      property_id: { type: string, required: true }
+      dimensions: { type: string, required: false }
+      metrics: { type: string, required: true }
+    description: "Get real-time analytics data"
+    receipt_fields: [realtime_user_count]
+
+  ga.get_events:
+    type: cloud
+    endpoint: "https://analyticsdata.googleapis.com/v1beta/properties/{{property_id}}:runReport"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GOOGLE_ANALYTICS_TOKEN}}"
+    params:
+      property_id: { type: string, required: true }
+      dimensions: { type: string, required: true, default: "eventName" }
+      metrics: { type: string, required: true, default: "eventCount" }
+    description: "Get event data from analytics"
+    receipt_fields: [event_count]

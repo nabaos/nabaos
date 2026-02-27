@@ -1,0 +1,55 @@
+name: greenhouse
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Greenhouse recruiting API integration for job management and candidate tracking"
+
+abilities:
+  greenhouse.list_jobs:
+    type: cloud
+    endpoint: "https://harvest.greenhouse.io/v1/jobs"
+    method: GET
+    headers:
+      Authorization: "Basic {{GREENHOUSE_API_KEY}}"
+    params:
+      status: { type: string, required: false, description: "Job status (open, closed)" }
+      department_id: { type: string, required: false }
+    description: "List all jobs with optional filters"
+    receipt_fields: [job_count]
+
+  greenhouse.get_candidates:
+    type: cloud
+    endpoint: "https://harvest.greenhouse.io/v1/candidates"
+    method: GET
+    headers:
+      Authorization: "Basic {{GREENHOUSE_API_KEY}}"
+    params:
+      job_id: { type: string, required: false }
+      status: { type: string, required: false, description: "Candidate status" }
+    description: "List candidates for a job"
+    receipt_fields: [candidate_count]
+
+  greenhouse.add_note:
+    type: cloud
+    endpoint: "https://harvest.greenhouse.io/v1/candidates/{{candidate_id}}/activity_feed/notes"
+    method: POST
+    headers:
+      Authorization: "Basic {{GREENHOUSE_API_KEY}}"
+    params:
+      candidate_id: { type: string, required: true }
+      body: { type: string, required: true, description: "Note content" }
+    description: "Add note to candidate activity feed"
+    receipt_fields: [note_id]
+
+  greenhouse.schedule_interview:
+    type: cloud
+    endpoint: "https://harvest.greenhouse.io/v1/candidates/{{candidate_id}}/scheduled_interviews"
+    method: POST
+    headers:
+      Authorization: "Basic {{GREENHOUSE_API_KEY}}"
+    params:
+      candidate_id: { type: string, required: true }
+      interview_id: { type: string, required: true }
+      interviewers: { type: string, required: true, description: "Comma-separated interviewer IDs" }
+    description: "Schedule an interview for a candidate"
+    receipt_fields: [interview_id]

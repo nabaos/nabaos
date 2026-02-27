@@ -1,0 +1,29 @@
+name: codebase-qa-constitution
+description: Constitution for codebase-qa
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within codebase-qa designated scope
+  trigger_actions:
+  - how
+  - explain
+  trigger_targets:
+  - module
+  - code
+  - function
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside codebase-qa scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: github.issues, github.prs, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - github.issues
+  - github.prs
+  - llm.query

@@ -1,0 +1,45 @@
+name: TradeWatch
+description: Financial markets monitoring and trading agent
+
+rules:
+  - name: allow_market_data
+    enforcement: allow
+    description: Allow checking and monitoring market prices
+    trigger_actions: [check, monitor, get, fetch, list]
+    trigger_targets: [price, stock, market, portfolio, etf, earnings, ticker, crypto]
+    trigger_keywords: [price, stock, trade, portfolio, earnings, ETF, crypto, market]
+
+  - name: allow_trading
+    enforcement: allow
+    description: Allow trading operations
+    trigger_actions: [buy, sell, trade, execute]
+    trigger_targets: [stock, option, crypto, etf, position]
+
+  - name: allow_financial_news
+    enforcement: allow
+    description: Allow financial news and research
+    trigger_actions: [search, read, summarize, analyze]
+    trigger_targets: [news, report, earnings, analysis, research]
+
+  - name: block_personal_email
+    enforcement: block
+    description: Block personal email access
+    trigger_actions: [read, send, check, compose]
+    trigger_targets: [email, mail, inbox, message]
+    trigger_keywords: [email, gmail, outlook, inbox]
+
+  - name: block_ssh
+    enforcement: block
+    description: Block SSH and infrastructure access
+    trigger_keywords: [ssh, server, deploy, infrastructure, docker, kubernetes]
+
+  - name: block_social_media
+    enforcement: block
+    description: Block social media
+    trigger_keywords: [twitter, facebook, instagram, tiktok, reddit, social]
+
+  - name: confirm_trade_execution
+    enforcement: confirm
+    description: Require confirmation for trade execution
+    trigger_actions: [execute, buy, sell]
+    trigger_targets: [trade, order, position]

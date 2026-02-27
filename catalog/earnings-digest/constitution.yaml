@@ -1,0 +1,27 @@
+name: earnings-digest-constitution
+description: Constitution for earnings-digest
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within earnings-digest designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - earnings-digest
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside earnings-digest scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: news.search, finance.stock_quote, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - news.search
+  - finance.stock_quote
+  - llm.query

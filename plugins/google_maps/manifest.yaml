@@ -1,0 +1,62 @@
+name: google_maps
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Google Maps API integration for location and navigation services"
+
+abilities:
+  maps.geocode:
+    type: cloud
+    endpoint: "https://maps.googleapis.com/maps/api/geocode/json"
+    method: GET
+    params:
+      address: { type: string, required: true }
+      key: { type: string, required: true }
+    description: "Geocode an address using Google Maps"
+    receipt_fields: [lat, lng]
+
+  maps.directions:
+    type: cloud
+    endpoint: "https://maps.googleapis.com/maps/api/directions/json"
+    method: GET
+    params:
+      origin: { type: string, required: true }
+      destination: { type: string, required: true }
+      mode: { type: string, required: false, default: "driving" }
+      key: { type: string, required: true }
+    description: "Get directions from Google Maps"
+    receipt_fields: [distance, duration]
+
+  maps.search_nearby:
+    type: cloud
+    endpoint: "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+    method: GET
+    params:
+      location: { type: string, required: true }
+      radius: { type: int, required: true }
+      type: { type: string, required: true }
+      key: { type: string, required: true }
+    description: "Search for nearby places using Google Maps"
+    receipt_fields: [place_count]
+
+  maps.get_place_details:
+    type: cloud
+    endpoint: "https://maps.googleapis.com/maps/api/place/details/json"
+    method: GET
+    params:
+      place_id: { type: string, required: true }
+      key: { type: string, required: true }
+    description: "Get detailed information about a place"
+    receipt_fields: [place_name]
+
+  maps.distance_matrix:
+    type: cloud
+    endpoint: "https://maps.googleapis.com/maps/api/distancematrix/json"
+    method: GET
+    params:
+      origins: { type: string, required: true }
+      destinations: { type: string, required: true }
+      mode: { type: string, required: false, default: "driving" }
+      key: { type: string, required: true }
+    description: "Get distance and duration matrix from Google Maps"
+    receipt_fields: [route_count]

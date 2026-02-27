@@ -1,0 +1,15 @@
+id: audit-subscriptions
+description: Find all subscriptions and recommend optimizations
+steps:
+- id: search-subs
+  ability: gmail.search
+  params:
+    query: subscription OR recurring OR monthly charge OR annual renewal
+  on_failure: abort
+- id: audit
+  ability: llm.query
+  params:
+    prompt: 'Audit subscriptions and recommend which to keep/cancel/downgrade: {{search-subs.output}}'
+  depends_on:
+  - search-subs
+  on_failure: abort

@@ -1,0 +1,15 @@
+name: symptom-checker
+version: 1.0.0
+description: Check symptoms with health info (non-medical advice)
+category: health-wellness
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - check
+  targets:
+  - symptom
+  - health
+  priority: 10

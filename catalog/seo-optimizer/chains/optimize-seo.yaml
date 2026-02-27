@@ -1,0 +1,16 @@
+id: optimize-seo
+description: Analyze keywords and optimize content for SEO
+steps:
+- id: research-keywords
+  ability: search.web
+  params:
+    query: '{{input.topic}} keywords SEO'
+  on_failure: continue
+- id: optimize
+  ability: llm.query
+  params:
+    prompt: 'Optimize this content for SEO. Target keywords from: {{research-keywords.output}}.
+      Content: {{input.content}}'
+  depends_on:
+  - research-keywords
+  on_failure: abort

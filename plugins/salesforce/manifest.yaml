@@ -1,0 +1,70 @@
+name: salesforce
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Salesforce CRM API integration for sales records and opportunity management"
+
+abilities:
+  salesforce.search:
+    type: cloud
+    endpoint: "{{SF_INSTANCE}}/services/data/v59.0/query"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SALESFORCE_ACCESS_TOKEN}}"
+    params:
+      q: { type: string, required: true, description: "SOQL query" }
+    description: "Query Salesforce records using SOQL"
+    receipt_fields: [record_count]
+
+  salesforce.get_record:
+    type: cloud
+    endpoint: "{{SF_INSTANCE}}/services/data/v59.0/sobjects/{{object}}/{{id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SALESFORCE_ACCESS_TOKEN}}"
+    params:
+      object: { type: string, required: true, description: "sObject type (Lead, Opportunity, etc)" }
+      id: { type: string, required: true }
+    description: "Get a specific Salesforce record"
+    receipt_fields: [record_id, record_type]
+
+  salesforce.create_lead:
+    type: cloud
+    endpoint: "{{SF_INSTANCE}}/services/data/v59.0/sobjects/Lead"
+    method: POST
+    headers:
+      Authorization: "Bearer {{SALESFORCE_ACCESS_TOKEN}}"
+    params:
+      FirstName: { type: string, required: true }
+      LastName: { type: string, required: true }
+      Company: { type: string, required: true }
+      Email: { type: string, required: false }
+    description: "Create a new lead in Salesforce"
+    receipt_fields: [lead_id]
+
+  salesforce.update_opportunity:
+    type: cloud
+    endpoint: "{{SF_INSTANCE}}/services/data/v59.0/sobjects/Opportunity/{{id}}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{SALESFORCE_ACCESS_TOKEN}}"
+    params:
+      id: { type: string, required: true }
+      StageName: { type: string, required: false }
+      Amount: { type: number, required: false }
+      CloseDate: { type: string, required: false }
+    description: "Update an opportunity record"
+    receipt_fields: [update_success]
+
+  salesforce.log_activity:
+    type: cloud
+    endpoint: "{{SF_INSTANCE}}/services/data/v59.0/sobjects/Task"
+    method: POST
+    headers:
+      Authorization: "Bearer {{SALESFORCE_ACCESS_TOKEN}}"
+    params:
+      Subject: { type: string, required: true }
+      WhoId: { type: string, required: true, description: "Lead or Contact ID" }
+      Description: { type: string, required: false }
+    description: "Create a task activity record"
+    receipt_fields: [task_id]

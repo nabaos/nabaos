@@ -1,0 +1,15 @@
+name: bio-writer
+version: 1.0.0
+description: Write social media bios
+category: social-media
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - write
+  - create
+  targets:
+  - bio
+  - profile
+  priority: 10

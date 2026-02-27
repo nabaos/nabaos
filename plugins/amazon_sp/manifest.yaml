@@ -1,0 +1,33 @@
+name: amazon_sp
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Amazon Product Advertising API integration for product data"
+
+abilities:
+  amazon.search_products:
+    type: cloud
+    endpoint: "https://webservices.amazon.com/paapi5/searchitems"
+    method: POST
+    headers:
+      Content-Type: "application/x-amz-json-1.1"
+      Authorization: "AWS4-HMAC-SHA256 {{AWS_SIGNATURE}}"
+    params:
+      Keywords: { type: string, required: true }
+      SearchIndex: { type: string, required: true }
+      ItemCount: { type: int, required: false, default: 10 }
+    description: "Search products on Amazon"
+    receipt_fields: [product_count]
+
+  amazon.get_product:
+    type: cloud
+    endpoint: "https://webservices.amazon.com/paapi5/getitems"
+    method: POST
+    headers:
+      Content-Type: "application/x-amz-json-1.1"
+      Authorization: "AWS4-HMAC-SHA256 {{AWS_SIGNATURE}}"
+    params:
+      ItemIds: { type: string, required: true }
+      Resources: { type: string, required: false }
+    description: "Get detailed product information from Amazon"
+    receipt_fields: [product_name]

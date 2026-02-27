@@ -1,0 +1,58 @@
+name: google_sheets
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Google Sheets API integration for reading, writing, and managing spreadsheets"
+
+abilities:
+  gsheets.read_range:
+    type: cloud
+    endpoint: "https://sheets.googleapis.com/v4/spreadsheets/{{spreadsheet_id}}/values/{{range}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GOOGLE_SHEETS_TOKEN}}"
+    params:
+      spreadsheet_id: { type: string, required: true }
+      range: { type: string, required: true }
+    description: "Read values from a Google Sheets range"
+    receipt_fields: [row_count, value_count]
+
+  gsheets.write_range:
+    type: cloud
+    endpoint: "https://sheets.googleapis.com/v4/spreadsheets/{{spreadsheet_id}}/values/{{range}}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{GOOGLE_SHEETS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      spreadsheet_id: { type: string, required: true }
+      range: { type: string, required: true }
+      values: { type: "list[list]", required: true }
+    description: "Write values to a Google Sheets range"
+    receipt_fields: [updated_cells, updated_rows, updated_columns]
+
+  gsheets.append_rows:
+    type: cloud
+    endpoint: "https://sheets.googleapis.com/v4/spreadsheets/{{spreadsheet_id}}/values/{{range}}:append"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GOOGLE_SHEETS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      spreadsheet_id: { type: string, required: true }
+      range: { type: string, required: true }
+      values: { type: "list[list]", required: true }
+    description: "Append rows to a Google Sheet"
+    receipt_fields: [updated_rows, updated_cells]
+
+  gsheets.create_sheet:
+    type: cloud
+    endpoint: "https://sheets.googleapis.com/v4/spreadsheets"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GOOGLE_SHEETS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      title: { type: string, required: true }
+    description: "Create a new Google Spreadsheet"
+    receipt_fields: [spreadsheet_id]

@@ -1,0 +1,21 @@
+id: manage-todo
+description: Parse todo command and update Notion
+steps:
+- id: parse-command
+  ability: llm.query
+  params:
+    prompt: 'Parse this todo command (add/check/list): {{input.text}}'
+  on_failure: abort
+- id: query-todos
+  ability: notion.query
+  params:
+    database: todos
+  on_failure: continue
+- id: update-todo
+  ability: notion.create_page
+  params:
+    database: todos
+    content: '{{parse-command.output}}'
+  depends_on:
+  - parse-command
+  on_failure: abort

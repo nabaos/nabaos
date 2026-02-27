@@ -1,0 +1,60 @@
+name: github
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "GitHub API integration"
+
+abilities:
+  github.issues:
+    type: cloud
+    endpoint: "https://api.github.com/repos/{{owner}}/{{repo}}/issues"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GITHUB_TOKEN}}"
+      Accept: "application/vnd.github+json"
+    params:
+      owner: { type: string, required: true }
+      repo: { type: string, required: true }
+      state: { type: string, default: "open" }
+    description: "List GitHub issues"
+    receipt_fields: [issue_count]
+
+  github.create_issue:
+    type: cloud
+    endpoint: "https://api.github.com/repos/{{owner}}/{{repo}}/issues"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GITHUB_TOKEN}}"
+      Accept: "application/vnd.github+json"
+      Content-Type: "application/json"
+    params:
+      owner: { type: string, required: true }
+      repo: { type: string, required: true }
+      title: { type: string, required: true }
+      body: { type: string, required: false }
+    description: "Create a GitHub issue"
+    receipt_fields: [issue_number]
+
+  github.prs:
+    type: cloud
+    endpoint: "https://api.github.com/repos/{{owner}}/{{repo}}/pulls"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GITHUB_TOKEN}}"
+      Accept: "application/vnd.github+json"
+    params:
+      owner: { type: string, required: true }
+      repo: { type: string, required: true }
+      state: { type: string, default: "open" }
+    description: "List pull requests"
+    receipt_fields: [pr_count]
+
+  github.notifications:
+    type: cloud
+    endpoint: "https://api.github.com/notifications"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GITHUB_TOKEN}}"
+      Accept: "application/vnd.github+json"
+    description: "List GitHub notifications"
+    receipt_fields: [notification_count]

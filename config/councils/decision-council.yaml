@@ -1,0 +1,13 @@
+council:
+  name: "Decision Council"
+  moderator: "sherlock"
+  participants:
+    - agent: "ironman"
+      role: "advocate"
+    - agent: "sherlock"
+      role: "challenger"
+    - agent: "gandhi"
+      role: "synthesizer"
+  rounds: 2
+  parallel: true
+  output: "synthesis"

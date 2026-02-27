@@ -1,0 +1,12 @@
+name: news-monitor
+version: 1.0.0
+description: Monitor news for specific topics
+category: research-analysis
+author: nyaya-official
+permissions:
+- news.search
+- llm.query
+triggers:
+  scheduled:
+  - chain: monitor-news
+    interval: 6h

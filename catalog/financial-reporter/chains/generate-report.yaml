@@ -1,0 +1,15 @@
+id: generate-report
+description: Compile financial data into a report
+steps:
+- id: get-data
+  ability: finance.stock_quote
+  params:
+    symbols: '{{input.symbols}}'
+  on_failure: abort
+- id: report
+  ability: llm.query
+  params:
+    prompt: 'Generate a financial report with analysis: {{get-data.output}}'
+  depends_on:
+  - get-data
+  on_failure: abort

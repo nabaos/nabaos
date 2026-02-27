@@ -1,0 +1,41 @@
+name: obsidian
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Obsidian vault integration via Local REST API"
+
+abilities:
+  obsidian.append_note:
+    type: cloud
+    endpoint: "http://localhost:27123/vault/{{path}}"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    params:
+      path: { type: string, required: true }
+      content: { type: string, required: true }
+    description: "Append content to an existing Obsidian note"
+    receipt_fields: [path]
+
+  obsidian.create_note:
+    type: cloud
+    endpoint: "http://localhost:27123/vault/{{path}}"
+    method: PUT
+    headers:
+      Content-Type: "application/json"
+    params:
+      path: { type: string, required: true }
+      content: { type: string, required: true }
+    description: "Create a new Obsidian note with content"
+    receipt_fields: [path]
+
+  obsidian.search_vault:
+    type: cloud
+    endpoint: "http://localhost:27123/search"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    params:
+      query: { type: string, required: true }
+    description: "Search Obsidian vault for notes matching query"
+    receipt_fields: [result_count]

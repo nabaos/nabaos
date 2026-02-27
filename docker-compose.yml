@@ -1,0 +1,19 @@
+version: '3.8'
+services:
+  nabaos:
+    build: .
+    environment:
+      - NABA_LLM_PROVIDER=${NABA_LLM_PROVIDER:-anthropic}
+      - NABA_LLM_API_KEY=${NABA_LLM_API_KEY}
+      - NABA_TELEGRAM_BOT_TOKEN=${NABA_TELEGRAM_BOT_TOKEN}
+      - NABA_DATA_DIR=/data
+      - NABA_MODEL_PATH=/models
+      - NABA_DAILY_BUDGET_USD=${NABA_DAILY_BUDGET_USD:-10.0}
+    volumes:
+      - nabaos-data:/data
+      - nabaos-models:/models
+    restart: unless-stopped
+
+volumes:
+  nabaos-data:
+  nabaos-models:

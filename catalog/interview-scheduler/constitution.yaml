@@ -1,0 +1,28 @@
+name: interview-scheduler-constitution
+description: Constitution for interview-scheduler
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within interview-scheduler designated scope
+  trigger_actions:
+  - schedule
+  trigger_targets:
+  - interview
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside interview-scheduler scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: calendar.list, calendar.create, gmail.send,
+    llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - calendar.list
+  - calendar.create
+  - gmail.send
+  - llm.query

@@ -1,0 +1,25 @@
+name: proposal-writer-constitution
+description: Constitution for proposal-writer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within proposal-writer designated scope
+  trigger_actions:
+  - create
+  - write
+  trigger_targets:
+  - proposal
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside proposal-writer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - llm.query

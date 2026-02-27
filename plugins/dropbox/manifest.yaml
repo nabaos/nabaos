@@ -1,0 +1,56 @@
+name: dropbox
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Dropbox API integration for file listing, reading, uploading, and sharing"
+
+abilities:
+  dropbox.list_folder:
+    type: cloud
+    endpoint: "https://api.dropboxapi.com/2/files/list_folder"
+    method: POST
+    headers:
+      Authorization: "Bearer {{DROPBOX_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      path: { type: path, required: true }
+      recursive: { type: bool, default: false }
+    description: "List files in a Dropbox folder"
+    receipt_fields: [file_count]
+
+  dropbox.read_file:
+    type: cloud
+    endpoint: "https://content.dropboxapi.com/2/files/download"
+    method: POST
+    headers:
+      Authorization: "Bearer {{DROPBOX_ACCESS_TOKEN}}"
+      Dropbox-API-Arg: "{{path}}"
+    params:
+      path: { type: path, required: true }
+    description: "Download/read a file from Dropbox"
+    receipt_fields: [file_size]
+
+  dropbox.upload_file:
+    type: cloud
+    endpoint: "https://content.dropboxapi.com/2/files/upload"
+    method: POST
+    headers:
+      Authorization: "Bearer {{DROPBOX_ACCESS_TOKEN}}"
+      Content-Type: "application/octet-stream"
+      Dropbox-API-Arg: "{{path}}"
+    params:
+      path: { type: path, required: true }
+    description: "Upload a file to Dropbox"
+    receipt_fields: [file_id, server_modified]
+
+  dropbox.create_link:
+    type: cloud
+    endpoint: "https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings"
+    method: POST
+    headers:
+      Authorization: "Bearer {{DROPBOX_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      path: { type: path, required: true }
+    description: "Create a shared link for a Dropbox file"
+    receipt_fields: [shared_link_url]

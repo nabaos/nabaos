@@ -1,0 +1,46 @@
+name: facebook
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Facebook Graph API integration for page posts, insights, and ad performance"
+
+abilities:
+  facebook.post_to_page:
+    type: cloud
+    endpoint: "https://graph.facebook.com/{{page_id}}/feed"
+    method: POST
+    headers:
+      Authorization: "Bearer {{FACEBOOK_PAGE_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      page_id: { type: string, required: true }
+      message: { type: string, required: true }
+      link: { type: url, required: false }
+    description: "Post a message to a Facebook page"
+    receipt_fields: [post_id, created_at]
+
+  facebook.get_page_insights:
+    type: cloud
+    endpoint: "https://graph.facebook.com/{{page_id}}/insights"
+    method: GET
+    headers:
+      Authorization: "Bearer {{FACEBOOK_PAGE_TOKEN}}"
+    params:
+      page_id: { type: string, required: true }
+      metric: { type: string, required: true }
+      period: { type: string, default: "day" }
+    description: "Get page insights and analytics"
+    receipt_fields: [insight_count]
+
+  facebook.get_ad_performance:
+    type: cloud
+    endpoint: "https://graph.facebook.com/act_{{ad_account_id}}/insights"
+    method: GET
+    headers:
+      Authorization: "Bearer {{FACEBOOK_PAGE_TOKEN}}"
+    params:
+      ad_account_id: { type: string, required: true }
+      level: { type: string, required: true }
+      fields: { type: string, required: false }
+    description: "Get ad campaign performance metrics"
+    receipt_fields: [ad_count, total_spend]

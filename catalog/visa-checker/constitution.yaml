@@ -1,0 +1,26 @@
+name: visa-checker-constitution
+description: Constitution for visa-checker
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within visa-checker designated scope
+  trigger_actions:
+  - check
+  trigger_targets:
+  - visa
+  - travel-requirements
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside visa-checker scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: search.web, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - search.web
+  - llm.query

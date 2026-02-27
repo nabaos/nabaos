@@ -1,0 +1,15 @@
+id: auto-remediate
+description: Diagnose and suggest remediation for alerts
+steps:
+- id: diagnose
+  ability: llm.query
+  params:
+    prompt: 'Diagnose this alert and determine root cause: {{input.alert}}'
+  on_failure: abort
+- id: remediate
+  ability: llm.query
+  params:
+    prompt: 'Suggest safe auto-remediation steps for: {{diagnose.output}}'
+  depends_on:
+  - diagnose
+  on_failure: abort

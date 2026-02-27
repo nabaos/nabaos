@@ -1,0 +1,13 @@
+name: bill-reminder
+version: 1.0.0
+description: Remind about upcoming bills
+category: finance-budgeting
+author: nyaya-official
+permissions:
+- gmail.search
+- calendar.create
+- llm.query
+triggers:
+  scheduled:
+  - chain: check-bills
+    interval: 24h

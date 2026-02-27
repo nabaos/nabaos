@@ -1,0 +1,15 @@
+ensemble:
+  name: "Idealism vs Pragmatism"
+  output_format: "chapters"
+  agents:
+    - agent: "gandhi"
+      assignment: "Chapter 1: The idealist perspective - moral foundations and principled reasoning"
+      order: 1
+    - agent: "bhagat_singh"
+      assignment: "Chapter 2: The pragmatist perspective - urgent action and real-world constraints"
+      order: 2
+    - agent: "ambedkar"
+      assignment: "Chapter 3: Structural analysis - systemic evaluation and constitutional framing"
+      order: 3
+  context_passing: true
+  editor: null

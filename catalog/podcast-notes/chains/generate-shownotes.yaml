@@ -1,0 +1,9 @@
+id: generate-shownotes
+description: Process podcast content and generate show notes
+steps:
+- id: process
+  ability: llm.query
+  params:
+    prompt: 'Generate detailed show notes including timestamps, key topics, guest
+      info, and links from this podcast content: {{input.transcript}}'
+  on_failure: abort

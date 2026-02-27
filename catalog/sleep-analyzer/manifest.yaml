@@ -1,0 +1,14 @@
+name: sleep-analyzer
+version: 1.0.0
+description: Analyze sleep patterns
+category: health-wellness
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - analyze
+  targets:
+  - sleep
+  - rest
+  priority: 10

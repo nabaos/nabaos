@@ -1,0 +1,16 @@
+name: product-comparator
+version: 1.0.0
+description: Compare products and services
+category: research-analysis
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - compare
+  targets:
+  - product
+  - service
+  - tool
+  priority: 10

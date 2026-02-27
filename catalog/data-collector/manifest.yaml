@@ -1,0 +1,19 @@
+name: data-collector
+version: 1.0.0
+description: Collect structured data from web sources
+category: research-analysis
+author: nyaya-official
+permissions:
+- search.web
+- browser.navigate
+- browser.extract
+- llm.query
+intent_filters:
+- actions:
+  - collect
+  - scrape
+  - gather
+  targets:
+  - data
+  - information
+  priority: 10

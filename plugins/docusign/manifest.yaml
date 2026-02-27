@@ -1,0 +1,70 @@
+name: docusign
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "DocuSign eSignature API integration for document signing and template management"
+
+abilities:
+  docusign.create_envelope:
+    type: cloud
+    endpoint: "{{DOCUSIGN_BASE}}/restapi/v2.1/accounts/{{account_id}}/envelopes"
+    method: POST
+    headers:
+      Authorization: "Bearer {{DOCUSIGN_ACCESS_TOKEN}}"
+    params:
+      account_id: { type: string, required: true }
+      templateId: { type: string, required: true }
+      signers: { type: string, required: true }
+    description: "Create envelope from template with signers"
+    receipt_fields: [envelope_id]
+
+  docusign.send_for_signature:
+    type: cloud
+    endpoint: "{{DOCUSIGN_BASE}}/restapi/v2.1/accounts/{{account_id}}/envelopes/{{envelope_id}}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{DOCUSIGN_ACCESS_TOKEN}}"
+    params:
+      account_id: { type: string, required: true }
+      envelope_id: { type: string, required: true }
+      status: { type: string, required: true, default: "sent" }
+    description: "Send envelope for signature"
+    receipt_fields: [send_status]
+
+  docusign.get_envelope_status:
+    type: cloud
+    endpoint: "{{DOCUSIGN_BASE}}/restapi/v2.1/accounts/{{account_id}}/envelopes/{{envelope_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{DOCUSIGN_ACCESS_TOKEN}}"
+    params:
+      account_id: { type: string, required: true }
+      envelope_id: { type: string, required: true }
+    description: "Get status of envelope"
+    receipt_fields: [envelope_status]
+
+  docusign.download_signed:
+    type: cloud
+    endpoint: "{{DOCUSIGN_BASE}}/restapi/v2.1/accounts/{{account_id}}/envelopes/{{envelope_id}}/documents/combined"
+    method: GET
+    headers:
+      Authorization: "Bearer {{DOCUSIGN_ACCESS_TOKEN}}"
+    params:
+      account_id: { type: string, required: true }
+      envelope_id: { type: string, required: true }
+    description: "Download signed document"
+    receipt_fields: [document_bytes]
+
+  docusign.void_envelope:
+    type: cloud
+    endpoint: "{{DOCUSIGN_BASE}}/restapi/v2.1/accounts/{{account_id}}/envelopes/{{envelope_id}}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{DOCUSIGN_ACCESS_TOKEN}}"
+    params:
+      account_id: { type: string, required: true }
+      envelope_id: { type: string, required: true }
+      status: { type: string, required: true, default: "voided" }
+      voidedReason: { type: string, required: false }
+    description: "Void/cancel envelope"
+    receipt_fields: [void_status]

@@ -1,0 +1,16 @@
+id: scan-receipts
+description: Find receipt emails and extract data
+steps:
+- id: search-receipts
+  ability: gmail.search
+  params:
+    query: receipt OR order confirmation
+    max_results: 20
+  on_failure: abort
+- id: extract
+  ability: llm.query
+  params:
+    prompt: 'Extract receipt data (merchant, amount, date, items) from: {{search-receipts.output}}'
+  depends_on:
+  - search-receipts
+  on_failure: abort

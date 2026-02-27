@@ -1,0 +1,37 @@
+name: coursera
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Coursera API integration for course search, retrieval, and progress tracking"
+
+abilities:
+  coursera.search_courses:
+    type: cloud
+    endpoint: "https://api.coursera.org/api/courses.v1"
+    method: GET
+    params:
+      q: { type: string, required: true, default: "search" }
+      query: { type: string, required: true, description: "Search query" }
+      fields: { type: string, required: false }
+    description: "Search for courses on Coursera"
+    receipt_fields: [course_count]
+
+  coursera.get_course:
+    type: cloud
+    endpoint: "https://api.coursera.org/api/courses.v1/{{course_id}}"
+    method: GET
+    params:
+      course_id: { type: string, required: true }
+      fields: { type: string, required: false }
+    description: "Get detailed information about a specific course"
+    receipt_fields: [course_name, instructor_count]
+
+  coursera.get_progress:
+    type: cloud
+    endpoint: "https://api.coursera.org/api/learnerCourseGrades.v1"
+    method: GET
+    params:
+      userId: { type: string, required: true }
+      courseId: { type: string, required: true }
+    description: "Get course progress and grades for a learner"
+    receipt_fields: [progress_percentage, current_grade]

@@ -1,0 +1,27 @@
+name: dependency-scanner-constitution
+description: Constitution for dependency-scanner
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within dependency-scanner designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - dependency-scanner
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside dependency-scanner scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: github.issues, search.web, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - github.issues
+  - search.web
+  - llm.query

@@ -1,0 +1,16 @@
+id: send-survey
+description: Generate and send pulse survey questions
+steps:
+- id: generate-survey
+  ability: llm.query
+  params:
+    prompt: Generate 5 pulse survey questions about team morale, workload, and satisfaction
+  on_failure: abort
+- id: send
+  ability: slack.send
+  params:
+    channel: '{{input.channel}}'
+    message: '{{generate-survey.output}}'
+  depends_on:
+  - generate-survey
+  on_failure: abort

@@ -1,0 +1,55 @@
+name: HomeAssistant
+description: Smart home and personal productivity agent
+
+rules:
+  - name: allow_iot
+    enforcement: allow
+    description: Allow IoT and smart home operations
+    trigger_actions: [check, set, toggle, get, list, monitor]
+    trigger_targets: [light, thermostat, sensor, device, room, scene, automation]
+    trigger_keywords: [lights, temperature, humidity, motion, door, window, smart]
+
+  - name: allow_calendar
+    enforcement: allow
+    description: Allow calendar and scheduling
+    trigger_actions: [check, list, add, schedule, remind]
+    trigger_targets: [calendar, event, meeting, appointment, reminder, schedule]
+
+  - name: allow_weather
+    enforcement: allow
+    description: Allow weather queries
+    trigger_actions: [check, get, forecast]
+    trigger_targets: [weather, temperature, rain, forecast, wind]
+
+  - name: allow_reminders
+    enforcement: allow
+    description: Allow notifications and reminders
+    trigger_actions: [remind, notify, alert, set]
+    trigger_targets: [reminder, alarm, timer, notification]
+
+  - name: block_financial
+    enforcement: block
+    description: Block financial operations
+    trigger_keywords: [stock, trade, portfolio, bitcoin, crypto, invest, bank]
+
+  - name: block_code
+    enforcement: block
+    description: Block code and development operations
+    trigger_keywords: [code, git, deploy, compile, docker, kubernetes, server]
+
+  - name: block_infrastructure
+    enforcement: block
+    description: Block infrastructure access
+    trigger_keywords: [ssh, database, api key, credentials, admin, root]
+
+  - name: confirm_lock_unlock
+    enforcement: confirm
+    description: Require confirmation for locks
+    trigger_actions: [lock, unlock, open, close]
+    trigger_targets: [door, gate, lock, garage]
+
+  - name: confirm_thermostat
+    enforcement: confirm
+    description: Require confirmation for thermostat changes
+    trigger_actions: [set, change, adjust]
+    trigger_targets: [thermostat, temperature, hvac, heating, cooling]

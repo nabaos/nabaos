@@ -1,0 +1,48 @@
+name: hue
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Philips Hue smart lighting API integration for light control and scenes"
+
+abilities:
+  hue.list_lights:
+    type: cloud
+    endpoint: "{{HUE_BRIDGE_IP}}/api/{{HUE_USERNAME}}/lights"
+    method: GET
+    params: {}
+    description: "List all lights connected to Hue bridge"
+    receipt_fields: [light_count]
+
+  hue.set_light:
+    type: cloud
+    endpoint: "{{HUE_BRIDGE_IP}}/api/{{HUE_USERNAME}}/lights/{{light_id}}/state"
+    method: PUT
+    params:
+      light_id: { type: string, required: true }
+      on: { type: bool, required: false }
+      bri: { type: number, required: false, description: "Brightness 0-254" }
+      ct: { type: number, required: false, description: "Color temperature in mirek" }
+      xy: { type: string, required: false, description: "CIE 1931 color coordinates" }
+    description: "Set state and properties of a light"
+    receipt_fields: [state_updated]
+
+  hue.activate_scene:
+    type: cloud
+    endpoint: "{{HUE_BRIDGE_IP}}/api/{{HUE_USERNAME}}/groups/{{group_id}}/action"
+    method: PUT
+    params:
+      group_id: { type: string, required: true }
+      scene: { type: string, required: true, description: "Scene ID" }
+    description: "Activate a scene for a group of lights"
+    receipt_fields: [scene_activated]
+
+  hue.create_schedule:
+    type: cloud
+    endpoint: "{{HUE_BRIDGE_IP}}/api/{{HUE_USERNAME}}/schedules"
+    method: POST
+    params:
+      name: { type: string, required: true }
+      command: { type: string, required: true, description: "Command to execute" }
+      time: { type: string, required: true, description: "ISO timestamp or recurring time" }
+    description: "Create a schedule to trigger commands"
+    receipt_fields: [schedule_id]

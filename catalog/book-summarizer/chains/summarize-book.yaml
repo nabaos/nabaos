@@ -1,0 +1,16 @@
+id: summarize-book
+description: Find and summarize a book
+steps:
+- id: search
+  ability: search.web
+  params:
+    query: '{{input.title}} book summary key takeaways'
+  on_failure: continue
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Summarize ''{{input.title}}'' by {{input.author}}. Include key takeaways,
+      main arguments, and notable quotes. Research: {{search.output}}'
+  depends_on:
+  - search
+  on_failure: abort

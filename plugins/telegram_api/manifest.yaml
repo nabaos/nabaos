@@ -1,0 +1,41 @@
+name: telegram_api
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Telegram Bot API integration for messaging, file sending, and updates"
+
+abilities:
+  telegram_api.send_message:
+    type: cloud
+    endpoint: "https://api.telegram.org/bot{{TELEGRAM_BOT_TOKEN}}/sendMessage"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    params:
+      chat_id: { type: string, required: true }
+      text: { type: string, required: true }
+      parse_mode: { type: string, default: "HTML" }
+    description: "Send a message via Telegram bot"
+    receipt_fields: [message_id]
+
+  telegram_api.send_file:
+    type: cloud
+    endpoint: "https://api.telegram.org/bot{{TELEGRAM_BOT_TOKEN}}/sendDocument"
+    method: POST
+    headers:
+      Content-Type: "multipart/form-data"
+    params:
+      chat_id: { type: string, required: true }
+      document: { type: path, required: true }
+    description: "Send a document/file via Telegram bot"
+    receipt_fields: [message_id, file_id]
+
+  telegram_api.get_updates:
+    type: cloud
+    endpoint: "https://api.telegram.org/bot{{TELEGRAM_BOT_TOKEN}}/getUpdates"
+    method: GET
+    params:
+      offset: { type: int, required: false }
+      limit: { type: int, default: 100 }
+    description: "Retrieve incoming messages and updates"
+    receipt_fields: [update_count]

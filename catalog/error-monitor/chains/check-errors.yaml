@@ -1,0 +1,15 @@
+id: check-errors
+description: Fetch and analyze recent errors
+steps:
+- id: fetch-errors
+  ability: search.web
+  params:
+    query: '{{input.service}} error log'
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze these errors and suggest fixes: {{fetch-errors.output}}'
+  depends_on:
+  - fetch-errors
+  on_failure: abort

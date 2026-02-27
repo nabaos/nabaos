@@ -1,0 +1,28 @@
+name: wishlist-manager-constitution
+description: Constitution for wishlist-manager
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within wishlist-manager designated scope
+  trigger_actions:
+  - check
+  - add
+  trigger_targets:
+  - wishlist
+  - want
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside wishlist-manager scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: notion.create_page, notion.query, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - notion.create_page
+  - notion.query
+  - llm.query

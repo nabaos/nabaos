@@ -1,0 +1,30 @@
+name: tiktok
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "TikTok API integration for video stats and content research"
+
+abilities:
+  tiktok.get_video_stats:
+    type: cloud
+    endpoint: "https://open.tiktokapis.com/v2/video/query"
+    method: GET
+    headers:
+      Authorization: "Bearer {{TIKTOK_ACCESS_TOKEN}}"
+    params:
+      video_id: { type: string, required: true }
+      fields: { type: string, required: false }
+    description: "Get statistics and metrics for a TikTok video"
+    receipt_fields: [view_count, like_count, share_count]
+
+  tiktok.search_content:
+    type: cloud
+    endpoint: "https://open.tiktokapis.com/v2/research/video/query"
+    method: GET
+    headers:
+      Authorization: "Bearer {{TIKTOK_ACCESS_TOKEN}}"
+    params:
+      query: { type: string, required: true }
+      max_count: { type: int, default: 10 }
+    description: "Search TikTok content by query"
+    receipt_fields: [result_count]

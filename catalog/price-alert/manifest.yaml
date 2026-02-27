@@ -1,0 +1,12 @@
+name: price-alert
+version: 1.0.0
+description: Alert on price drops
+category: shopping
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+triggers:
+  scheduled:
+  - chain: check-prices
+    interval: 6h

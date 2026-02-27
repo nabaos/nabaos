@@ -1,0 +1,15 @@
+id: search-knowledge
+description: Search knowledge base and formulate answer
+steps:
+- id: search
+  ability: notion.search
+  params:
+    query: '{{input.question}}'
+  on_failure: abort
+- id: formulate
+  ability: llm.query
+  params:
+    prompt: 'Formulate a helpful answer to ''{{input.question}}'' based on: {{search.output}}'
+  depends_on:
+  - search
+  on_failure: abort

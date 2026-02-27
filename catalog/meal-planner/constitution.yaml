@@ -1,0 +1,28 @@
+name: meal-planner-constitution
+description: Constitution for meal-planner
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within meal-planner designated scope
+  trigger_actions:
+  - create
+  - plan
+  trigger_targets:
+  - diet
+  - nutrition
+  - meal
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside meal-planner scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: search.web, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - search.web
+  - llm.query

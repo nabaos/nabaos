@@ -1,0 +1,15 @@
+name: email-sender
+version: 1.0.0
+description: Send emails with confirmation
+category: email-communication
+author: nyaya-official
+permissions:
+- gmail.send
+- llm.query
+intent_filters:
+- actions:
+  - send
+  targets:
+  - email
+  - message
+  priority: 10

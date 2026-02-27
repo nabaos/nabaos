@@ -1,0 +1,13 @@
+name: dependency-scanner
+version: 1.0.0
+description: Scan for vulnerable dependencies
+category: developer-devops
+author: nyaya-official
+permissions:
+- github.issues
+- search.web
+- llm.query
+triggers:
+  scheduled:
+  - chain: scan-deps
+    interval: 24h

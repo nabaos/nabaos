@@ -1,0 +1,16 @@
+name: trend-analyzer
+version: 1.0.0
+description: Analyze trends in a topic area
+category: research-analysis
+author: nyaya-official
+permissions:
+- search.web
+- news.search
+- llm.query
+intent_filters:
+- actions:
+  - analyze
+  targets:
+  - trend
+  - pattern
+  priority: 10

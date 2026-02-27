@@ -1,0 +1,53 @@
+name: bamboohr
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "BambooHR API integration for employee management and HR operations"
+
+abilities:
+  bamboohr.get_employee:
+    type: cloud
+    endpoint: "https://api.bamboohr.com/api/gateway.php/{{company}}/v1/employees/{{id}}"
+    method: GET
+    headers:
+      Authorization: "Basic {{BAMBOOHR_API_KEY}}"
+    params:
+      id: { type: string, required: true }
+      fields: { type: string, required: false, description: "Comma-separated field names" }
+    description: "Get employee details"
+    receipt_fields: [employee_name, employee_email]
+
+  bamboohr.list_employees:
+    type: cloud
+    endpoint: "https://api.bamboohr.com/api/gateway.php/{{company}}/v1/employees/directory"
+    method: GET
+    headers:
+      Authorization: "Basic {{BAMBOOHR_API_KEY}}"
+    params: {}
+    description: "List all employees in the company"
+    receipt_fields: [employee_count]
+
+  bamboohr.get_time_off_requests:
+    type: cloud
+    endpoint: "https://api.bamboohr.com/api/gateway.php/{{company}}/v1/time_off/requests"
+    method: GET
+    headers:
+      Authorization: "Basic {{BAMBOOHR_API_KEY}}"
+    params:
+      start: { type: string, required: false, description: "Start date YYYY-MM-DD" }
+      end: { type: string, required: false, description: "End date YYYY-MM-DD" }
+    description: "Get time off requests within date range"
+    receipt_fields: [request_count]
+
+  bamboohr.log_time:
+    type: cloud
+    endpoint: "https://api.bamboohr.com/api/gateway.php/{{company}}/v1/employees/{{id}}/tables/timeTracking"
+    method: POST
+    headers:
+      Authorization: "Basic {{BAMBOOHR_API_KEY}}"
+    params:
+      id: { type: string, required: true }
+      date: { type: string, required: true, description: "Date YYYY-MM-DD" }
+      hours: { type: number, required: true }
+    description: "Log time for an employee"
+    receipt_fields: [time_entry_id]

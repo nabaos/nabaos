@@ -1,0 +1,23 @@
+id: inbox-triage
+description: Read unread emails, classify with LLM, apply labels
+steps:
+- id: read-inbox
+  ability: gmail.read
+  params:
+    unread: true
+    max_results: 50
+  on_failure: abort
+- id: classify
+  ability: llm.query
+  params:
+    prompt: 'Classify these emails by priority and category: {{read-inbox.output}}'
+  depends_on:
+  - read-inbox
+  on_failure: abort
+- id: apply-labels
+  ability: gmail.labels
+  params:
+    actions: '{{classify.output}}'
+  depends_on:
+  - classify
+  on_failure: abort

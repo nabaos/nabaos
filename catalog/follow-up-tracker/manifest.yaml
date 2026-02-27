@@ -1,0 +1,12 @@
+name: follow-up-tracker
+version: 1.0.0
+description: Track emails needing follow-up
+category: email-communication
+author: nyaya-official
+permissions:
+- gmail.search
+- llm.query
+triggers:
+  scheduled:
+  - chain: check-followups
+    interval: 4h

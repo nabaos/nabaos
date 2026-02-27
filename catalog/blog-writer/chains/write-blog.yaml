@@ -1,0 +1,23 @@
+id: write-blog
+description: Research topic and draft blog post
+steps:
+- id: research
+  ability: search.web
+  params:
+    query: '{{input.topic}}'
+  on_failure: continue
+- id: outline
+  ability: llm.query
+  params:
+    prompt: 'Create an outline for a blog post about: {{input.topic}}. Research: {{research.output}}'
+  depends_on:
+  - research
+  on_failure: abort
+- id: draft
+  ability: llm.query
+  params:
+    prompt: 'Write a full blog post from this outline: {{outline.output}}. Tone: {{input.tone}},
+      Length: {{input.length}}'
+  depends_on:
+  - outline
+  on_failure: abort

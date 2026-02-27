@@ -1,0 +1,14 @@
+name: runbook-creator
+version: 1.0.0
+description: Create operational runbooks
+category: documentation
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - create
+  targets:
+  - runbook
+  - playbook
+  priority: 10

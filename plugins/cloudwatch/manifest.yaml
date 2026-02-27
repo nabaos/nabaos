@@ -1,0 +1,48 @@
+name: cloudwatch
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "AWS CloudWatch API integration for metrics, alarms, and logs"
+
+abilities:
+  cloudwatch.get_metrics:
+    type: cloud
+    endpoint: "https://monitoring.{{AWS_REGION}}.amazonaws.com/"
+    method: POST
+    headers:
+      Authorization: "AWS4-HMAC-SHA256 {{AWS_SIGNATURE}}"
+      Content-Type: "application/x-amz-json-1.1"
+    params:
+      MetricDataQueries: { type: string, required: true }
+      StartTime: { type: string, required: true }
+      EndTime: { type: string, required: true }
+    description: "Get metric data from CloudWatch"
+    receipt_fields: [metric_count]
+
+  cloudwatch.describe_alarms:
+    type: cloud
+    endpoint: "https://monitoring.{{AWS_REGION}}.amazonaws.com/"
+    method: POST
+    headers:
+      Authorization: "AWS4-HMAC-SHA256 {{AWS_SIGNATURE}}"
+      Content-Type: "application/x-amz-json-1.1"
+    params:
+      AlarmNames: { type: string, required: false }
+      StateValue: { type: string, required: false }
+    description: "Describe CloudWatch alarms"
+    receipt_fields: [alarm_count]
+
+  cloudwatch.get_log_events:
+    type: cloud
+    endpoint: "https://logs.{{AWS_REGION}}.amazonaws.com/"
+    method: POST
+    headers:
+      Authorization: "AWS4-HMAC-SHA256 {{AWS_SIGNATURE}}"
+      Content-Type: "application/x-amz-json-1.1"
+    params:
+      logGroupName: { type: string, required: true }
+      logStreamName: { type: string, required: true }
+      startTime: { type: int, required: false }
+      endTime: { type: int, required: false }
+    description: "Get log events from CloudWatch Logs"
+    receipt_fields: [event_count]

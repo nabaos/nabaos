@@ -1,0 +1,25 @@
+name: zapier_webhook
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Zapier webhook integration for workflow automation and task triggers"
+
+abilities:
+  zapier.trigger:
+    type: cloud
+    endpoint: "https://hooks.zapier.com/hooks/catch/{{hook_id}}"
+    method: POST
+    params:
+      hook_id: { type: string, required: true }
+      payload: { type: string, required: true, description: "JSON payload" }
+    description: "Trigger Zapier webhook with payload"
+    receipt_fields: [trigger_success]
+
+  zapier.get_run_status:
+    type: cloud
+    endpoint: "https://store.zapier.com/api/records"
+    method: GET
+    params:
+      key: { type: string, required: true, description: "Run ID or key" }
+    description: "Get status of Zapier run"
+    receipt_fields: [run_status]

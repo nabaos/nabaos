@@ -1,0 +1,26 @@
+name: email-sender-constitution
+description: Constitution for email-sender
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within email-sender designated scope
+  trigger_actions:
+  - send
+  trigger_targets:
+  - email
+  - message
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside email-sender scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: gmail.send, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - gmail.send
+  - llm.query

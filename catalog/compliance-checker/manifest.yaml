@@ -1,0 +1,15 @@
+name: compliance-checker
+version: 1.0.0
+description: Check compliance requirements
+category: legal-compliance
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - check
+  targets:
+  - compliance
+  - regulation
+  priority: 10

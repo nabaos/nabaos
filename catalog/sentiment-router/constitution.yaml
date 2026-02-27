@@ -1,0 +1,29 @@
+name: sentiment-router-constitution
+description: Constitution for sentiment-router
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within sentiment-router designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - sentiment-router
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside sentiment-router scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: gmail.read, gmail.labels, llm.query,
+    slack.send'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - gmail.read
+  - gmail.labels
+  - llm.query
+  - slack.send

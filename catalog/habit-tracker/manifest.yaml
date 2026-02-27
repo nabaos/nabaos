@@ -1,0 +1,13 @@
+name: habit-tracker
+version: 1.0.0
+description: Track daily habits and report streaks
+category: daily-productivity
+author: nyaya-official
+permissions:
+- notion.create_page
+- notion.query
+- llm.query
+triggers:
+  scheduled:
+  - chain: track-habits
+    interval: 24h

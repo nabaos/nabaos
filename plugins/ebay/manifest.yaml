@@ -1,0 +1,42 @@
+name: ebay
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "eBay API integration for product search and purchasing"
+
+abilities:
+  ebay.search_listings:
+    type: cloud
+    endpoint: "https://api.ebay.com/buy/browse/v1/item_summary/search"
+    method: GET
+    headers:
+      Authorization: "Bearer {{EBAY_ACCESS_TOKEN}}"
+    params:
+      q: { type: string, required: true }
+      sort: { type: string, required: false }
+      limit: { type: int, required: false, default: 20 }
+    description: "Search eBay listings"
+    receipt_fields: [listing_count]
+
+  ebay.get_item:
+    type: cloud
+    endpoint: "https://api.ebay.com/buy/browse/v1/item/{{item_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{EBAY_ACCESS_TOKEN}}"
+    params:
+      item_id: { type: string, required: true }
+    description: "Get details of an eBay item"
+    receipt_fields: [item_name]
+
+  ebay.watch_item:
+    type: cloud
+    endpoint: "https://api.ebay.com/buy/browse/v1/item/{{item_id}}/watch"
+    method: POST
+    headers:
+      Authorization: "Bearer {{EBAY_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      item_id: { type: string, required: true }
+    description: "Add an eBay item to watch list"
+    receipt_fields: [watch_status]

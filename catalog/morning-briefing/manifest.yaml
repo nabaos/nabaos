@@ -1,0 +1,16 @@
+name: morning-briefing
+version: 1.0.0
+description: 'Daily summary: weather, calendar, unread emails, news'
+category: daily-productivity
+author: nyaya-official
+permissions:
+- weather.current
+- calendar.list
+- gmail.read
+- news.headlines
+- llm.query
+triggers:
+  scheduled:
+  - chain: morning-briefing
+    interval: 6h
+    at: 07:00

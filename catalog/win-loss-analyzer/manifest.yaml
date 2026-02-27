@@ -1,0 +1,15 @@
+name: win-loss-analyzer
+version: 1.0.0
+description: Analyze win/loss patterns
+category: sales-crm
+author: nyaya-official
+permissions:
+- notion.query
+- llm.query
+intent_filters:
+- actions:
+  - analyze
+  targets:
+  - deals
+  - win-loss
+  priority: 10

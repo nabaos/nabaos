@@ -1,0 +1,16 @@
+name: grocery-planner
+version: 1.0.0
+description: Plan grocery shopping lists
+category: shopping
+author: nyaya-official
+permissions:
+- notion.create_page
+- llm.query
+intent_filters:
+- actions:
+  - plan
+  - create
+  targets:
+  - grocery
+  - shopping-list
+  priority: 10

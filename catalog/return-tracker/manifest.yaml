@@ -1,0 +1,16 @@
+name: return-tracker
+version: 1.0.0
+description: Track product returns and refunds
+category: shopping
+author: nyaya-official
+permissions:
+- gmail.search
+- llm.query
+intent_filters:
+- actions:
+  - track
+  - check
+  targets:
+  - return
+  - refund
+  priority: 10

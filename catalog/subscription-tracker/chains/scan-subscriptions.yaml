@@ -1,0 +1,17 @@
+id: scan-subscriptions
+description: Search emails for subscription receipts and summarize
+steps:
+- id: search-receipts
+  ability: gmail.search
+  params:
+    query: subscription OR recurring OR renewal
+    max_results: 100
+  on_failure: abort
+- id: extract-subs
+  ability: llm.query
+  params:
+    prompt: 'Extract subscription details (name, amount, frequency, next renewal)
+      from these emails: {{search-receipts.output}}'
+  depends_on:
+  - search-receipts
+  on_failure: abort

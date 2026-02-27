@@ -1,0 +1,28 @@
+id: research-market
+description: Gather market data and produce report
+steps:
+- id: search-market
+  ability: search.web
+  params:
+    query: '{{input.industry}} market size trends'
+  on_failure: continue
+- id: search-news
+  ability: news.search
+  params:
+    query: '{{input.industry}}'
+  on_failure: continue
+- id: get-stocks
+  ability: finance.stock_quote
+  params:
+    symbols: '{{input.tickers}}'
+  on_failure: continue
+- id: report
+  ability: llm.query
+  params:
+    prompt: 'Create a market research report for {{input.industry}}: Web: {{search-market.output}},
+      News: {{search-news.output}}, Stocks: {{get-stocks.output}}'
+  depends_on:
+  - search-market
+  - search-news
+  - get-stocks
+  on_failure: abort

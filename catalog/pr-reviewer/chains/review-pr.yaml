@@ -1,0 +1,17 @@
+id: review-pr
+description: Fetch PR diff and provide code review
+steps:
+- id: fetch-pr
+  ability: github.prs
+  params:
+    pr_number: '{{input.pr_number}}'
+    repo: '{{input.repo}}'
+  on_failure: abort
+- id: review
+  ability: llm.query
+  params:
+    prompt: 'Review this pull request for code quality, bugs, security issues, and
+      improvements: {{fetch-pr.output}}'
+  depends_on:
+  - fetch-pr
+  on_failure: abort

@@ -1,0 +1,62 @@
+name: supabase
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Supabase PostgreSQL API integration for database operations and real-time updates"
+
+abilities:
+  supabase.select:
+    type: cloud
+    endpoint: "{{SUPABASE_URL}}/rest/v1/{{table}}"
+    method: GET
+    headers:
+      apikey: "{{SUPABASE_KEY}}"
+      Authorization: "Bearer {{SUPABASE_KEY}}"
+    params:
+      table: { type: string, required: true }
+      select: { type: string, required: false, description: "Column selection" }
+      filter: { type: string, required: false }
+      order: { type: string, required: false }
+      limit: { type: number, required: false }
+    description: "Query rows from table with filters"
+    receipt_fields: [row_count]
+
+  supabase.insert:
+    type: cloud
+    endpoint: "{{SUPABASE_URL}}/rest/v1/{{table}}"
+    method: POST
+    headers:
+      apikey: "{{SUPABASE_KEY}}"
+      Authorization: "Bearer {{SUPABASE_KEY}}"
+    params:
+      table: { type: string, required: true }
+      body: { type: string, required: true, description: "JSON row data" }
+    description: "Insert new row into table"
+    receipt_fields: [insert_success]
+
+  supabase.update:
+    type: cloud
+    endpoint: "{{SUPABASE_URL}}/rest/v1/{{table}}"
+    method: PATCH
+    headers:
+      apikey: "{{SUPABASE_KEY}}"
+      Authorization: "Bearer {{SUPABASE_KEY}}"
+    params:
+      table: { type: string, required: true }
+      filter: { type: string, required: true }
+      body: { type: string, required: true, description: "JSON updates" }
+    description: "Update rows matching filter"
+    receipt_fields: [update_count]
+
+  supabase.rpc:
+    type: cloud
+    endpoint: "{{SUPABASE_URL}}/rest/v1/rpc/{{function_name}}"
+    method: POST
+    headers:
+      apikey: "{{SUPABASE_KEY}}"
+      Authorization: "Bearer {{SUPABASE_KEY}}"
+    params:
+      function_name: { type: string, required: true }
+      args: { type: string, required: false, description: "Function arguments as JSON" }
+    description: "Call PostgreSQL function via RPC"
+    receipt_fields: [rpc_result]

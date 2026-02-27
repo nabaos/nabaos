@@ -1,0 +1,14 @@
+name: package-tracker
+version: 1.0.0
+description: Track package deliveries from email
+category: daily-productivity
+author: nyaya-official
+permissions:
+- gmail.search
+- llm.query
+triggers:
+  events:
+  - 'on': DataChanged
+    filter:
+      namespace: gmail
+    chain: track-packages

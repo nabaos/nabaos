@@ -1,0 +1,43 @@
+name: amplitude
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Amplitude analytics API integration for event segmentation and funnel analysis"
+
+abilities:
+  amplitude.get_event_volume:
+    type: cloud
+    endpoint: "https://amplitude.com/api/2/events/segmentation"
+    method: GET
+    headers:
+      Authorization: "Basic {{AMPLITUDE_AUTH}}"
+    params:
+      e: { type: string, required: true, description: "Event name" }
+      start: { type: string, required: true, description: "YYYY-MM-DD" }
+      end: { type: string, required: true, description: "YYYY-MM-DD" }
+    description: "Get event volume over time"
+    receipt_fields: [event_count_by_day]
+
+  amplitude.get_funnel:
+    type: cloud
+    endpoint: "https://amplitude.com/api/2/funnels"
+    method: GET
+    headers:
+      Authorization: "Basic {{AMPLITUDE_AUTH}}"
+    params:
+      funnelId: { type: string, required: true }
+      start: { type: string, required: true, description: "YYYY-MM-DD" }
+      end: { type: string, required: true, description: "YYYY-MM-DD" }
+    description: "Get funnel analysis"
+    receipt_fields: [funnel_steps, conversion_rate]
+
+  amplitude.get_user_activity:
+    type: cloud
+    endpoint: "https://amplitude.com/api/2/useractivity"
+    method: GET
+    headers:
+      Authorization: "Basic {{AMPLITUDE_AUTH}}"
+    params:
+      user: { type: string, required: true, description: "User ID or email" }
+    description: "Get user activity and event history"
+    receipt_fields: [event_count, last_active]

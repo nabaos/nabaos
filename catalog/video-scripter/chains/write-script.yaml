@@ -1,0 +1,16 @@
+id: write-script
+description: Create a video script
+steps:
+- id: outline
+  ability: llm.query
+  params:
+    prompt: 'Create a video script outline for: {{input.topic}}. Target length: {{input.duration}}.
+      Style: {{input.style}}'
+  on_failure: abort
+- id: write-script
+  ability: llm.query
+  params:
+    prompt: 'Write the full video script from this outline: {{outline.output}}'
+  depends_on:
+  - outline
+  on_failure: abort

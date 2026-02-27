@@ -1,0 +1,58 @@
+name: freshdesk
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Freshdesk helpdesk API integration for ticket management and customer support"
+
+abilities:
+  freshdesk.list_tickets:
+    type: cloud
+    endpoint: "https://{{FRESHDESK_DOMAIN}}.freshdesk.com/api/v2/tickets"
+    method: GET
+    headers:
+      Authorization: "Basic {{FRESHDESK_API_KEY}}"
+    params:
+      filter: { type: string, required: false }
+      order_by: { type: string, required: false }
+    description: "List helpdesk tickets with optional filters"
+    receipt_fields: [ticket_count]
+
+  freshdesk.create_ticket:
+    type: cloud
+    endpoint: "https://{{FRESHDESK_DOMAIN}}.freshdesk.com/api/v2/tickets"
+    method: POST
+    headers:
+      Authorization: "Basic {{FRESHDESK_API_KEY}}"
+    params:
+      subject: { type: string, required: true }
+      description: { type: string, required: true }
+      email: { type: string, required: true }
+      priority: { type: number, required: false }
+      status: { type: number, required: false }
+    description: "Create a new ticket"
+    receipt_fields: [ticket_id]
+
+  freshdesk.update_ticket:
+    type: cloud
+    endpoint: "https://{{FRESHDESK_DOMAIN}}.freshdesk.com/api/v2/tickets/{{ticket_id}}"
+    method: PUT
+    headers:
+      Authorization: "Basic {{FRESHDESK_API_KEY}}"
+    params:
+      ticket_id: { type: string, required: true }
+      status: { type: number, required: false }
+      priority: { type: number, required: false }
+    description: "Update ticket status and properties"
+    receipt_fields: [update_success]
+
+  freshdesk.add_reply:
+    type: cloud
+    endpoint: "https://{{FRESHDESK_DOMAIN}}.freshdesk.com/api/v2/tickets/{{ticket_id}}/reply"
+    method: POST
+    headers:
+      Authorization: "Basic {{FRESHDESK_API_KEY}}"
+    params:
+      ticket_id: { type: string, required: true }
+      body: { type: string, required: true }
+    description: "Add reply to ticket"
+    receipt_fields: [note_id]

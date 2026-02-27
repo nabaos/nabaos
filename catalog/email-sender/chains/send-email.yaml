@@ -1,0 +1,17 @@
+id: send-email
+description: Compose and send an email
+steps:
+- id: compose
+  ability: llm.query
+  params:
+    prompt: 'Compose an email to {{input.to}} about: {{input.subject}}. Content: {{input.body}}'
+  on_failure: abort
+- id: send
+  ability: gmail.send
+  params:
+    to: '{{input.to}}'
+    subject: '{{input.subject}}'
+    body: '{{compose.output}}'
+  depends_on:
+  - compose
+  on_failure: abort

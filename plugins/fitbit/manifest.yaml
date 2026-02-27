@@ -1,0 +1,64 @@
+name: fitbit
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Fitbit API integration for activity tracking, sleep data, and health metrics"
+
+abilities:
+  fitbit.get_activity:
+    type: cloud
+    endpoint: "https://api.fitbit.com/1/user/-/activities/date/{{date}}.json"
+    method: GET
+    headers:
+      Authorization: "Bearer {{FITBIT_ACCESS_TOKEN}}"
+    params:
+      date: { type: string, required: true, description: "Date in YYYY-MM-DD format" }
+    description: "Get daily activity data for a specific date"
+    receipt_fields: [activity_count, total_steps]
+
+  fitbit.get_sleep:
+    type: cloud
+    endpoint: "https://api.fitbit.com/1.2/user/-/sleep/date/{{date}}.json"
+    method: GET
+    headers:
+      Authorization: "Bearer {{FITBIT_ACCESS_TOKEN}}"
+    params:
+      date: { type: string, required: true, description: "Date in YYYY-MM-DD format" }
+    description: "Get sleep data for a specific date"
+    receipt_fields: [sleep_duration, sleep_quality]
+
+  fitbit.get_heart_rate:
+    type: cloud
+    endpoint: "https://api.fitbit.com/1/user/-/activities/heart/date/{{date}}/1d.json"
+    method: GET
+    headers:
+      Authorization: "Bearer {{FITBIT_ACCESS_TOKEN}}"
+    params:
+      date: { type: string, required: true, description: "Date in YYYY-MM-DD format" }
+    description: "Get heart rate data for a specific date"
+    receipt_fields: [heart_rate_data_points, average_heart_rate]
+
+  fitbit.log_food:
+    type: cloud
+    endpoint: "https://api.fitbit.com/1/user/-/foods/log.json"
+    method: POST
+    headers:
+      Authorization: "Bearer {{FITBIT_ACCESS_TOKEN}}"
+    params:
+      foodId: { type: string, required: true }
+      mealTypeId: { type: string, required: true }
+      unitId: { type: string, required: true }
+      amount: { type: number, required: true }
+    description: "Log food intake"
+    receipt_fields: [food_log_id]
+
+  fitbit.get_weight:
+    type: cloud
+    endpoint: "https://api.fitbit.com/1/user/-/body/log/weight/date/{{date}}/30d.json"
+    method: GET
+    headers:
+      Authorization: "Bearer {{FITBIT_ACCESS_TOKEN}}"
+    params:
+      date: { type: string, required: true, description: "Date in YYYY-MM-DD format" }
+    description: "Get weight data for the past 30 days"
+    receipt_fields: [weight_count, average_weight]

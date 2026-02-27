@@ -1,0 +1,15 @@
+id: monitor-policies
+description: Search for policy and regulatory changes
+steps:
+- id: search
+  ability: news.search
+  params:
+    query: '{{input.industry}} policy regulation change'
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze policy changes relevant to {{input.industry}}: {{search.output}}'
+  depends_on:
+  - search
+  on_failure: abort

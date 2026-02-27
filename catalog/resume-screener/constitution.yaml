@@ -1,0 +1,28 @@
+name: resume-screener-constitution
+description: Constitution for resume-screener
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within resume-screener designated scope
+  trigger_actions:
+  - screen
+  - review
+  trigger_targets:
+  - cv
+  - resume
+  - application
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside resume-screener scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: gmail.read, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - gmail.read
+  - llm.query

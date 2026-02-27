@@ -1,0 +1,15 @@
+name: email-campaign
+version: 1.0.0
+description: Create email marketing campaigns
+category: content-creation
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - create
+  - plan
+  targets:
+  - campaign
+  - email-marketing
+  priority: 10

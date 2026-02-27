@@ -1,0 +1,17 @@
+id: document-api
+description: Fetch API code and generate documentation
+steps:
+- id: fetch-code
+  ability: github.prs
+  params:
+    repo: '{{input.repo}}'
+    path: '{{input.api_path}}'
+  on_failure: abort
+- id: generate-docs
+  ability: llm.query
+  params:
+    prompt: 'Generate comprehensive API documentation including endpoints, parameters,
+      responses, and examples: {{fetch-code.output}}'
+  depends_on:
+  - fetch-code
+  on_failure: abort

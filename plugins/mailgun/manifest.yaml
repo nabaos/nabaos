@@ -1,0 +1,41 @@
+name: mailgun
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Mailgun email delivery and validation"
+
+abilities:
+  mailgun.send:
+    type: cloud
+    endpoint: "https://api.mailgun.net/v3/{{MAILGUN_DOMAIN}}/messages"
+    method: POST
+    headers:
+      Authorization: "Basic {{MAILGUN_API_KEY}}"
+    params:
+      to: { type: string, required: true }
+      subject: { type: string, required: true }
+      text: { type: string, required: true }
+    description: "Send email via Mailgun"
+    receipt_fields: [message_id]
+
+  mailgun.validate_address:
+    type: cloud
+    endpoint: "https://api.mailgun.net/v4/address/validate"
+    method: GET
+    headers:
+      Authorization: "Basic {{MAILGUN_API_KEY}}"
+    params:
+      address: { type: string, required: true }
+    description: "Validate email address deliverability"
+    receipt_fields: [is_valid, risk]
+
+  mailgun.get_events:
+    type: cloud
+    endpoint: "https://api.mailgun.net/v3/{{MAILGUN_DOMAIN}}/events"
+    method: GET
+    headers:
+      Authorization: "Basic {{MAILGUN_API_KEY}}"
+    params:
+      message_id: { type: string, required: true }
+    description: "Get delivery events for a message"
+    receipt_fields: [event_count]

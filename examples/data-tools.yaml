@@ -1,0 +1,15 @@
+# Example manifest for a data analysis agent
+# Register with: nyaya plugin register examples/data-tools.yaml
+
+name: data-tools-agent
+version: "0.1.0"
+description: Data analysis agent for processing, transforming, and visualizing data
+permissions:
+  - data.analyze
+  - files.read
+  - files.write
+  - docs.generate
+memory_limit_mb: 256
+fuel_limit: 5000000
+kv_namespace: data_tools
+author: nyaya-examples

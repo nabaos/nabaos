@@ -1,0 +1,35 @@
+id: morning-briefing
+description: Gather weather, calendar, email, and news then summarize
+steps:
+- id: get-weather
+  ability: weather.current
+  params:
+    location: '{{input.location}}'
+  on_failure: continue
+- id: get-calendar
+  ability: calendar.list
+  params:
+    date: '{{input.date}}'
+  on_failure: continue
+- id: get-emails
+  ability: gmail.read
+  params:
+    max_results: 10
+    unread: true
+  on_failure: continue
+- id: get-news
+  ability: news.headlines
+  params:
+    category: general
+  on_failure: continue
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Summarize today''s briefing: Weather: {{get-weather.output}}, Calendar:
+      {{get-calendar.output}}, Emails: {{get-emails.output}}, News: {{get-news.output}}'
+  depends_on:
+  - get-weather
+  - get-calendar
+  - get-emails
+  - get-news
+  on_failure: abort

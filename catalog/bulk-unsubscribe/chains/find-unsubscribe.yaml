@@ -1,0 +1,23 @@
+id: find-unsubscribe
+description: Search for mailing list emails and find unsubscribe links
+steps:
+- id: search-lists
+  ability: gmail.search
+  params:
+    query: unsubscribe
+    max_results: 200
+  on_failure: abort
+- id: read-samples
+  ability: gmail.read
+  params:
+    message_ids: '{{search-lists.output.ids}}'
+  depends_on:
+  - search-lists
+  on_failure: abort
+- id: extract-links
+  ability: llm.query
+  params:
+    prompt: 'Extract unique mailing list senders and unsubscribe links from: {{read-samples.output}}'
+  depends_on:
+  - read-samples
+  on_failure: abort

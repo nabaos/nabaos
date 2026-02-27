@@ -1,0 +1,16 @@
+id: build-presentation
+description: Research topic and create slide deck outline
+steps:
+- id: research
+  ability: search.web
+  params:
+    query: '{{input.topic}}'
+  on_failure: continue
+- id: create-outline
+  ability: llm.query
+  params:
+    prompt: 'Create a presentation outline with {{input.slides}} slides about {{input.topic}}.
+      Research: {{research.output}}. Include speaker notes.'
+  depends_on:
+  - research
+  on_failure: abort

@@ -1,0 +1,71 @@
+name: zendesk
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Zendesk support API integration for ticket management and customer support"
+
+abilities:
+  zendesk.list_tickets:
+    type: cloud
+    endpoint: "https://{{ZENDESK_SUBDOMAIN}}.zendesk.com/api/v2/tickets"
+    method: GET
+    headers:
+      Authorization: "Basic {{ZENDESK_AUTH}}"
+    params:
+      status: { type: string, required: false }
+      assignee_id: { type: string, required: false }
+      sort_by: { type: string, required: false }
+    description: "List support tickets with optional filters"
+    receipt_fields: [ticket_count]
+
+  zendesk.get_ticket:
+    type: cloud
+    endpoint: "https://{{ZENDESK_SUBDOMAIN}}.zendesk.com/api/v2/tickets/{{ticket_id}}"
+    method: GET
+    headers:
+      Authorization: "Basic {{ZENDESK_AUTH}}"
+    params:
+      ticket_id: { type: string, required: true }
+    description: "Get detailed information about a ticket"
+    receipt_fields: [ticket_id, ticket_status]
+
+  zendesk.create_ticket:
+    type: cloud
+    endpoint: "https://{{ZENDESK_SUBDOMAIN}}.zendesk.com/api/v2/tickets"
+    method: POST
+    headers:
+      Authorization: "Basic {{ZENDESK_AUTH}}"
+    params:
+      subject: { type: string, required: true }
+      description: { type: string, required: true }
+      requester_id: { type: string, required: false }
+      priority: { type: string, required: false }
+    description: "Create a new support ticket"
+    receipt_fields: [ticket_id]
+
+  zendesk.add_comment:
+    type: cloud
+    endpoint: "https://{{ZENDESK_SUBDOMAIN}}.zendesk.com/api/v2/tickets/{{ticket_id}}"
+    method: PUT
+    headers:
+      Authorization: "Basic {{ZENDESK_AUTH}}"
+    params:
+      ticket_id: { type: string, required: true }
+      comment_body: { type: string, required: true }
+      public: { type: bool, required: false, default: true }
+    description: "Add comment to a ticket"
+    receipt_fields: [comment_id]
+
+  zendesk.update_ticket:
+    type: cloud
+    endpoint: "https://{{ZENDESK_SUBDOMAIN}}.zendesk.com/api/v2/tickets/{{ticket_id}}"
+    method: PUT
+    headers:
+      Authorization: "Basic {{ZENDESK_AUTH}}"
+    params:
+      ticket_id: { type: string, required: true }
+      status: { type: string, required: false }
+      priority: { type: string, required: false }
+      assignee_id: { type: string, required: false }
+    description: "Update ticket status and properties"
+    receipt_fields: [update_success]

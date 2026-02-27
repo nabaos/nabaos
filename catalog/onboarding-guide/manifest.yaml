@@ -1,0 +1,17 @@
+name: onboarding-guide
+version: 1.0.0
+description: Guide new employee onboarding
+category: hr-recruiting
+author: nyaya-official
+permissions:
+- notion.query
+- gmail.send
+- llm.query
+intent_filters:
+- actions:
+  - onboard
+  - setup
+  targets:
+  - employee
+  - new-hire
+  priority: 10

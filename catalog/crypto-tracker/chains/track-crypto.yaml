@@ -1,0 +1,15 @@
+id: track-crypto
+description: Fetch crypto prices and analyze portfolio
+steps:
+- id: get-prices
+  ability: finance.crypto_price
+  params:
+    symbols: '{{input.symbols}}'
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze crypto portfolio performance and trends: {{get-prices.output}}'
+  depends_on:
+  - get-prices
+  on_failure: abort

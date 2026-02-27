@@ -1,0 +1,26 @@
+name: file-organizer-constitution
+description: Constitution for file-organizer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within file-organizer designated scope
+  trigger_actions:
+  - sort
+  - organize
+  trigger_targets:
+  - documents
+  - files
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside file-organizer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - llm.query

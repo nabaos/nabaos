@@ -1,0 +1,17 @@
+name: meal-planner
+version: 1.0.0
+description: Plan meals and nutrition
+category: health-wellness
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - plan
+  - create
+  targets:
+  - meal
+  - diet
+  - nutrition
+  priority: 10

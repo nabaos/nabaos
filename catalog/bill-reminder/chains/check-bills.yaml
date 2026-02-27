@@ -1,0 +1,22 @@
+id: check-bills
+description: Search for bills and create calendar reminders
+steps:
+- id: search-bills
+  ability: gmail.search
+  params:
+    query: bill due OR payment due OR amount due
+  on_failure: abort
+- id: extract-bills
+  ability: llm.query
+  params:
+    prompt: 'Extract upcoming bill details (vendor, amount, due date) from: {{search-bills.output}}'
+  depends_on:
+  - search-bills
+  on_failure: abort
+- id: create-reminders
+  ability: calendar.create
+  params:
+    events: '{{extract-bills.output}}'
+  depends_on:
+  - extract-bills
+  on_failure: abort

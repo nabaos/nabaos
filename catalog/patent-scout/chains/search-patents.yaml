@@ -1,0 +1,15 @@
+id: search-patents
+description: Search for patents and analyze
+steps:
+- id: search
+  ability: search.web
+  params:
+    query: '{{input.topic}} patent site:patents.google.com'
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze patent landscape for {{input.topic}}: {{search.output}}'
+  depends_on:
+  - search
+  on_failure: abort

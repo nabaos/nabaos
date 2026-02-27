@@ -1,0 +1,14 @@
+name: invoice-generator
+version: 1.0.0
+description: Generate invoices
+category: finance-budgeting
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - create
+  - generate
+  targets:
+  - invoice
+  priority: 10

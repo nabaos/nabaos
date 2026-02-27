@@ -1,0 +1,15 @@
+id: create-reminder
+description: Parse reminder request and create calendar event
+steps:
+- id: parse-request
+  ability: llm.query
+  params:
+    prompt: 'Parse this reminder request into a structured event: {{input.text}}'
+  on_failure: abort
+- id: create-event
+  ability: calendar.create
+  params:
+    event: '{{parse-request.output}}'
+  depends_on:
+  - parse-request
+  on_failure: abort

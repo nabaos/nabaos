@@ -1,0 +1,30 @@
+name: morning-briefing-constitution
+description: Constitution for morning-briefing
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within morning-briefing designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - morning-briefing
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside morning-briefing scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: weather.current, calendar.list, gmail.read,
+    news.headlines, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - weather.current
+  - calendar.list
+  - gmail.read
+  - news.headlines
+  - llm.query

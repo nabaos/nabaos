@@ -1,0 +1,16 @@
+name: seo-optimizer
+version: 1.0.0
+description: Optimize content for SEO
+category: content-creation
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - optimize
+  targets:
+  - seo
+  - search
+  - ranking
+  priority: 10

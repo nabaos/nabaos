@@ -1,0 +1,28 @@
+name: focus-timer-constitution
+description: Constitution for focus-timer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within focus-timer designated scope
+  trigger_actions:
+  - start
+  - stop
+  trigger_targets:
+  - timer
+  - pomodoro
+  - focus
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside focus-timer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: notion.create_page, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - notion.create_page
+  - llm.query

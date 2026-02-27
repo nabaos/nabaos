@@ -1,0 +1,20 @@
+/target
+*.db
+*.sqlite
+.env
+*.pem
+*.key
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+# Model files (download separately)
+models/*.onnx
+models/*.bin
+# Worktrees
+.worktrees/
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,16 @@
+name: doc-generator
+version: 1.0.0
+description: Generate documentation from code
+category: developer-devops
+author: nyaya-official
+permissions:
+- github.prs
+- llm.query
+intent_filters:
+- actions:
+  - generate
+  - create
+  targets:
+  - docs
+  - documentation
+  priority: 10

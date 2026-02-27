@@ -1,0 +1,13 @@
+name: daily-journal
+version: 1.0.0
+description: Prompt for daily reflection and store entry
+category: daily-productivity
+author: nyaya-official
+permissions:
+- notion.create_page
+- llm.query
+triggers:
+  scheduled:
+  - chain: daily-journal
+    interval: 24h
+    at: '21:00'

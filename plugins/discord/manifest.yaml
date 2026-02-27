@@ -1,0 +1,55 @@
+name: discord
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Discord API integration for messaging, channels, and server management"
+
+abilities:
+  discord.send_message:
+    type: cloud
+    endpoint: "https://discord.com/api/v10/channels/{{channel_id}}/messages"
+    method: POST
+    headers:
+      Authorization: "Bot {{DISCORD_BOT_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      channel_id: { type: string, required: true }
+      content: { type: string, required: true }
+    description: "Send a message to a Discord channel"
+    receipt_fields: [message_id, created_at]
+
+  discord.list_channels:
+    type: cloud
+    endpoint: "https://discord.com/api/v10/guilds/{{guild_id}}/channels"
+    method: GET
+    headers:
+      Authorization: "Bot {{DISCORD_BOT_TOKEN}}"
+    params:
+      guild_id: { type: string, required: true }
+    description: "List all channels in a Discord guild"
+    receipt_fields: [channel_count]
+
+  discord.read_messages:
+    type: cloud
+    endpoint: "https://discord.com/api/v10/channels/{{channel_id}}/messages"
+    method: GET
+    headers:
+      Authorization: "Bot {{DISCORD_BOT_TOKEN}}"
+    params:
+      channel_id: { type: string, required: true }
+      limit: { type: int, default: 10 }
+    description: "Read messages from a Discord channel"
+    receipt_fields: [message_count]
+
+  discord.add_role:
+    type: cloud
+    endpoint: "https://discord.com/api/v10/guilds/{{guild_id}}/members/{{user_id}}/roles/{{role_id}}"
+    method: PUT
+    headers:
+      Authorization: "Bot {{DISCORD_BOT_TOKEN}}"
+    params:
+      guild_id: { type: string, required: true }
+      user_id: { type: string, required: true }
+      role_id: { type: string, required: true }
+    description: "Add a role to a Discord server member"
+    receipt_fields: [status]

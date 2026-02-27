@@ -1,0 +1,12 @@
+name: satisfaction-monitor
+version: 1.0.0
+description: Monitor customer satisfaction
+category: customer-support
+author: nyaya-official
+permissions:
+- gmail.search
+- llm.query
+triggers:
+  scheduled:
+  - chain: monitor-satisfaction
+    interval: 24h

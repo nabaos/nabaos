@@ -1,0 +1,8 @@
+id: analyze-sleep
+description: Analyze sleep data and provide recommendations
+steps:
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze sleep patterns and provide recommendations: {{input.sleep_data}}'
+  on_failure: abort

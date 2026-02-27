@@ -1,0 +1,15 @@
+name: readme-generator
+version: 1.0.0
+description: Generate README files
+category: documentation
+author: nyaya-official
+permissions:
+- github.prs
+- llm.query
+intent_filters:
+- actions:
+  - generate
+  - create
+  targets:
+  - readme
+  priority: 10

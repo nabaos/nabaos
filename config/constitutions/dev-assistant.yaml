@@ -1,0 +1,49 @@
+name: DevAssistant
+description: Developer assistant for code, git, and CI/CD operations
+
+rules:
+  - name: allow_code_ops
+    enforcement: allow
+    description: Allow code search, review, and analysis
+    trigger_actions: [search, read, review, analyze, check, list, explain]
+    trigger_targets: [code, file, function, class, module, dependency, test, error, bug]
+
+  - name: allow_git_ops
+    enforcement: allow
+    description: Allow git operations
+    trigger_actions: [check, list, show, diff, log, blame, branch]
+    trigger_targets: [git, commit, branch, pr, merge, repo, history]
+    trigger_keywords: [git, commit, branch, pull request, merge, rebase]
+
+  - name: allow_ci_cd
+    enforcement: allow
+    description: Allow CI/CD and docs
+    trigger_actions: [check, list, read, search]
+    trigger_targets: [ci, pipeline, build, docs, documentation, readme]
+
+  - name: block_financial
+    enforcement: block
+    description: Block financial operations
+    trigger_keywords: [stock, trade, portfolio, bitcoin, crypto, price, buy, sell]
+
+  - name: block_social
+    enforcement: block
+    description: Block social media
+    trigger_keywords: [twitter, facebook, instagram, social, post, tweet]
+
+  - name: block_personal_comms
+    enforcement: block
+    description: Block personal communications
+    trigger_keywords: [email, sms, whatsapp, telegram, message, call]
+
+  - name: confirm_deploy
+    enforcement: confirm
+    description: Require confirmation for deployments
+    trigger_actions: [deploy, release, publish]
+    trigger_targets: [production, staging, release, package]
+
+  - name: confirm_delete
+    enforcement: confirm
+    description: Require confirmation for destructive operations
+    trigger_actions: [delete, remove, drop, destroy]
+    trigger_targets: [file, branch, database, table, repo]

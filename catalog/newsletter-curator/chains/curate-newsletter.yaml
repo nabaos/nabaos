@@ -1,0 +1,23 @@
+id: curate-newsletter
+description: Find and curate content for newsletter
+steps:
+- id: search-news
+  ability: news.search
+  params:
+    query: '{{input.topics}}'
+    max_results: 20
+  on_failure: continue
+- id: search-web
+  ability: search.web
+  params:
+    query: '{{input.topics}} best articles this week'
+  on_failure: continue
+- id: curate
+  ability: llm.query
+  params:
+    prompt: 'Curate a newsletter from these sources. Include summaries and commentary.
+      News: {{search-news.output}}, Web: {{search-web.output}}'
+  depends_on:
+  - search-news
+  - search-web
+  on_failure: abort

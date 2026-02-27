@@ -1,0 +1,19 @@
+name: perplexity
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Perplexity AI online search and reasoning"
+
+abilities:
+  perplexity.search:
+    type: cloud
+    endpoint: "https://api.perplexity.ai/chat/completions"
+    method: POST
+    headers:
+      Authorization: "Bearer {{PERPLEXITY_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      query: { type: string, required: true }
+      model: { type: string, default: "llama-3.1-sonar-small-128k-online" }
+    description: "Search the web and get AI-synthesized answers with sources"
+    receipt_fields: [answer, citations]

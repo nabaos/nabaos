@@ -1,0 +1,16 @@
+name: hashtag-researcher
+version: 1.0.0
+description: Research trending hashtags
+category: social-media
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - research
+  - find
+  targets:
+  - hashtag
+  - trending
+  priority: 10

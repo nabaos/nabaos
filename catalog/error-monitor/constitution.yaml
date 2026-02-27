@@ -1,0 +1,26 @@
+name: error-monitor-constitution
+description: Constitution for error-monitor
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within error-monitor designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - error-monitor
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside error-monitor scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: search.web, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - search.web
+  - llm.query

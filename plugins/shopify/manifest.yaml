@@ -1,0 +1,69 @@
+name: shopify
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Shopify API integration for e-commerce management"
+
+abilities:
+  shopify.list_products:
+    type: cloud
+    endpoint: "https://{{SHOPIFY_STORE}}.myshopify.com/admin/api/2024-01/products.json"
+    method: GET
+    headers:
+      X-Shopify-Access-Token: "{{SHOPIFY_ACCESS_TOKEN}}"
+    params:
+      limit: { type: int, required: false, default: 50 }
+      status: { type: string, required: false }
+    description: "List products from Shopify store"
+    receipt_fields: [product_count]
+
+  shopify.get_order:
+    type: cloud
+    endpoint: "https://{{SHOPIFY_STORE}}.myshopify.com/admin/api/2024-01/orders/{{order_id}}.json"
+    method: GET
+    headers:
+      X-Shopify-Access-Token: "{{SHOPIFY_ACCESS_TOKEN}}"
+    params:
+      order_id: { type: string, required: true }
+    description: "Get order details from Shopify"
+    receipt_fields: [order_status]
+
+  shopify.list_orders:
+    type: cloud
+    endpoint: "https://{{SHOPIFY_STORE}}.myshopify.com/admin/api/2024-01/orders.json"
+    method: GET
+    headers:
+      X-Shopify-Access-Token: "{{SHOPIFY_ACCESS_TOKEN}}"
+    params:
+      status: { type: string, required: false }
+      limit: { type: int, required: false, default: 50 }
+    description: "List orders from Shopify store"
+    receipt_fields: [order_count]
+
+  shopify.create_discount:
+    type: cloud
+    endpoint: "https://{{SHOPIFY_STORE}}.myshopify.com/admin/api/2024-01/price_rules.json"
+    method: POST
+    headers:
+      X-Shopify-Access-Token: "{{SHOPIFY_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      title: { type: string, required: true }
+      target_type: { type: string, required: true }
+      value: { type: string, required: true }
+    description: "Create a discount in Shopify"
+    receipt_fields: [price_rule_id]
+
+  shopify.update_inventory:
+    type: cloud
+    endpoint: "https://{{SHOPIFY_STORE}}.myshopify.com/admin/api/2024-01/inventory_levels/set.json"
+    method: POST
+    headers:
+      X-Shopify-Access-Token: "{{SHOPIFY_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      inventory_item_id: { type: string, required: true }
+      location_id: { type: string, required: true }
+      available: { type: int, required: true }
+    description: "Update inventory in Shopify"
+    receipt_fields: [inventory_item_id]

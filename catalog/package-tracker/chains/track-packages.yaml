@@ -1,0 +1,16 @@
+id: track-packages
+description: Search for shipping emails and extract tracking info
+steps:
+- id: search-shipping
+  ability: gmail.search
+  params:
+    query: shipped OR tracking OR delivery OR out for delivery
+  on_failure: abort
+- id: extract-tracking
+  ability: llm.query
+  params:
+    prompt: 'Extract package tracking details (carrier, tracking number, status, ETA)
+      from: {{search-shipping.output}}'
+  depends_on:
+  - search-shipping
+  on_failure: abort

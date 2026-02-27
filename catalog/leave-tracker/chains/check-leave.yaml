@@ -1,0 +1,22 @@
+id: check-leave
+description: Check leave balances and upcoming PTO
+steps:
+- id: check-calendar
+  ability: calendar.list
+  params:
+    query: PTO OR vacation OR leave
+  on_failure: continue
+- id: query-balances
+  ability: notion.query
+  params:
+    database: leave-tracker
+  on_failure: continue
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Summarize leave status: Calendar: {{check-calendar.output}}, Balances:
+      {{query-balances.output}}'
+  depends_on:
+  - check-calendar
+  - query-balances
+  on_failure: abort

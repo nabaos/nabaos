@@ -1,0 +1,49 @@
+name: hotels
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Booking.com API integration for hotel search and reservations"
+
+abilities:
+  hotels.search:
+    type: cloud
+    endpoint: "https://booking-com.p.rapidapi.com/v2/hotels/search"
+    method: GET
+    headers:
+      X-RapidAPI-Key: "{{RAPIDAPI_KEY}}"
+      X-RapidAPI-Host: "booking-com.p.rapidapi.com"
+    params:
+      dest_id: { type: string, required: true }
+      checkin_date: { type: string, required: true }
+      checkout_date: { type: string, required: true }
+      adults_number: { type: int, required: true }
+      room_number: { type: int, required: false, default: 1 }
+    description: "Search for hotels using Booking.com API"
+    receipt_fields: [hotel_count]
+
+  hotels.get_details:
+    type: cloud
+    endpoint: "https://booking-com.p.rapidapi.com/v2/hotels/details"
+    method: GET
+    headers:
+      X-RapidAPI-Key: "{{RAPIDAPI_KEY}}"
+      X-RapidAPI-Host: "booking-com.p.rapidapi.com"
+    params:
+      hotel_id: { type: string, required: true }
+      checkin_date: { type: string, required: true }
+      checkout_date: { type: string, required: true }
+    description: "Get detailed information about a hotel"
+    receipt_fields: [hotel_name]
+
+  hotels.get_reviews:
+    type: cloud
+    endpoint: "https://booking-com.p.rapidapi.com/v2/hotels/reviews"
+    method: GET
+    headers:
+      X-RapidAPI-Key: "{{RAPIDAPI_KEY}}"
+      X-RapidAPI-Host: "booking-com.p.rapidapi.com"
+    params:
+      hotel_id: { type: string, required: true }
+      sort_type: { type: string, required: false, default: "recent" }
+    description: "Get reviews for a hotel"
+    receipt_fields: [review_count]

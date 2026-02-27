@@ -1,0 +1,9 @@
+id: generate-image-prompt
+description: Create detailed image generation prompts
+steps:
+- id: generate
+  ability: llm.query
+  params:
+    prompt: 'Generate a detailed image generation prompt for: {{input.concept}}. Style:
+      {{input.style}}. Include composition, lighting, colors, and mood.'
+  on_failure: abort

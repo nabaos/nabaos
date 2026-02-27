@@ -1,0 +1,22 @@
+id: check-ci
+description: Check CI pipeline status and report failures
+steps:
+- id: check-prs
+  ability: github.prs
+  params:
+    state: open
+    repo: '{{input.repo}}'
+  on_failure: abort
+- id: check-notifications
+  ability: github.notifications
+  params:
+    filter: ci
+  on_failure: continue
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Summarize CI/CD status: PRs: {{check-prs.output}}, Notifications: {{check-notifications.output}}'
+  depends_on:
+  - check-prs
+  - check-notifications
+  on_failure: abort

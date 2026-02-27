@@ -1,0 +1,14 @@
+name: contract-reviewer
+version: 1.0.0
+description: Review contracts for key terms
+category: legal-compliance
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - review
+  targets:
+  - contract
+  - agreement
+  priority: 10

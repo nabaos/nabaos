@@ -1,0 +1,22 @@
+id: update-routines
+description: Check conditions and update home routines
+steps:
+- id: get-calendar
+  ability: calendar.list
+  params:
+    range: today
+  on_failure: continue
+- id: get-weather
+  ability: weather.current
+  params:
+    location: '{{input.location}}'
+  on_failure: continue
+- id: update
+  ability: llm.query
+  params:
+    prompt: 'Update home routines based on: Calendar: {{get-calendar.output}}, Weather:
+      {{get-weather.output}}'
+  depends_on:
+  - get-calendar
+  - get-weather
+  on_failure: abort

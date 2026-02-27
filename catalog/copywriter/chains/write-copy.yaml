@@ -1,0 +1,16 @@
+id: write-copy
+description: Create marketing copy
+steps:
+- id: analyze-brief
+  ability: llm.query
+  params:
+    prompt: 'Analyze this marketing brief and identify key messaging: {{input.brief}}'
+  on_failure: abort
+- id: write-copy
+  ability: llm.query
+  params:
+    prompt: 'Write compelling marketing copy based on: {{analyze-brief.output}}. Format:
+      {{input.format}}. Tone: {{input.tone}}'
+  depends_on:
+  - analyze-brief
+  on_failure: abort

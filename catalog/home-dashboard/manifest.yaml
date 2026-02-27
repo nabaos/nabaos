@@ -1,0 +1,15 @@
+name: home-dashboard
+version: 1.0.0
+description: Aggregate data for home dashboard
+category: daily-productivity
+author: nyaya-official
+permissions:
+- weather.current
+- calendar.list
+- gmail.read
+- finance.stock_quote
+- llm.query
+triggers:
+  scheduled:
+  - chain: refresh-dashboard
+    interval: 1h

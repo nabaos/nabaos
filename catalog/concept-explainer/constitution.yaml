@@ -1,0 +1,26 @@
+name: concept-explainer-constitution
+description: Constitution for concept-explainer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within concept-explainer designated scope
+  trigger_actions:
+  - explain
+  trigger_targets:
+  - topic
+  - concept
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside concept-explainer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: search.web, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - search.web
+  - llm.query

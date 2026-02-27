@@ -1,0 +1,16 @@
+id: screen-resume
+description: Read resume email and evaluate against requirements
+steps:
+- id: read-resume
+  ability: gmail.read
+  params:
+    message_id: '{{input.message_id}}'
+  on_failure: abort
+- id: screen
+  ability: llm.query
+  params:
+    prompt: 'Screen this resume against these requirements: {{input.requirements}}.
+      Resume: {{read-resume.output}}. Score and provide rationale.'
+  depends_on:
+  - read-resume
+  on_failure: abort

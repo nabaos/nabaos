@@ -1,0 +1,15 @@
+name: expense-logger
+version: 1.0.0
+description: Log travel expenses
+category: travel
+author: nyaya-official
+permissions:
+- notion.create_page
+- llm.query
+intent_filters:
+- actions:
+  - log
+  - track
+  targets:
+  - expense
+  priority: 10

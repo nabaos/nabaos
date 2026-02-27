@@ -1,0 +1,62 @@
+name: reddit
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Reddit API integration for searching posts, submitting content, and subreddit info"
+
+abilities:
+  reddit.search_posts:
+    type: cloud
+    endpoint: "https://oauth.reddit.com/search"
+    method: GET
+    headers:
+      Authorization: "Bearer {{REDDIT_ACCESS_TOKEN}}"
+      User-Agent: "nyaya-agent/1.0"
+    params:
+      q: { type: string, required: true }
+      subreddit: { type: string, required: false }
+      sort: { type: string, default: "relevance" }
+      limit: { type: int, default: 10 }
+    description: "Search Reddit posts by query"
+    receipt_fields: [post_count]
+
+  reddit.get_post:
+    type: cloud
+    endpoint: "https://oauth.reddit.com/comments/{{post_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{REDDIT_ACCESS_TOKEN}}"
+      User-Agent: "nyaya-agent/1.0"
+    params:
+      post_id: { type: string, required: true }
+      sort: { type: string, default: "best" }
+    description: "Get a specific post with comments"
+    receipt_fields: [comment_count]
+
+  reddit.submit_post:
+    type: cloud
+    endpoint: "https://oauth.reddit.com/api/submit"
+    method: POST
+    headers:
+      Authorization: "Bearer {{REDDIT_ACCESS_TOKEN}}"
+      User-Agent: "nyaya-agent/1.0"
+      Content-Type: "application/x-www-form-urlencoded"
+    params:
+      sr: { type: string, required: true }
+      title: { type: string, required: true }
+      text: { type: string, required: false }
+      kind: { type: string, default: "self" }
+    description: "Submit a new post to a subreddit"
+    receipt_fields: [post_id, post_url]
+
+  reddit.get_subreddit_info:
+    type: cloud
+    endpoint: "https://oauth.reddit.com/r/{{subreddit}}/about"
+    method: GET
+    headers:
+      Authorization: "Bearer {{REDDIT_ACCESS_TOKEN}}"
+      User-Agent: "nyaya-agent/1.0"
+    params:
+      subreddit: { type: string, required: true }
+    description: "Get information about a subreddit"
+    receipt_fields: [subscriber_count, description]

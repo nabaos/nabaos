@@ -1,0 +1,40 @@
+name: slack
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Slack API integration"
+
+abilities:
+  slack.send:
+    type: cloud
+    endpoint: "https://slack.com/api/chat.postMessage"
+    method: POST
+    headers:
+      Authorization: "Bearer {{SLACK_BOT_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      channel: { type: string, required: true }
+      text: { type: string, required: true }
+    description: "Send a Slack message"
+    receipt_fields: [message_ts]
+
+  slack.channels:
+    type: cloud
+    endpoint: "https://slack.com/api/conversations.list"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SLACK_BOT_TOKEN}}"
+    description: "List Slack channels"
+    receipt_fields: [channel_count]
+
+  slack.history:
+    type: cloud
+    endpoint: "https://slack.com/api/conversations.history"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SLACK_BOT_TOKEN}}"
+    params:
+      channel: { type: string, required: true }
+      limit: { type: int, default: 20 }
+    description: "Get channel message history"
+    receipt_fields: [message_count]

@@ -1,0 +1,13 @@
+name: newsletter-curator
+version: 1.0.0
+description: Curate newsletter content
+category: content-creation
+author: nyaya-official
+permissions:
+- news.search
+- search.web
+- llm.query
+triggers:
+  scheduled:
+  - chain: curate-newsletter
+    interval: 7d

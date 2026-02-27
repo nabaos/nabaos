@@ -1,0 +1,16 @@
+name: deal-finder
+version: 1.0.0
+description: Find deals and coupons
+category: shopping
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - find
+  targets:
+  - deal
+  - coupon
+  - discount
+  priority: 10

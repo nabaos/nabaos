@@ -1,0 +1,15 @@
+name: escalation-router
+version: 1.0.0
+description: Route escalations to right team
+category: customer-support
+author: nyaya-official
+permissions:
+- gmail.read
+- slack.send
+- llm.query
+triggers:
+  events:
+  - 'on': AlertRaised
+    filter:
+      namespace: support
+    chain: route-escalation

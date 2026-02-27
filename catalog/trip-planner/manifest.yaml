@@ -1,0 +1,18 @@
+name: trip-planner
+version: 1.0.0
+description: Plan trips and itineraries
+category: travel
+author: nyaya-official
+permissions:
+- search.web
+- weather.forecast
+- llm.query
+intent_filters:
+- actions:
+  - plan
+  - create
+  targets:
+  - trip
+  - itinerary
+  - travel
+  priority: 10

@@ -1,0 +1,18 @@
+name: quick-capture
+version: 1.0.0
+description: Capture quick notes and ideas
+category: daily-productivity
+author: nyaya-official
+permissions:
+- notion.create_page
+- llm.query
+intent_filters:
+- actions:
+  - note
+  - capture
+  - save
+  targets:
+  - idea
+  - note
+  - thought
+  priority: 10

@@ -1,0 +1,27 @@
+name: study-planner-constitution
+description: Constitution for study-planner
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within study-planner designated scope
+  trigger_actions:
+  - create
+  - plan
+  trigger_targets:
+  - study-schedule
+  - study
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside study-planner scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: calendar.create, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - calendar.create
+  - llm.query

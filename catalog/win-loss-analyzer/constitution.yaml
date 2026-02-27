@@ -1,0 +1,26 @@
+name: win-loss-analyzer-constitution
+description: Constitution for win-loss-analyzer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within win-loss-analyzer designated scope
+  trigger_actions:
+  - analyze
+  trigger_targets:
+  - deals
+  - win-loss
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside win-loss-analyzer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: notion.query, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - notion.query
+  - llm.query

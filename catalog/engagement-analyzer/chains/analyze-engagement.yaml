@@ -1,0 +1,8 @@
+id: analyze-engagement
+description: Analyze engagement data and provide insights
+steps:
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze social media engagement metrics and provide insights: {{input.metrics}}'
+  on_failure: abort

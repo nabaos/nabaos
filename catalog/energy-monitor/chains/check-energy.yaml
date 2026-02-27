@@ -1,0 +1,8 @@
+id: check-energy
+description: Analyze energy usage patterns
+steps:
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze home energy usage data and suggest optimizations: {{input.usage_data}}'
+  on_failure: abort

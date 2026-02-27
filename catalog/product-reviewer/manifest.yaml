@@ -1,0 +1,16 @@
+name: product-reviewer
+version: 1.0.0
+description: Aggregate product reviews
+category: shopping
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - review
+  - check
+  targets:
+  - product
+  - item
+  priority: 10

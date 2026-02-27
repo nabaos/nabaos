@@ -1,0 +1,24 @@
+id: enrich-contact
+description: Extract contact info from signatures and store
+steps:
+- id: read-email
+  ability: gmail.read
+  params:
+    unread: true
+  on_failure: abort
+- id: extract-info
+  ability: llm.query
+  params:
+    prompt: 'Extract contact details (name, title, company, phone, LinkedIn) from
+      email signatures: {{read-email.output}}'
+  depends_on:
+  - read-email
+  on_failure: abort
+- id: store-contact
+  ability: notion.create_page
+  params:
+    database: contacts
+    content: '{{extract-info.output}}'
+  depends_on:
+  - extract-info
+  on_failure: abort

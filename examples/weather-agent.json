@@ -1,0 +1,15 @@
+{
+  "name": "weather-agent",
+  "version": "0.1.0",
+  "description": "Simple weather checking agent",
+  "permissions": [
+    "data.fetch_url",
+    "notify.user",
+    "flow.branch",
+    "flow.stop"
+  ],
+  "memory_limit_mb": 64,
+  "fuel_limit": 1000000,
+  "kv_namespace": "weather",
+  "author": "nyaya-examples"
+}

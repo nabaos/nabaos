@@ -1,0 +1,51 @@
+name: dalle
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "OpenAI DALL-E API integration for image generation, editing, and variation"
+
+abilities:
+  dalle.generate_image:
+    type: cloud
+    endpoint: "https://api.openai.com/v1/images/generations"
+    method: POST
+    headers:
+      Authorization: "Bearer {{OPENAI_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      prompt: { type: string, required: true }
+      size: { type: string, default: "1024x1024" }
+      style: { type: string, required: false }
+      quality: { type: string, default: "standard" }
+      n: { type: int, default: 1 }
+    description: "Generate images from text prompts using DALL-E"
+    receipt_fields: [image_count, image_urls]
+
+  dalle.edit_image:
+    type: cloud
+    endpoint: "https://api.openai.com/v1/images/edits"
+    method: POST
+    headers:
+      Authorization: "Bearer {{OPENAI_API_KEY}}"
+      Content-Type: "multipart/form-data"
+    params:
+      image: { type: path, required: true }
+      mask: { type: path, required: false }
+      prompt: { type: string, required: true }
+      size: { type: string, default: "1024x1024" }
+    description: "Edit existing images with DALL-E"
+    receipt_fields: [image_url]
+
+  dalle.vary_image:
+    type: cloud
+    endpoint: "https://api.openai.com/v1/images/variations"
+    method: POST
+    headers:
+      Authorization: "Bearer {{OPENAI_API_KEY}}"
+      Content-Type: "multipart/form-data"
+    params:
+      image: { type: path, required: true }
+      size: { type: string, default: "1024x1024" }
+      n: { type: int, default: 1 }
+    description: "Generate variations of an existing image"
+    receipt_fields: [image_count, image_urls]

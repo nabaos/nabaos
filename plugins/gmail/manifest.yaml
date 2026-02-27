@@ -1,0 +1,53 @@
+name: gmail
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Gmail API integration via OAuth2"
+
+abilities:
+  gmail.read:
+    type: cloud
+    endpoint: "https://gmail.googleapis.com/gmail/v1/users/me/messages"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GMAIL_ACCESS_TOKEN}}"
+    params:
+      query: { type: string, required: false }
+      max_results: { type: int, default: 10 }
+    description: "Read emails from Gmail inbox"
+    receipt_fields: [message_count]
+
+  gmail.send:
+    type: cloud
+    endpoint: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GMAIL_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      to: { type: string, required: true }
+      subject: { type: string, required: true }
+      body: { type: string, required: true }
+    description: "Send email via Gmail"
+    receipt_fields: [message_id]
+
+  gmail.search:
+    type: cloud
+    endpoint: "https://gmail.googleapis.com/gmail/v1/users/me/messages"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GMAIL_ACCESS_TOKEN}}"
+    params:
+      q: { type: string, required: true }
+      max_results: { type: int, default: 10 }
+    description: "Search Gmail messages"
+    receipt_fields: [result_count]
+
+  gmail.labels:
+    type: cloud
+    endpoint: "https://gmail.googleapis.com/gmail/v1/users/me/labels"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GMAIL_ACCESS_TOKEN}}"
+    description: "List Gmail labels"
+    receipt_fields: [label_count]

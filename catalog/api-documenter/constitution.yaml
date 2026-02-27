@@ -1,0 +1,27 @@
+name: api-documenter-constitution
+description: Constitution for api-documenter
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within api-documenter designated scope
+  trigger_actions:
+  - generate
+  - document
+  trigger_targets:
+  - endpoint
+  - api
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside api-documenter scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: github.prs, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - github.prs
+  - llm.query

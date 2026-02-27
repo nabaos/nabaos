@@ -1,0 +1,15 @@
+# Example manifest for a document generation agent
+# Register with: nyaya plugin register examples/document-generation.yaml
+
+name: document-generation-agent
+version: "0.1.0"
+description: Document generation agent for creating reports, templates, and formatted output
+permissions:
+  - docs.generate
+  - files.read
+  - files.write
+  - memory.search
+memory_limit_mb: 128
+fuel_limit: 3000000
+kv_namespace: doc_generation
+author: nyaya-examples

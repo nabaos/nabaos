@@ -1,0 +1,9 @@
+id: generate-quiz
+description: Create a quiz from provided material
+steps:
+- id: generate
+  ability: llm.query
+  params:
+    prompt: 'Generate a {{input.question_count}}-question quiz on {{input.topic}}.
+      Types: {{input.question_types}}. Difficulty: {{input.difficulty}}'
+  on_failure: abort

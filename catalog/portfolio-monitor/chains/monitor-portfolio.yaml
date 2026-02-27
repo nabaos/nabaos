@@ -1,0 +1,22 @@
+id: monitor-portfolio
+description: Fetch prices and analyze portfolio performance
+steps:
+- id: get-stocks
+  ability: finance.stock_quote
+  params:
+    symbols: '{{input.stock_symbols}}'
+  on_failure: continue
+- id: get-crypto
+  ability: finance.crypto_price
+  params:
+    symbols: '{{input.crypto_symbols}}'
+  on_failure: continue
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze portfolio performance: Stocks: {{get-stocks.output}}, Crypto:
+      {{get-crypto.output}}'
+  depends_on:
+  - get-stocks
+  - get-crypto
+  on_failure: abort

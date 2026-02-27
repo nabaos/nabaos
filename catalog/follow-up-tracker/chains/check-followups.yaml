@@ -1,0 +1,15 @@
+id: check-followups
+description: Find sent emails without replies
+steps:
+- id: search-sent
+  ability: gmail.search
+  params:
+    query: in:sent -has:reply older_than:3d
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Identify emails that need follow-up from: {{search-sent.output}}'
+  depends_on:
+  - search-sent
+  on_failure: abort

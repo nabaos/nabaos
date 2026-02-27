@@ -1,0 +1,12 @@
+name: server-monitor
+version: 1.0.0
+description: Monitor server health metrics
+category: developer-devops
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+triggers:
+  scheduled:
+  - chain: check-health
+    interval: 5m

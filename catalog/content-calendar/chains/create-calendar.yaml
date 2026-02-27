@@ -1,0 +1,17 @@
+id: create-calendar
+description: Generate a social media content calendar
+steps:
+- id: plan
+  ability: llm.query
+  params:
+    prompt: 'Create a {{input.duration}} social media content calendar for {{input.brand}}.
+      Platforms: {{input.platforms}}. Themes: {{input.themes}}'
+  on_failure: abort
+- id: store
+  ability: notion.create_page
+  params:
+    database: content-calendar
+    content: '{{plan.output}}'
+  depends_on:
+  - plan
+  on_failure: abort

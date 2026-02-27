@@ -1,0 +1,39 @@
+name: finance
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Financial data via Alpha Vantage and CoinGecko"
+
+abilities:
+  finance.stock_quote:
+    type: cloud
+    endpoint: "https://www.alphavantage.co/query"
+    method: GET
+    params:
+      function: { type: string, default: "GLOBAL_QUOTE" }
+      symbol: { type: string, required: true }
+      apikey: { type: string, required: true }
+    description: "Get stock quote"
+    receipt_fields: [symbol, price]
+
+  finance.crypto_price:
+    type: cloud
+    endpoint: "https://api.coingecko.com/api/v3/simple/price"
+    method: GET
+    params:
+      ids: { type: string, required: true }
+      vs_currencies: { type: string, default: "usd" }
+    description: "Get cryptocurrency price"
+    receipt_fields: [coin, price]
+
+  finance.exchange_rate:
+    type: cloud
+    endpoint: "https://www.alphavantage.co/query"
+    method: GET
+    params:
+      function: { type: string, default: "CURRENCY_EXCHANGE_RATE" }
+      from_currency: { type: string, required: true }
+      to_currency: { type: string, required: true }
+      apikey: { type: string, required: true }
+    description: "Get currency exchange rate"
+    receipt_fields: [rate]

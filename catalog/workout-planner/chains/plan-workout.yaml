@@ -1,0 +1,9 @@
+id: plan-workout
+description: Generate a personalized workout plan
+steps:
+- id: plan
+  ability: llm.query
+  params:
+    prompt: 'Create a {{input.duration}} workout plan. Goal: {{input.goal}}. Fitness
+      level: {{input.level}}. Equipment: {{input.equipment}}'
+  on_failure: abort

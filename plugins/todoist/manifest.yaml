@@ -1,0 +1,57 @@
+name: todoist
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Todoist task management integration"
+
+abilities:
+  todoist.list_tasks:
+    type: cloud
+    endpoint: "https://api.todoist.com/rest/v2/tasks"
+    method: GET
+    headers:
+      Authorization: "Bearer {{TODOIST_API_TOKEN}}"
+    params:
+      project_id: { type: string, required: false }
+      filter: { type: string, required: false }
+      label: { type: string, required: false }
+    description: "List tasks from Todoist projects and filters"
+    receipt_fields: [task_count]
+
+  todoist.add_task:
+    type: cloud
+    endpoint: "https://api.todoist.com/rest/v2/tasks"
+    method: POST
+    headers:
+      Authorization: "Bearer {{TODOIST_API_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      content: { type: string, required: true }
+      due_string: { type: string, required: false }
+      priority: { type: int, required: false }
+      project_id: { type: string, required: false }
+      labels: { type: string, required: false }
+    description: "Create a new task in Todoist"
+    receipt_fields: [task_id]
+
+  todoist.complete_task:
+    type: cloud
+    endpoint: "https://api.todoist.com/rest/v2/tasks/{{task_id}}/close"
+    method: POST
+    headers:
+      Authorization: "Bearer {{TODOIST_API_TOKEN}}"
+    params:
+      task_id: { type: string, required: true }
+    description: "Mark a task as complete in Todoist"
+    receipt_fields: [task_id]
+
+  todoist.get_project:
+    type: cloud
+    endpoint: "https://api.todoist.com/rest/v2/projects/{{project_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{TODOIST_API_TOKEN}}"
+    params:
+      project_id: { type: string, required: true }
+    description: "Get project details from Todoist"
+    receipt_fields: [project_id]

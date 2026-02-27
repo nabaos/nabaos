@@ -1,0 +1,28 @@
+name: knowledge-searcher-constitution
+description: Constitution for knowledge-searcher
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within knowledge-searcher designated scope
+  trigger_actions:
+  - search
+  - find
+  trigger_targets:
+  - answer
+  - solution
+  - knowledge
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside knowledge-searcher scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: notion.search, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - notion.search
+  - llm.query

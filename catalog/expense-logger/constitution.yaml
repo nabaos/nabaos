@@ -1,0 +1,26 @@
+name: expense-logger-constitution
+description: Constitution for expense-logger
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within expense-logger designated scope
+  trigger_actions:
+  - track
+  - log
+  trigger_targets:
+  - expense
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside expense-logger scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: notion.create_page, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - notion.create_page
+  - llm.query

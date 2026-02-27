@@ -1,0 +1,16 @@
+id: plan-meals
+description: Create a meal plan with recipes
+steps:
+- id: search-recipes
+  ability: search.web
+  params:
+    query: '{{input.dietary}} meal plan recipes'
+  on_failure: continue
+- id: plan
+  ability: llm.query
+  params:
+    prompt: 'Create a {{input.duration}} meal plan. Dietary: {{input.dietary}}. Calories:
+      {{input.calories}}. Recipes: {{search-recipes.output}}'
+  depends_on:
+  - search-recipes
+  on_failure: abort

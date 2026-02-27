@@ -1,0 +1,16 @@
+name: infra-generator
+version: 1.0.0
+description: Generate infrastructure configs
+category: developer-devops
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - generate
+  - create
+  targets:
+  - infra
+  - terraform
+  - docker
+  priority: 10

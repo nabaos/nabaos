@@ -1,0 +1,22 @@
+id: scan-competitors
+description: Search news and web for competitor updates
+steps:
+- id: search-news
+  ability: news.search
+  params:
+    query: '{{input.competitors}}'
+  on_failure: continue
+- id: search-web
+  ability: search.web
+  params:
+    query: '{{input.competitors}} announcements'
+  on_failure: continue
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Create a competitive intelligence report from: News: {{search-news.output}},
+      Web: {{search-web.output}}'
+  depends_on:
+  - search-news
+  - search-web
+  on_failure: abort

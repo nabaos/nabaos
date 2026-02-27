@@ -1,0 +1,15 @@
+name: welcome-sequence
+version: 1.0.0
+description: Auto-reply to first-time contacts
+category: email-communication
+author: nyaya-official
+permissions:
+- gmail.read
+- gmail.send
+- llm.query
+triggers:
+  events:
+  - 'on': DataChanged
+    filter:
+      namespace: gmail
+    chain: welcome-new-contact

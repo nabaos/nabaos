@@ -1,0 +1,23 @@
+id: plan-trip
+description: Research destination and create itinerary
+steps:
+- id: research
+  ability: search.web
+  params:
+    query: '{{input.destination}} travel guide things to do'
+  on_failure: continue
+- id: get-weather
+  ability: weather.forecast
+  params:
+    location: '{{input.destination}}'
+    days: '{{input.duration}}'
+  on_failure: continue
+- id: plan
+  ability: llm.query
+  params:
+    prompt: 'Create a {{input.duration}}-day itinerary for {{input.destination}}.
+      Research: {{research.output}}, Weather: {{get-weather.output}}. Budget: {{input.budget}}'
+  depends_on:
+  - research
+  - get-weather
+  on_failure: abort

@@ -1,0 +1,16 @@
+id: review-contract
+description: Analyze contract for key terms and risks
+steps:
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Review this contract and identify key terms, obligations, risks, and
+      unusual clauses: {{input.contract_text}}'
+  on_failure: abort
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Create an executive summary of the contract review: {{analyze.output}}'
+  depends_on:
+  - analyze
+  on_failure: abort

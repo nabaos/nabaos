@@ -1,0 +1,15 @@
+id: track-pipeline
+description: Query pipeline data and summarize
+steps:
+- id: query-pipeline
+  ability: notion.query
+  params:
+    database: sales-pipeline
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze sales pipeline status and provide insights: {{query-pipeline.output}}'
+  depends_on:
+  - query-pipeline
+  on_failure: abort

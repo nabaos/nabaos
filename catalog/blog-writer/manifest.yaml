@@ -1,0 +1,17 @@
+name: blog-writer
+version: 1.0.0
+description: Draft blog posts
+category: content-creation
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - write
+  - create
+  targets:
+  - blog
+  - article
+  - post
+  priority: 10

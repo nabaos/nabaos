@@ -1,0 +1,64 @@
+name: home_assistant
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Home Assistant integration for smart home device control and automation"
+
+abilities:
+  ha.get_state:
+    type: cloud
+    endpoint: "{{HA_URL}}/api/states/{{entity_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{HA_LONG_LIVED_TOKEN}}"
+    params:
+      entity_id: { type: string, required: true, description: "Home Assistant entity ID" }
+    description: "Get current state of a smart home entity"
+    receipt_fields: [entity_state, last_updated]
+
+  ha.call_service:
+    type: cloud
+    endpoint: "{{HA_URL}}/api/services/{{domain}}/{{service}}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{HA_LONG_LIVED_TOKEN}}"
+    params:
+      domain: { type: string, required: true, description: "Service domain (light, switch, etc)" }
+      service: { type: string, required: true, description: "Service name" }
+      entity_id: { type: string, required: true }
+    description: "Call a Home Assistant service"
+    receipt_fields: [service_result]
+
+  ha.list_entities:
+    type: cloud
+    endpoint: "{{HA_URL}}/api/states"
+    method: GET
+    headers:
+      Authorization: "Bearer {{HA_LONG_LIVED_TOKEN}}"
+    params: {}
+    description: "List all entities in Home Assistant"
+    receipt_fields: [entity_count]
+
+  ha.get_history:
+    type: cloud
+    endpoint: "{{HA_URL}}/api/history/period/{{timestamp}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{HA_LONG_LIVED_TOKEN}}"
+    params:
+      entity_id: { type: string, required: true }
+      timestamp: { type: string, required: true, description: "ISO timestamp" }
+    description: "Get historical state data for an entity"
+    receipt_fields: [history_entries]
+
+  ha.fire_event:
+    type: cloud
+    endpoint: "{{HA_URL}}/api/events/{{event_type}}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{HA_LONG_LIVED_TOKEN}}"
+    params:
+      event_type: { type: string, required: true }
+      event_data: { type: string, required: false }
+    description: "Fire a custom event in Home Assistant"
+    receipt_fields: [event_fired]

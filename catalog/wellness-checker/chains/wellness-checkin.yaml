@@ -1,0 +1,18 @@
+id: wellness-checkin
+description: Prompt for wellness check-in and store response
+steps:
+- id: generate-prompt
+  ability: llm.query
+  params:
+    prompt: Generate a daily wellness check-in prompt covering mood, energy, stress,
+      and physical wellness
+  on_failure: abort
+- id: store
+  ability: notion.create_page
+  params:
+    database: wellness
+    title: Wellness - {{input.date}}
+    content: '{{generate-prompt.output}}'
+  depends_on:
+  - generate-prompt
+  on_failure: abort

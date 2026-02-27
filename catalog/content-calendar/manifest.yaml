@@ -1,0 +1,16 @@
+name: content-calendar
+version: 1.0.0
+description: Plan social content calendar
+category: social-media
+author: nyaya-official
+permissions:
+- notion.create_page
+- llm.query
+intent_filters:
+- actions:
+  - create
+  - plan
+  targets:
+  - content-calendar
+  - social-plan
+  priority: 10

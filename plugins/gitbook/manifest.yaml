@@ -1,0 +1,43 @@
+name: gitbook
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "GitBook API integration for documentation and knowledge base management"
+
+abilities:
+  gitbook.search:
+    type: cloud
+    endpoint: "https://api.gitbook.com/v1/spaces/{{space_id}}/search"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GITBOOK_API_TOKEN}}"
+    params:
+      space_id: { type: string, required: true }
+      query: { type: string, required: true }
+    description: "Search documentation content"
+    receipt_fields: [result_count]
+
+  gitbook.get_page:
+    type: cloud
+    endpoint: "https://api.gitbook.com/v1/spaces/{{space_id}}/content/path/{{page_path}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GITBOOK_API_TOKEN}}"
+    params:
+      space_id: { type: string, required: true }
+      page_path: { type: string, required: true }
+    description: "Get page content from space"
+    receipt_fields: [page_title, page_content]
+
+  gitbook.create_page:
+    type: cloud
+    endpoint: "https://api.gitbook.com/v1/spaces/{{space_id}}/content"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GITBOOK_API_TOKEN}}"
+    params:
+      space_id: { type: string, required: true }
+      title: { type: string, required: true }
+      body: { type: string, required: true }
+    description: "Create new page in space"
+    receipt_fields: [page_id]

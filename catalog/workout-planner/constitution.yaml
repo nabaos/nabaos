@@ -1,0 +1,26 @@
+name: workout-planner-constitution
+description: Constitution for workout-planner
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within workout-planner designated scope
+  trigger_actions:
+  - create
+  - plan
+  trigger_targets:
+  - workout
+  - exercise
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside workout-planner scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - llm.query

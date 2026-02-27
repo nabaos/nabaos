@@ -1,0 +1,26 @@
+name: log-analyzer-constitution
+description: Constitution for log-analyzer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within log-analyzer designated scope
+  trigger_actions:
+  - analyze
+  trigger_targets:
+  - logs
+  - error
+  - log
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside log-analyzer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - llm.query

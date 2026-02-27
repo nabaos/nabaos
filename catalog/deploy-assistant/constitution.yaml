@@ -1,0 +1,27 @@
+name: deploy-assistant-constitution
+description: Constitution for deploy-assistant
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within deploy-assistant designated scope
+  trigger_actions:
+  - deploy
+  - release
+  trigger_targets:
+  - service
+  - app
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside deploy-assistant scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: github.prs, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - github.prs
+  - llm.query

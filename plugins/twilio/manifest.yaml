@@ -1,0 +1,58 @@
+name: twilio
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Twilio API integration for SMS, calls, and phone verification"
+
+abilities:
+  twilio.send_sms:
+    type: cloud
+    endpoint: "https://api.twilio.com/2010-04-01/Accounts/{{TWILIO_SID}}/Messages.json"
+    method: POST
+    headers:
+      Authorization: "Basic {{TWILIO_AUTH}}"
+      Content-Type: "application/x-www-form-urlencoded"
+    params:
+      To: { type: string, required: true }
+      Body: { type: string, required: true }
+      From: { type: string, required: true }
+    description: "Send an SMS message via Twilio"
+    receipt_fields: [message_sid, status]
+
+  twilio.make_call:
+    type: cloud
+    endpoint: "https://api.twilio.com/2010-04-01/Accounts/{{TWILIO_SID}}/Calls.json"
+    method: POST
+    headers:
+      Authorization: "Basic {{TWILIO_AUTH}}"
+      Content-Type: "application/x-www-form-urlencoded"
+    params:
+      To: { type: string, required: true }
+      From: { type: string, required: true }
+      Url: { type: url, required: true }
+    description: "Make a phone call via Twilio"
+    receipt_fields: [call_sid, status]
+
+  twilio.list_messages:
+    type: cloud
+    endpoint: "https://api.twilio.com/2010-04-01/Accounts/{{TWILIO_SID}}/Messages.json"
+    method: GET
+    headers:
+      Authorization: "Basic {{TWILIO_AUTH}}"
+    params:
+      DateSent: { type: datetime, required: false }
+    description: "List SMS messages from Twilio account"
+    receipt_fields: [message_count]
+
+  twilio.verify_phone:
+    type: cloud
+    endpoint: "https://verify.twilio.com/v2/Services/{{SERVICE_SID}}/Verifications"
+    method: POST
+    headers:
+      Authorization: "Basic {{TWILIO_AUTH}}"
+      Content-Type: "application/x-www-form-urlencoded"
+    params:
+      To: { type: string, required: true }
+      Channel: { type: string, default: "sms" }
+    description: "Initiate phone verification via Twilio"
+    receipt_fields: [verification_sid, status]

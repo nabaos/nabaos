@@ -1,0 +1,38 @@
+name: arxiv
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "arXiv preprint search and retrieval"
+
+abilities:
+  arxiv.search:
+    type: cloud
+    endpoint: "https://export.arxiv.org/api/query"
+    method: GET
+    params:
+      search_query: { type: string, required: true }
+      max_results: { type: int, default: 10 }
+      sortBy: { type: string, required: false }
+    description: "Search arXiv for academic papers and preprints"
+    receipt_fields: [result_count]
+
+  arxiv.get_paper:
+    type: cloud
+    endpoint: "https://export.arxiv.org/api/query"
+    method: GET
+    params:
+      id_list: { type: string, required: true }
+      paper_id: { type: string, required: true }
+    description: "Get metadata and abstract for a specific arXiv paper"
+    receipt_fields: [paper_id]
+
+  arxiv.get_recent:
+    type: cloud
+    endpoint: "https://export.arxiv.org/api/query"
+    method: GET
+    params:
+      cat: { type: string, required: true }
+      sortBy: { type: string, default: "submittedDate" }
+      max_results: { type: int, default: 10 }
+    description: "Get recent papers in an arXiv category"
+    receipt_fields: [result_count]

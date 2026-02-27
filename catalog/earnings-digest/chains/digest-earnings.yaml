@@ -1,0 +1,22 @@
+id: digest-earnings
+description: Search for earnings news and summarize
+steps:
+- id: search-earnings
+  ability: news.search
+  params:
+    query: earnings report quarterly results
+  on_failure: abort
+- id: get-quotes
+  ability: finance.stock_quote
+  params:
+    symbols: '{{input.watchlist}}'
+  on_failure: continue
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Summarize earnings reports and market reactions: News: {{search-earnings.output}},
+      Quotes: {{get-quotes.output}}'
+  depends_on:
+  - search-earnings
+  - get-quotes
+  on_failure: abort

@@ -1,0 +1,27 @@
+name: infra-generator-constitution
+description: Constitution for infra-generator
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within infra-generator designated scope
+  trigger_actions:
+  - generate
+  - create
+  trigger_targets:
+  - docker
+  - infra
+  - terraform
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside infra-generator scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - llm.query

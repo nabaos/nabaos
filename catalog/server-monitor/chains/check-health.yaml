@@ -1,0 +1,15 @@
+id: check-health
+description: Check server health and analyze metrics
+steps:
+- id: fetch-metrics
+  ability: search.web
+  params:
+    query: '{{input.server}} health status'
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze server health metrics and flag issues: {{fetch-metrics.output}}'
+  depends_on:
+  - fetch-metrics
+  on_failure: abort

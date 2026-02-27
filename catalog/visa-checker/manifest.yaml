@@ -1,0 +1,15 @@
+name: visa-checker
+version: 1.0.0
+description: Check visa requirements
+category: travel
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - check
+  targets:
+  - visa
+  - travel-requirements
+  priority: 10

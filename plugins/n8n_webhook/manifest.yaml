@@ -1,0 +1,29 @@
+name: n8n_webhook
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "n8n workflow automation API integration for complex automation scenarios"
+
+abilities:
+  n8n.trigger:
+    type: cloud
+    endpoint: "{{N8N_URL}}/webhook/{{webhook_id}}"
+    method: POST
+    headers:
+      X-N8N-API-KEY: "{{N8N_API_KEY}}"
+    params:
+      webhook_id: { type: string, required: true }
+      payload: { type: string, required: true, description: "JSON payload" }
+    description: "Trigger n8n workflow via webhook"
+    receipt_fields: [trigger_success]
+
+  n8n.get_execution:
+    type: cloud
+    endpoint: "{{N8N_URL}}/api/v1/executions/{{execution_id}}"
+    method: GET
+    headers:
+      X-N8N-API-KEY: "{{N8N_API_KEY}}"
+    params:
+      execution_id: { type: string, required: true }
+    description: "Get workflow execution details"
+    receipt_fields: [execution_status, execution_data]

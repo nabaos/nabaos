@@ -1,0 +1,27 @@
+name: newsletter-curator-constitution
+description: Constitution for newsletter-curator
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within newsletter-curator designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - newsletter-curator
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside newsletter-curator scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: news.search, search.web, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - news.search
+  - search.web
+  - llm.query

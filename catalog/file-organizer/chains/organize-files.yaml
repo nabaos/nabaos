@@ -1,0 +1,15 @@
+id: organize-files
+description: Analyze file metadata and suggest organization
+steps:
+- id: analyze-files
+  ability: llm.query
+  params:
+    prompt: 'Analyze these files and suggest an organized folder structure: {{input.file_list}}'
+  on_failure: abort
+- id: generate-plan
+  ability: llm.query
+  params:
+    prompt: 'Create a step-by-step file reorganization plan from: {{analyze-files.output}}'
+  depends_on:
+  - analyze-files
+  on_failure: abort

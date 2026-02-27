@@ -1,0 +1,24 @@
+id: meeting-prep
+description: Fetch upcoming meetings, search related emails, summarize context
+steps:
+- id: get-meetings
+  ability: calendar.list
+  params:
+    range: next_2h
+  on_failure: abort
+- id: search-context
+  ability: gmail.search
+  params:
+    query: '{{get-meetings.output.attendees}}'
+  depends_on:
+  - get-meetings
+  on_failure: continue
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Prepare a briefing for this meeting: {{get-meetings.output}}, related
+      emails: {{search-context.output}}'
+  depends_on:
+  - get-meetings
+  - search-context
+  on_failure: abort

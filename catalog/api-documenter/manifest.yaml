@@ -1,0 +1,16 @@
+name: api-documenter
+version: 1.0.0
+description: Generate API documentation
+category: documentation
+author: nyaya-official
+permissions:
+- github.prs
+- llm.query
+intent_filters:
+- actions:
+  - document
+  - generate
+  targets:
+  - api
+  - endpoint
+  priority: 10

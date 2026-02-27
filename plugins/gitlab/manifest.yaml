@@ -1,0 +1,77 @@
+name: gitlab
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "GitLab API integration for merge requests, pipelines, and issues"
+
+abilities:
+  gitlab.list_merge_requests:
+    type: cloud
+    endpoint: "https://gitlab.com/api/v4/projects/{{project_id}}/merge_requests"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{GITLAB_TOKEN}}"
+    params:
+      project_id: { type: string, required: true }
+      state: { type: string, required: false, default: "opened" }
+      author_username: { type: string, required: false }
+      labels: { type: string, required: false }
+    description: "List merge requests for a GitLab project"
+    receipt_fields: [merge_request_count]
+
+  gitlab.create_mr:
+    type: cloud
+    endpoint: "https://gitlab.com/api/v4/projects/{{project_id}}/merge_requests"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{GITLAB_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      project_id: { type: string, required: true }
+      source_branch: { type: string, required: true }
+      target_branch: { type: string, required: true }
+      title: { type: string, required: true }
+      description: { type: string, required: false }
+    description: "Create a merge request in GitLab"
+    receipt_fields: [merge_request_id]
+
+  gitlab.get_pipeline:
+    type: cloud
+    endpoint: "https://gitlab.com/api/v4/projects/{{project_id}}/pipelines/{{pipeline_id}}"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{GITLAB_TOKEN}}"
+    params:
+      project_id: { type: string, required: true }
+      pipeline_id: { type: string, required: true }
+    description: "Get pipeline details from GitLab"
+    receipt_fields: [pipeline_status]
+
+  gitlab.trigger_pipeline:
+    type: cloud
+    endpoint: "https://gitlab.com/api/v4/projects/{{project_id}}/trigger/pipeline"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{GITLAB_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      project_id: { type: string, required: true }
+      ref: { type: string, required: true }
+      token: { type: string, required: true }
+      variables: { type: string, required: false }
+    description: "Trigger a pipeline in GitLab"
+    receipt_fields: [pipeline_id]
+
+  gitlab.list_issues:
+    type: cloud
+    endpoint: "https://gitlab.com/api/v4/projects/{{project_id}}/issues"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{GITLAB_TOKEN}}"
+    params:
+      project_id: { type: string, required: true }
+      state: { type: string, required: false, default: "opened" }
+      labels: { type: string, required: false }
+      milestone: { type: string, required: false }
+    description: "List issues for a GitLab project"
+    receipt_fields: [issue_count]

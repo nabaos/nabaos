@@ -1,0 +1,11 @@
+name: energy-monitor
+version: 1.0.0
+description: Monitor home energy usage
+category: smart-home
+author: nyaya-official
+permissions:
+- llm.query
+triggers:
+  scheduled:
+  - chain: check-energy
+    interval: 1h

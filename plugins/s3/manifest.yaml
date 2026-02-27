@@ -1,0 +1,58 @@
+name: s3
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "AWS S3 API integration for object listing, reading, uploading, and URL generation"
+
+abilities:
+  s3.list_objects:
+    type: cloud
+    endpoint: "https://{{bucket}}.s3.{{region}}.amazonaws.com"
+    method: GET
+    headers:
+      Authorization: "AWS4-HMAC-SHA256 {{AWS_SIGNATURE}}"
+    params:
+      bucket: { type: string, required: true }
+      region: { type: string, required: true }
+      prefix: { type: string, required: false }
+      delimiter: { type: string, required: false }
+      max-keys: { type: int, default: 1000 }
+    description: "List objects in an S3 bucket"
+    receipt_fields: [object_count]
+
+  s3.get_object:
+    type: cloud
+    endpoint: "https://{{bucket}}.s3.{{region}}.amazonaws.com/{{key}}"
+    method: GET
+    headers:
+      Authorization: "AWS4-HMAC-SHA256 {{AWS_SIGNATURE}}"
+    params:
+      bucket: { type: string, required: true }
+      region: { type: string, required: true }
+      key: { type: string, required: true }
+    description: "Download/read an object from S3"
+    receipt_fields: [object_size, last_modified]
+
+  s3.put_object:
+    type: cloud
+    endpoint: "https://{{bucket}}.s3.{{region}}.amazonaws.com/{{key}}"
+    method: PUT
+    headers:
+      Authorization: "AWS4-HMAC-SHA256 {{AWS_SIGNATURE}}"
+      Content-Type: "application/octet-stream"
+    params:
+      bucket: { type: string, required: true }
+      region: { type: string, required: true }
+      key: { type: string, required: true }
+      content_type: { type: string, required: false }
+    description: "Upload an object to S3"
+    receipt_fields: [etag]
+
+  s3.generate_presigned_url:
+    type: local
+    description: "Generate a presigned URL for S3 object access"
+    params:
+      bucket: { type: string, required: true }
+      key: { type: string, required: true }
+      expires_in: { type: int, default: 3600 }
+    receipt_fields: [presigned_url, expiration_time]

@@ -1,0 +1,29 @@
+name: maintenance-tracker-constitution
+description: Constitution for maintenance-tracker
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within maintenance-tracker designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - maintenance-tracker
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside maintenance-tracker scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: notion.create_page, notion.query, calendar.create,
+    llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - notion.create_page
+  - notion.query
+  - calendar.create
+  - llm.query

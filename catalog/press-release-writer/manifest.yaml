@@ -1,0 +1,15 @@
+name: press-release-writer
+version: 1.0.0
+description: Draft press releases
+category: content-creation
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - write
+  - draft
+  targets:
+  - press-release
+  - announcement
+  priority: 10

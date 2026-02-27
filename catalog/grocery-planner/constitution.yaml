@@ -1,0 +1,27 @@
+name: grocery-planner-constitution
+description: Constitution for grocery-planner
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within grocery-planner designated scope
+  trigger_actions:
+  - create
+  - plan
+  trigger_targets:
+  - shopping-list
+  - grocery
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside grocery-planner scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: notion.create_page, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - notion.create_page
+  - llm.query

@@ -1,0 +1,57 @@
+name: quickbooks
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "QuickBooks API integration for accounting and invoicing"
+
+abilities:
+  quickbooks.list_invoices:
+    type: cloud
+    endpoint: "https://quickbooks.api.intuit.com/v3/company/{{company_id}}/query"
+    method: GET
+    headers:
+      Authorization: "Bearer {{QUICKBOOKS_ACCESS_TOKEN}}"
+    params:
+      company_id: { type: string, required: true }
+      query: { type: string, required: true }
+    description: "List invoices from QuickBooks"
+    receipt_fields: [invoice_count]
+
+  quickbooks.create_invoice:
+    type: cloud
+    endpoint: "https://quickbooks.api.intuit.com/v3/company/{{company_id}}/invoice"
+    method: POST
+    headers:
+      Authorization: "Bearer {{QUICKBOOKS_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      company_id: { type: string, required: true }
+      customer: { type: string, required: true }
+      line_items: { type: string, required: true }
+    description: "Create an invoice in QuickBooks"
+    receipt_fields: [invoice_id]
+
+  quickbooks.get_profit_loss:
+    type: cloud
+    endpoint: "https://quickbooks.api.intuit.com/v3/company/{{company_id}}/reports/ProfitAndLoss"
+    method: GET
+    headers:
+      Authorization: "Bearer {{QUICKBOOKS_ACCESS_TOKEN}}"
+    params:
+      company_id: { type: string, required: true }
+      start_date: { type: string, required: false }
+      end_date: { type: string, required: false }
+    description: "Get Profit and Loss report from QuickBooks"
+    receipt_fields: [net_income]
+
+  quickbooks.list_expenses:
+    type: cloud
+    endpoint: "https://quickbooks.api.intuit.com/v3/company/{{company_id}}/query"
+    method: GET
+    headers:
+      Authorization: "Bearer {{QUICKBOOKS_ACCESS_TOKEN}}"
+    params:
+      company_id: { type: string, required: true }
+      query: { type: string, required: true }
+    description: "List expenses from QuickBooks"
+    receipt_fields: [expense_count]

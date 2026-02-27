@@ -1,0 +1,18 @@
+name: todo-manager
+version: 1.0.0
+description: Manage todo lists in Notion
+category: daily-productivity
+author: nyaya-official
+permissions:
+- notion.query
+- notion.create_page
+- llm.query
+intent_filters:
+- actions:
+  - add
+  - check
+  - list
+  targets:
+  - todo
+  - task
+  priority: 10

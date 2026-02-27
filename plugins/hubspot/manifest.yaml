@@ -1,0 +1,69 @@
+name: hubspot
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "HubSpot CRM API integration for contact management and sales operations"
+
+abilities:
+  hubspot.search_contacts:
+    type: cloud
+    endpoint: "https://api.hubapi.com/crm/v3/objects/contacts/search"
+    method: POST
+    headers:
+      Authorization: "Bearer {{HUBSPOT_ACCESS_TOKEN}}"
+    params:
+      query: { type: string, required: true }
+      filterGroups: { type: string, required: false }
+    description: "Search for contacts in HubSpot"
+    receipt_fields: [contact_count]
+
+  hubspot.create_contact:
+    type: cloud
+    endpoint: "https://api.hubapi.com/crm/v3/objects/contacts"
+    method: POST
+    headers:
+      Authorization: "Bearer {{HUBSPOT_ACCESS_TOKEN}}"
+    params:
+      email: { type: string, required: true }
+      firstname: { type: string, required: false }
+      lastname: { type: string, required: false }
+      properties: { type: string, required: false }
+    description: "Create a new contact in HubSpot"
+    receipt_fields: [contact_id]
+
+  hubspot.get_deal:
+    type: cloud
+    endpoint: "https://api.hubapi.com/crm/v3/objects/deals/{{deal_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{HUBSPOT_ACCESS_TOKEN}}"
+    params:
+      deal_id: { type: string, required: true }
+      properties: { type: string, required: false }
+      associations: { type: string, required: false }
+    description: "Get deal details from HubSpot"
+    receipt_fields: [deal_name, deal_value]
+
+  hubspot.log_note:
+    type: cloud
+    endpoint: "https://api.hubapi.com/crm/v3/objects/notes"
+    method: POST
+    headers:
+      Authorization: "Bearer {{HUBSPOT_ACCESS_TOKEN}}"
+    params:
+      hs_note_body: { type: string, required: true }
+      associations: { type: string, required: false }
+    description: "Log a note in HubSpot"
+    receipt_fields: [note_id]
+
+  hubspot.get_email_engagement:
+    type: cloud
+    endpoint: "https://api.hubapi.com/crm/v3/objects/emails"
+    method: GET
+    headers:
+      Authorization: "Bearer {{HUBSPOT_ACCESS_TOKEN}}"
+    params:
+      limit: { type: number, required: false, default: 50 }
+      associations: { type: string, required: false }
+    description: "Get email engagement records"
+    receipt_fields: [email_count]

@@ -1,0 +1,16 @@
+name: language-tutor
+version: 1.0.0
+description: Language learning assistant
+category: education
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - learn
+  - practice
+  - translate
+  targets:
+  - language
+  - word
+  priority: 10

@@ -1,0 +1,12 @@
+name: policy-monitor
+version: 1.0.0
+description: Monitor policy changes
+category: legal-compliance
+author: nyaya-official
+permissions:
+- news.search
+- llm.query
+triggers:
+  scheduled:
+  - chain: monitor-policies
+    interval: 7d

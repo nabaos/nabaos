@@ -1,0 +1,54 @@
+name: wise
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Wise API integration for currency exchange and transfers"
+
+abilities:
+  wise.get_exchange_rate:
+    type: cloud
+    endpoint: "https://api.transferwise.com/v1/rates"
+    method: GET
+    headers:
+      Authorization: "Bearer {{WISE_API_TOKEN}}"
+    params:
+      source: { type: string, required: true }
+      target: { type: string, required: true }
+    description: "Get exchange rate from Wise"
+    receipt_fields: [exchange_rate]
+
+  wise.list_transfers:
+    type: cloud
+    endpoint: "https://api.transferwise.com/v1/transfers"
+    method: GET
+    headers:
+      Authorization: "Bearer {{WISE_API_TOKEN}}"
+    params:
+      profile: { type: string, required: true }
+      limit: { type: int, required: false, default: 10 }
+    description: "List transfers from Wise"
+    receipt_fields: [transfer_count]
+
+  wise.create_transfer:
+    type: cloud
+    endpoint: "https://api.transferwise.com/v1/transfers"
+    method: POST
+    headers:
+      Authorization: "Bearer {{WISE_API_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      targetAccount: { type: string, required: true }
+      quoteUuid: { type: string, required: true }
+    description: "Create a transfer via Wise"
+    receipt_fields: [transfer_id]
+
+  wise.get_balance:
+    type: cloud
+    endpoint: "https://api.transferwise.com/v4/profiles/{{profile_id}}/balances"
+    method: GET
+    headers:
+      Authorization: "Bearer {{WISE_API_TOKEN}}"
+    params:
+      profile_id: { type: string, required: true }
+    description: "Get account balance from Wise"
+    receipt_fields: [balance_currency]

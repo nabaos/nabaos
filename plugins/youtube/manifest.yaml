@@ -1,0 +1,56 @@
+name: youtube
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "YouTube API integration for video search, stats, channels, and captions"
+
+abilities:
+  youtube.search_videos:
+    type: cloud
+    endpoint: "https://www.googleapis.com/youtube/v3/search"
+    method: GET
+    headers:
+      Authorization: "Bearer {{YOUTUBE_ACCESS_TOKEN}}"
+    params:
+      q: { type: string, required: true }
+      type: { type: string, default: "video" }
+      maxResults: { type: int, default: 10 }
+      key: { type: string, required: false }
+    description: "Search for videos on YouTube"
+    receipt_fields: [video_count]
+
+  youtube.get_video:
+    type: cloud
+    endpoint: "https://www.googleapis.com/youtube/v3/videos"
+    method: GET
+    headers:
+      Authorization: "Bearer {{YOUTUBE_ACCESS_TOKEN}}"
+    params:
+      id: { type: string, required: true }
+      part: { type: string, default: "statistics,snippet" }
+    description: "Get video details and statistics"
+    receipt_fields: [view_count, like_count]
+
+  youtube.get_channel_stats:
+    type: cloud
+    endpoint: "https://www.googleapis.com/youtube/v3/channels"
+    method: GET
+    headers:
+      Authorization: "Bearer {{YOUTUBE_ACCESS_TOKEN}}"
+    params:
+      id: { type: string, required: true }
+      part: { type: string, default: "statistics" }
+    description: "Get channel statistics and metrics"
+    receipt_fields: [subscriber_count, view_count]
+
+  youtube.get_captions:
+    type: cloud
+    endpoint: "https://www.googleapis.com/youtube/v3/captions"
+    method: GET
+    headers:
+      Authorization: "Bearer {{YOUTUBE_ACCESS_TOKEN}}"
+    params:
+      videoId: { type: string, required: true }
+      part: { type: string, default: "snippet" }
+    description: "Get captions for a video"
+    receipt_fields: [caption_count]

@@ -1,0 +1,43 @@
+name: canva
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Canva design API integration for creating and managing visual content"
+
+abilities:
+  canva.create_design:
+    type: cloud
+    endpoint: "https://api.canva.com/rest/v1/designs"
+    method: POST
+    headers:
+      Authorization: "Bearer {{CANVA_ACCESS_TOKEN}}"
+    params:
+      design_type: { type: string, required: true, description: "Design type (poster, social, etc)" }
+      title: { type: string, required: false }
+      brand_template_id: { type: string, required: false }
+    description: "Create new Canva design"
+    receipt_fields: [design_id, design_url]
+
+  canva.export_design:
+    type: cloud
+    endpoint: "https://api.canva.com/rest/v1/exports"
+    method: POST
+    headers:
+      Authorization: "Bearer {{CANVA_ACCESS_TOKEN}}"
+    params:
+      design_id: { type: string, required: true }
+      format: { type: string, required: true, description: "png, jpg, pdf, etc" }
+    description: "Export design in specified format"
+    receipt_fields: [export_url, file_format]
+
+  canva.list_templates:
+    type: cloud
+    endpoint: "https://api.canva.com/rest/v1/brand-templates"
+    method: GET
+    headers:
+      Authorization: "Bearer {{CANVA_ACCESS_TOKEN}}"
+    params:
+      query: { type: string, required: false }
+      continuation: { type: string, required: false }
+    description: "List available brand templates"
+    receipt_fields: [template_count]

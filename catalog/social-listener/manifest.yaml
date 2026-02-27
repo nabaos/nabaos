@@ -1,0 +1,12 @@
+name: social-listener
+version: 1.0.0
+description: Monitor social media mentions
+category: social-media
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+triggers:
+  scheduled:
+  - chain: monitor-mentions
+    interval: 6h

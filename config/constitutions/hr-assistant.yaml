@@ -1,0 +1,79 @@
+name: HRAssistant
+description: Human resources support and employee management agent
+
+rules:
+  - name: allow_file_read
+    enforcement: allow
+    description: Allow reading HR documents and employee files
+    trigger_actions: [read, open, load, view, access]
+    trigger_targets: [file, document, resume, policy, handbook, record]
+
+  - name: allow_memory_search
+    enforcement: allow
+    description: Allow searching memory for employee and policy information
+    trigger_actions: [search, recall, retrieve, lookup, find]
+    trigger_targets: [memory, record, history, note, profile]
+
+  - name: allow_memory_store
+    enforcement: allow
+    description: Allow storing HR notes and records in memory
+    trigger_actions: [store, save, remember, log, record]
+    trigger_targets: [memory, note, finding, record, update]
+
+  - name: allow_data_analyze
+    enforcement: allow
+    description: Allow analyzing HR data and metrics
+    trigger_actions: [analyze, compute, aggregate, compare, report]
+    trigger_targets: [data, metrics, statistics, headcount, attrition, survey]
+
+  - name: allow_docs_generate
+    enforcement: allow
+    description: Allow generating HR documents and reports
+    trigger_actions: [generate, create, render, compile, draft]
+    trigger_targets: [document, report, letter, offer, policy, template]
+
+  - name: allow_email_send_internal
+    enforcement: allow
+    description: Allow sending internal company emails
+    trigger_actions: [send, compose, reply]
+    trigger_targets: [email, mail, notification]
+    trigger_keywords: [internal, company, team, employee, hr]
+
+  - name: block_shell_exec
+    enforcement: block
+    description: Block shell command execution
+    trigger_keywords: [shell, exec, bash, sh, terminal, command, sudo, rm]
+
+  - name: block_trading
+    enforcement: block
+    description: Block all trading and financial operations
+    trigger_actions: [buy, sell, trade, execute]
+    trigger_targets: [stock, option, crypto, etf, position, order]
+    trigger_keywords: [trade, trading, portfolio]
+
+  - name: block_browser_fetch
+    enforcement: block
+    description: Block external web browsing
+    trigger_actions: [fetch, browse, navigate, download]
+    trigger_targets: [web, url, website, external, internet]
+    trigger_keywords: [browse, web, external, internet, http]
+
+  - name: block_calendar
+    enforcement: block
+    description: Block calendar management
+    trigger_actions: [create, modify, delete, schedule]
+    trigger_targets: [calendar, event, meeting, appointment]
+    trigger_keywords: [calendar, schedule, meeting]
+
+  - name: confirm_external_email
+    enforcement: confirm
+    description: Require confirmation before sending emails to external addresses
+    trigger_actions: [send, compose, forward]
+    trigger_targets: [email, mail]
+    trigger_keywords: [external, outside, vendor, partner, candidate]
+
+  - name: confirm_deep_delegation
+    enforcement: confirm
+    description: Require confirmation for deep agent delegation
+    trigger_actions: [delegate]
+    trigger_targets: [deep_agent, manus, claude_computer, openai_agent]

@@ -1,0 +1,28 @@
+name: blog-writer-constitution
+description: Constitution for blog-writer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within blog-writer designated scope
+  trigger_actions:
+  - create
+  - write
+  trigger_targets:
+  - blog
+  - post
+  - article
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside blog-writer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: search.web, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - search.web
+  - llm.query

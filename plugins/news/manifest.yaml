@@ -1,0 +1,32 @@
+name: news
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "News aggregation via NewsAPI"
+
+abilities:
+  news.headlines:
+    type: cloud
+    endpoint: "https://newsapi.org/v2/top-headlines"
+    method: GET
+    headers:
+      X-Api-Key: "{{NEWS_API_KEY}}"
+    params:
+      country: { type: string, default: "us" }
+      category: { type: string, required: false }
+      page_size: { type: int, default: 10 }
+    description: "Get top news headlines"
+    receipt_fields: [article_count]
+
+  news.search:
+    type: cloud
+    endpoint: "https://newsapi.org/v2/everything"
+    method: GET
+    headers:
+      X-Api-Key: "{{NEWS_API_KEY}}"
+    params:
+      q: { type: string, required: true }
+      sort_by: { type: string, default: "publishedAt" }
+      page_size: { type: int, default: 10 }
+    description: "Search news articles"
+    receipt_fields: [article_count]

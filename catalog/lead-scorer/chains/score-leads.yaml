@@ -1,0 +1,23 @@
+id: score-leads
+description: Gather lead data and score
+steps:
+- id: search-emails
+  ability: gmail.search
+  params:
+    query: from:{{input.lead}}
+  on_failure: continue
+- id: query-crm
+  ability: notion.query
+  params:
+    database: leads
+    filter: '{{input.lead}}'
+  on_failure: continue
+- id: score
+  ability: llm.query
+  params:
+    prompt: 'Score this lead based on engagement: Emails: {{search-emails.output}},
+      CRM data: {{query-crm.output}}'
+  depends_on:
+  - search-emails
+  - query-crm
+  on_failure: abort

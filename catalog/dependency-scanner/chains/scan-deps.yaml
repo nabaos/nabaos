@@ -1,0 +1,23 @@
+id: scan-deps
+description: Check dependencies for known vulnerabilities
+steps:
+- id: check-issues
+  ability: github.issues
+  params:
+    labels: security
+    repo: '{{input.repo}}'
+  on_failure: continue
+- id: search-vulns
+  ability: search.web
+  params:
+    query: '{{input.dependencies}} CVE vulnerability'
+  on_failure: continue
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze dependency vulnerabilities: Issues: {{check-issues.output}},
+      CVEs: {{search-vulns.output}}'
+  depends_on:
+  - check-issues
+  - search-vulns
+  on_failure: abort

@@ -1,0 +1,12 @@
+name: wellness-checker
+version: 1.0.0
+description: Daily wellness check-in
+category: health-wellness
+author: nyaya-official
+permissions:
+- notion.create_page
+- llm.query
+triggers:
+  scheduled:
+  - chain: wellness-checkin
+    interval: 24h

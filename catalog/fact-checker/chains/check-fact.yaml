@@ -1,0 +1,23 @@
+id: check-fact
+description: Search for evidence and verify claims
+steps:
+- id: search-web
+  ability: search.web
+  params:
+    query: '{{input.claim}} fact check'
+  on_failure: continue
+- id: search-news
+  ability: news.search
+  params:
+    query: '{{input.claim}}'
+  on_failure: continue
+- id: verify
+  ability: llm.query
+  params:
+    prompt: 'Verify this claim: ''{{input.claim}}''. Evidence: Web: {{search-web.output}},
+      News: {{search-news.output}}. Rate as true/mostly true/mixed/mostly false/false
+      with explanation.'
+  depends_on:
+  - search-web
+  - search-news
+  on_failure: abort

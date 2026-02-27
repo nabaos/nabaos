@@ -1,0 +1,16 @@
+id: check-symptoms
+description: Search for health information about symptoms
+steps:
+- id: search
+  ability: search.web
+  params:
+    query: '{{input.symptoms}} health information'
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Provide general health information about these symptoms: {{input.symptoms}}.
+      Sources: {{search.output}}. Disclaimer: This is not medical advice.'
+  depends_on:
+  - search
+  on_failure: abort

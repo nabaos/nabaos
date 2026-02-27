@@ -1,0 +1,42 @@
+name: pubmed
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "PubMed biomedical literature search and retrieval"
+
+abilities:
+  pubmed.search:
+    type: cloud
+    endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    method: GET
+    params:
+      term: { type: string, required: true }
+      retmax: { type: int, default: 10 }
+      db: { type: string, default: "pubmed" }
+      rettype: { type: string, default: "json" }
+    description: "Search PubMed for biomedical literature"
+    receipt_fields: [result_count]
+
+  pubmed.get_abstract:
+    type: cloud
+    endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+    method: GET
+    params:
+      id: { type: string, required: true }
+      db: { type: string, default: "pubmed" }
+      rettype: { type: string, default: "abstract" }
+      retmode: { type: string, default: "json" }
+    description: "Fetch abstract and metadata for a PubMed article"
+    receipt_fields: [pmid]
+
+  pubmed.get_citations:
+    type: cloud
+    endpoint: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
+    method: GET
+    params:
+      id: { type: string, required: true }
+      dbfrom: { type: string, default: "pubmed" }
+      db: { type: string, default: "pubmed" }
+      rettype: { type: string, default: "json" }
+    description: "Get citations and related articles for a PubMed paper"
+    receipt_fields: [citation_count]

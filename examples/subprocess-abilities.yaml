@@ -1,0 +1,25 @@
+# Example subprocess abilities configuration
+# Register with: nyaya plugin register-subprocess examples/subprocess-abilities.yaml
+
+abilities:
+  - name: image.convert
+    description: Convert image formats using ImageMagick
+    command: convert
+    args_template: "{{input_path}} {{output_path}}"
+    trust_level: sandboxed
+    timeout_ms: 30000
+
+  - name: git.status
+    description: Get git repository status
+    command: git
+    args_template: "status --porcelain"
+    working_dir: "{{repo_path}}"
+    trust_level: sandboxed
+    timeout_ms: 5000
+
+  - name: ocr.extract
+    description: Extract text from images using Tesseract OCR
+    command: tesseract
+    args_template: "{{input_path}} stdout"
+    trust_level: sandboxed
+    timeout_ms: 60000

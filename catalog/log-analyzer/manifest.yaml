@@ -1,0 +1,15 @@
+name: log-analyzer
+version: 1.0.0
+description: Analyze and summarize logs
+category: developer-devops
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - analyze
+  targets:
+  - log
+  - logs
+  - error
+  priority: 10

@@ -1,0 +1,13 @@
+name: meeting-prep
+version: 1.0.0
+description: Prepare for upcoming meetings with context
+category: daily-productivity
+author: nyaya-official
+permissions:
+- calendar.list
+- gmail.search
+- llm.query
+triggers:
+  events:
+  - 'on': CalendarReminder
+    chain: meeting-prep

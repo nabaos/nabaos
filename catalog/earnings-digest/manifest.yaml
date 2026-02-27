@@ -1,0 +1,13 @@
+name: earnings-digest
+version: 1.0.0
+description: Summarize earnings reports
+category: finance-budgeting
+author: nyaya-official
+permissions:
+- news.search
+- finance.stock_quote
+- llm.query
+triggers:
+  scheduled:
+  - chain: digest-earnings
+    interval: 24h

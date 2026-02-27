@@ -1,0 +1,27 @@
+name: openai_embeddings
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "OpenAI Embeddings API integration for text vectorization and similarity"
+
+abilities:
+  embeddings.create:
+    type: cloud
+    endpoint: "https://api.openai.com/v1/embeddings"
+    method: POST
+    headers:
+      Authorization: "Bearer {{OPENAI_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      input: { type: "any", required: true }
+      model: { type: string, default: "text-embedding-3-small" }
+    description: "Create embeddings for text using OpenAI"
+    receipt_fields: [embedding_count, usage]
+
+  embeddings.similarity:
+    type: local
+    description: "Compute cosine similarity between two text embeddings"
+    params:
+      input: { type: "list[string]", required: true }
+      model: { type: string, default: "text-embedding-3-small" }
+    receipt_fields: [similarity_score]

@@ -1,0 +1,18 @@
+name: personal-crm
+version: 1.0.0
+description: Track relationships and follow-ups
+category: daily-productivity
+author: nyaya-official
+permissions:
+- gmail.search
+- calendar.list
+- notion.create_page
+- llm.query
+intent_filters:
+- actions:
+  - check
+  - track
+  targets:
+  - contact
+  - relationship
+  priority: 10

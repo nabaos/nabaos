@@ -1,0 +1,12 @@
+name: email-scheduler
+version: 1.0.0
+description: Schedule emails to send later
+category: email-communication
+author: nyaya-official
+permissions:
+- gmail.send
+- llm.query
+triggers:
+  scheduled:
+  - chain: check-scheduled
+    interval: 5m

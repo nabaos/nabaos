@@ -1,0 +1,14 @@
+name: commission-calculator
+version: 1.0.0
+description: Calculate sales commissions
+category: sales-crm
+author: nyaya-official
+permissions:
+- notion.query
+- llm.query
+intent_filters:
+- actions:
+  - calculate
+  targets:
+  - commission
+  priority: 10

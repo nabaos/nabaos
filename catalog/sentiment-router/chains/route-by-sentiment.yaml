@@ -1,0 +1,32 @@
+id: route-by-sentiment
+description: Analyze email sentiment and route accordingly
+steps:
+- id: read-email
+  ability: gmail.read
+  params:
+    unread: true
+    max_results: 20
+  on_failure: abort
+- id: analyze-sentiment
+  ability: llm.query
+  params:
+    prompt: 'Analyze sentiment of each email and classify as positive/neutral/negative/urgent:
+      {{read-email.output}}'
+  depends_on:
+  - read-email
+  on_failure: abort
+- id: label-emails
+  ability: gmail.labels
+  params:
+    actions: '{{analyze-sentiment.output}}'
+  depends_on:
+  - analyze-sentiment
+  on_failure: continue
+- id: alert-urgent
+  ability: slack.send
+  params:
+    channel: '#urgent'
+    message: '{{analyze-sentiment.output.urgent}}'
+  depends_on:
+  - analyze-sentiment
+  on_failure: continue

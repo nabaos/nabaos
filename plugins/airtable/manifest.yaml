@@ -1,0 +1,62 @@
+name: airtable
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Airtable API integration for CRUD operations and record management"
+
+abilities:
+  airtable.list_records:
+    type: cloud
+    endpoint: "https://api.airtable.com/v0/{{base_id}}/{{table_name}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{AIRTABLE_API_KEY}}"
+    params:
+      base_id: { type: string, required: true }
+      table_name: { type: string, required: true }
+      filterByFormula: { type: string, required: false }
+      sort: { type: "list", required: false }
+    description: "List records from an Airtable table"
+    receipt_fields: [record_count]
+
+  airtable.create_record:
+    type: cloud
+    endpoint: "https://api.airtable.com/v0/{{base_id}}/{{table_name}}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{AIRTABLE_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      base_id: { type: string, required: true }
+      table_name: { type: string, required: true }
+      fields: { type: "map[string, any]", required: true }
+    description: "Create a new record in an Airtable table"
+    receipt_fields: [record_id]
+
+  airtable.update_record:
+    type: cloud
+    endpoint: "https://api.airtable.com/v0/{{base_id}}/{{table_name}}/{{record_id}}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{AIRTABLE_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      base_id: { type: string, required: true }
+      table_name: { type: string, required: true }
+      record_id: { type: string, required: true }
+      fields: { type: "map[string, any]", required: true }
+    description: "Update a record in an Airtable table"
+    receipt_fields: [record_id]
+
+  airtable.search_records:
+    type: cloud
+    endpoint: "https://api.airtable.com/v0/{{base_id}}/{{table_name}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{AIRTABLE_API_KEY}}"
+    params:
+      base_id: { type: string, required: true }
+      table_name: { type: string, required: true }
+      filterByFormula: { type: string, required: true }
+    description: "Search records in an Airtable table by formula"
+    receipt_fields: [result_count]

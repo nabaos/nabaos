@@ -1,0 +1,27 @@
+name: meeting-prep-constitution
+description: Constitution for meeting-prep
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within meeting-prep designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - meeting-prep
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside meeting-prep scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: calendar.list, gmail.search, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - calendar.list
+  - gmail.search
+  - llm.query

@@ -1,0 +1,17 @@
+id: research-topic
+description: Search the web and synthesize findings
+steps:
+- id: search
+  ability: search.web
+  params:
+    query: '{{input.topic}}'
+    num_results: 10
+  on_failure: abort
+- id: synthesize
+  ability: llm.query
+  params:
+    prompt: 'Synthesize a comprehensive research report on ''{{input.topic}}'' from
+      these sources: {{search.output}}'
+  depends_on:
+  - search
+  on_failure: abort

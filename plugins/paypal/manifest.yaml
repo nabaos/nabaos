@@ -1,0 +1,52 @@
+name: paypal
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "PayPal API integration for payments and transactions"
+
+abilities:
+  paypal.get_transaction:
+    type: cloud
+    endpoint: "https://api-m.paypal.com/v1/reporting/transactions"
+    method: GET
+    headers:
+      Authorization: "Bearer {{PAYPAL_ACCESS_TOKEN}}"
+    params:
+      transaction_id: { type: string, required: true }
+    description: "Get details of a PayPal transaction"
+    receipt_fields: [transaction_status]
+
+  paypal.list_transactions:
+    type: cloud
+    endpoint: "https://api-m.paypal.com/v1/reporting/transactions"
+    method: GET
+    headers:
+      Authorization: "Bearer {{PAYPAL_ACCESS_TOKEN}}"
+    params:
+      start_date: { type: string, required: true }
+      end_date: { type: string, required: true }
+    description: "List PayPal transactions within a date range"
+    receipt_fields: [transaction_count]
+
+  paypal.send_money:
+    type: cloud
+    endpoint: "https://api-m.paypal.com/v1/payments/payouts"
+    method: POST
+    headers:
+      Authorization: "Bearer {{PAYPAL_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      recipient: { type: string, required: true }
+      amount: { type: string, required: true }
+      currency: { type: string, required: true }
+    description: "Send money via PayPal"
+    receipt_fields: [payout_batch_id]
+
+  paypal.get_balance:
+    type: cloud
+    endpoint: "https://api-m.paypal.com/v1/reporting/balances"
+    method: GET
+    headers:
+      Authorization: "Bearer {{PAYPAL_ACCESS_TOKEN}}"
+    description: "Get PayPal account balance"
+    receipt_fields: [account_balance]

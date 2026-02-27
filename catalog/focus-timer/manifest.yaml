@@ -1,0 +1,17 @@
+name: focus-timer
+version: 1.0.0
+description: Pomodoro timer with session tracking
+category: daily-productivity
+author: nyaya-official
+permissions:
+- notion.create_page
+- llm.query
+intent_filters:
+- actions:
+  - start
+  - stop
+  targets:
+  - focus
+  - pomodoro
+  - timer
+  priority: 10

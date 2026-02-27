@@ -1,0 +1,17 @@
+id: check-backups
+description: Verify backup status and report
+steps:
+- id: check-status
+  ability: llm.query
+  params:
+    prompt: Check backup status for {{input.services}} and report on last successful
+      backup, size, and any issues
+  on_failure: abort
+- id: recommend
+  ability: llm.query
+  params:
+    prompt: 'Based on backup status: {{check-status.output}}, recommend any needed
+      actions'
+  depends_on:
+  - check-status
+  on_failure: abort

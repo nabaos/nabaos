@@ -1,0 +1,14 @@
+name: receipt-scanner
+version: 1.0.0
+description: Extract data from receipt emails
+category: finance-budgeting
+author: nyaya-official
+permissions:
+- gmail.search
+- llm.query
+triggers:
+  events:
+  - 'on': DataChanged
+    filter:
+      namespace: gmail
+    chain: scan-receipts

@@ -1,0 +1,37 @@
+name: currency_exchange
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Currency exchange rate API integration"
+
+abilities:
+  currency.convert:
+    type: cloud
+    endpoint: "https://api.exchangerate.host/convert"
+    method: GET
+    params:
+      from: { type: string, required: true }
+      to: { type: string, required: true }
+      amount: { type: string, required: true }
+    description: "Convert currency using live exchange rates"
+    receipt_fields: [converted_amount]
+
+  currency.list_rates:
+    type: cloud
+    endpoint: "https://api.exchangerate.host/latest"
+    method: GET
+    params:
+      base: { type: string, required: true }
+    description: "Get latest exchange rates for a base currency"
+    receipt_fields: [rate_count]
+
+  currency.get_history:
+    type: cloud
+    endpoint: "https://api.exchangerate.host/timeseries"
+    method: GET
+    params:
+      base: { type: string, required: true }
+      start_date: { type: string, required: true }
+      end_date: { type: string, required: true }
+    description: "Get historical exchange rate data"
+    receipt_fields: [history_data_points]

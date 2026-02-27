@@ -1,0 +1,32 @@
+id: schedule-interview
+description: Find availability and schedule interview
+steps:
+- id: check-availability
+  ability: calendar.list
+  params:
+    range: '{{input.date_range}}'
+  on_failure: abort
+- id: find-slot
+  ability: llm.query
+  params:
+    prompt: 'Find the best interview slot for {{input.candidate}} with {{input.interviewers}}.
+      Availability: {{check-availability.output}}'
+  depends_on:
+  - check-availability
+  on_failure: abort
+- id: create-event
+  ability: calendar.create
+  params:
+    event: '{{find-slot.output}}'
+  depends_on:
+  - find-slot
+  on_failure: abort
+- id: send-invite
+  ability: gmail.send
+  params:
+    to: '{{input.candidate}}'
+    subject: Interview Invitation
+    body: '{{find-slot.output}}'
+  depends_on:
+  - create-event
+  on_failure: continue

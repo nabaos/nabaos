@@ -1,0 +1,31 @@
+id: check-contacts
+description: Search emails and calendar for contact activity and log to Notion
+steps:
+- id: search-emails
+  ability: gmail.search
+  params:
+    query: from:{{input.contact}}
+  on_failure: continue
+- id: check-calendar
+  ability: calendar.list
+  params:
+    query: '{{input.contact}}'
+  on_failure: continue
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Summarize relationship status with {{input.contact}}: emails: {{search-emails.output}},
+      meetings: {{check-calendar.output}}'
+  depends_on:
+  - search-emails
+  - check-calendar
+  on_failure: abort
+- id: log-crm
+  ability: notion.create_page
+  params:
+    database: crm
+    title: '{{input.contact}}'
+    content: '{{analyze.output}}'
+  depends_on:
+  - analyze
+  on_failure: abort

@@ -1,0 +1,22 @@
+id: check-competitors
+description: Monitor competitor news and activity
+steps:
+- id: search-news
+  ability: news.search
+  params:
+    query: '{{input.competitors}}'
+  on_failure: continue
+- id: search-web
+  ability: search.web
+  params:
+    query: '{{input.competitors}} launch announcement pricing'
+  on_failure: continue
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Create a competitive intelligence alert: News: {{search-news.output}},
+      Web: {{search-web.output}}'
+  depends_on:
+  - search-news
+  - search-web
+  on_failure: abort

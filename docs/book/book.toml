@@ -1,0 +1,15 @@
+[book]
+title = "Nyaya Agent OS"
+description = "The self-hosted, privacy-first agent operating system"
+authors = ["Nyaya Contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "build/book"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/nabaos/nabaos"
+edit-url-template = "https://github.com/nabaos/nabaos/edit/main/docs/book/src/{path}"

@@ -1,0 +1,9 @@
+id: generate-invoice
+description: Create a professional invoice
+steps:
+- id: generate
+  ability: llm.query
+  params:
+    prompt: 'Generate a professional invoice: Client: {{input.client}}, Items: {{input.items}},
+      Rate: {{input.rate}}, Due: {{input.due_date}}'
+  on_failure: abort

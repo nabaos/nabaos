@@ -1,0 +1,27 @@
+name: habit-tracker-constitution
+description: Constitution for habit-tracker
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within habit-tracker designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - habit-tracker
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside habit-tracker scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: notion.create_page, notion.query, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - notion.create_page
+  - notion.query
+  - llm.query

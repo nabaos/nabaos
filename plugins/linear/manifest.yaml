@@ -1,0 +1,61 @@
+name: linear
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Linear API integration for issue tracking and project management"
+
+abilities:
+  linear.list_issues:
+    type: cloud
+    endpoint: "https://api.linear.app/graphql"
+    method: POST
+    headers:
+      Authorization: "Bearer {{LINEAR_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      team_id: { type: string, required: false }
+      state: { type: string, required: false }
+      assignee_id: { type: string, required: false }
+    description: "List issues from Linear workspace"
+    receipt_fields: [issue_count]
+
+  linear.create_issue:
+    type: cloud
+    endpoint: "https://api.linear.app/graphql"
+    method: POST
+    headers:
+      Authorization: "Bearer {{LINEAR_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      team_id: { type: string, required: true }
+      title: { type: string, required: true }
+      description: { type: string, required: false }
+    description: "Create a new issue in Linear"
+    receipt_fields: [issue_id]
+
+  linear.update_issue:
+    type: cloud
+    endpoint: "https://api.linear.app/graphql"
+    method: POST
+    headers:
+      Authorization: "Bearer {{LINEAR_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      issue_id: { type: string, required: true }
+      title: { type: string, required: false }
+      state: { type: string, required: false }
+      assignee_id: { type: string, required: false }
+    description: "Update an issue in Linear"
+    receipt_fields: [issue_id]
+
+  linear.get_cycle:
+    type: cloud
+    endpoint: "https://api.linear.app/graphql"
+    method: POST
+    headers:
+      Authorization: "Bearer {{LINEAR_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      cycle_id: { type: string, required: true }
+    description: "Get cycle progress and details from Linear"
+    receipt_fields: [cycle_name]

@@ -1,0 +1,42 @@
+name: lever
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Lever recruiting API integration for opportunity and hiring workflow management"
+
+abilities:
+  lever.list_opportunities:
+    type: cloud
+    endpoint: "https://api.lever.co/v1/opportunities"
+    method: GET
+    headers:
+      Authorization: "Basic {{LEVER_API_KEY}}"
+    params:
+      stage_id: { type: string, required: false }
+      posting_id: { type: string, required: false }
+    description: "List opportunities (candidates) with optional filters"
+    receipt_fields: [opportunity_count]
+
+  lever.add_feedback:
+    type: cloud
+    endpoint: "https://api.lever.co/v1/opportunities/{{opp_id}}/feedback"
+    method: POST
+    headers:
+      Authorization: "Basic {{LEVER_API_KEY}}"
+    params:
+      opp_id: { type: string, required: true }
+      text: { type: string, required: true, description: "Feedback content" }
+      rating: { type: number, required: false, description: "Rating 1-5" }
+    description: "Add feedback for an opportunity"
+    receipt_fields: [feedback_id]
+
+  lever.get_offer:
+    type: cloud
+    endpoint: "https://api.lever.co/v1/opportunities/{{opp_id}}/offers"
+    method: GET
+    headers:
+      Authorization: "Basic {{LEVER_API_KEY}}"
+    params:
+      opp_id: { type: string, required: true }
+    description: "Get offer details for an opportunity"
+    receipt_fields: [offer_id, offer_status]

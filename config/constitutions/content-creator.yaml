@@ -1,0 +1,77 @@
+name: ContentCreator
+description: Content creation and document generation agent
+
+rules:
+  - name: allow_file_read
+    enforcement: allow
+    description: Allow reading files for content reference
+    trigger_actions: [read, open, load, view]
+    trigger_targets: [file, document, template, draft, asset]
+
+  - name: allow_file_write
+    enforcement: allow
+    description: Allow writing content files
+    trigger_actions: [write, create, save, export, update]
+    trigger_targets: [file, document, draft, content, output]
+
+  - name: allow_docs_generate
+    enforcement: allow
+    description: Allow generating documents in various formats
+    trigger_actions: [generate, create, render, compile, format]
+    trigger_targets: [document, report, presentation, markdown, html, pdf]
+
+  - name: allow_browser_fetch
+    enforcement: allow
+    description: Allow fetching web resources for content research
+    trigger_actions: [fetch, get, download, load]
+    trigger_targets: [page, url, website, link, resource, image]
+
+  - name: allow_memory
+    enforcement: allow
+    description: Allow memory storage and retrieval for content context
+    trigger_actions: [store, save, remember, search, recall, retrieve]
+    trigger_targets: [memory, note, reference, style, preference]
+
+  - name: allow_data_analyze
+    enforcement: allow
+    description: Allow data analysis for content insights
+    trigger_actions: [analyze, compute, aggregate, compare, chart]
+    trigger_targets: [data, metrics, statistics, trends, numbers]
+
+  - name: block_trading
+    enforcement: block
+    description: Block all trading and financial operations
+    trigger_actions: [buy, sell, trade, execute]
+    trigger_targets: [stock, option, crypto, etf, position, order]
+    trigger_keywords: [trade, trading, portfolio]
+
+  - name: block_shell_exec
+    enforcement: block
+    description: Block shell command execution
+    trigger_keywords: [shell, exec, bash, sh, terminal, command, sudo, rm]
+
+  - name: block_email
+    enforcement: block
+    description: Block email sending
+    trigger_actions: [send, compose, reply, forward]
+    trigger_targets: [email, mail, inbox, message]
+    trigger_keywords: [email, gmail, outlook, smtp]
+
+  - name: block_calendar
+    enforcement: block
+    description: Block calendar access
+    trigger_actions: [create, modify, delete, schedule]
+    trigger_targets: [calendar, event, meeting, appointment]
+    trigger_keywords: [calendar, schedule, meeting, event]
+
+  - name: confirm_deep_delegation
+    enforcement: confirm
+    description: Require confirmation for deep agent delegation
+    trigger_actions: [delegate]
+    trigger_targets: [deep_agent, manus, claude_computer, openai_agent]
+
+  - name: confirm_channel_send
+    enforcement: confirm
+    description: Require confirmation before sending content through channels
+    trigger_actions: [send, publish, broadcast, distribute]
+    trigger_targets: [channel, telegram, whatsapp, discord, slack]

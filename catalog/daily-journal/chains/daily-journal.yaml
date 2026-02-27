@@ -1,0 +1,17 @@
+id: daily-journal
+description: Generate journal prompt and store reflection
+steps:
+- id: generate-prompt
+  ability: llm.query
+  params:
+    prompt: Generate a thoughtful daily journal prompt for reflection
+  on_failure: abort
+- id: store-entry
+  ability: notion.create_page
+  params:
+    database: journal
+    title: Journal - {{input.date}}
+    content: '{{generate-prompt.output}}'
+  depends_on:
+  - generate-prompt
+  on_failure: abort

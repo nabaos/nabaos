@@ -1,0 +1,17 @@
+name: spam-analyzer
+version: 1.0.0
+description: Deep analysis of potential spam and phishing emails
+category: email-communication
+author: nyaya-official
+permissions:
+- gmail.read
+- llm.query
+intent_filters:
+- actions:
+  - analyze
+  - check
+  targets:
+  - spam
+  - phishing
+  - scam
+  priority: 10

@@ -1,0 +1,16 @@
+name: financial-reporter
+version: 1.0.0
+description: Generate financial reports
+category: finance-budgeting
+author: nyaya-official
+permissions:
+- finance.stock_quote
+- llm.query
+intent_filters:
+- actions:
+  - report
+  - summarize
+  targets:
+  - finances
+  - portfolio
+  priority: 10

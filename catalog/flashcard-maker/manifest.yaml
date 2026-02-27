@@ -1,0 +1,15 @@
+name: flashcard-maker
+version: 1.0.0
+description: Create flashcards from content
+category: education
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - create
+  - make
+  targets:
+  - flashcard
+  - study-card
+  priority: 10

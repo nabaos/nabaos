@@ -1,0 +1,16 @@
+id: explain-concept
+description: Research and explain a concept
+steps:
+- id: research
+  ability: search.web
+  params:
+    query: '{{input.concept}} explanation'
+  on_failure: continue
+- id: explain
+  ability: llm.query
+  params:
+    prompt: 'Explain ''{{input.concept}}'' at a {{input.level}} level. Use analogies.
+      Research: {{research.output}}'
+  depends_on:
+  - research
+  on_failure: abort

@@ -1,0 +1,16 @@
+name: sentiment-router
+version: 1.0.0
+description: Route emails by sentiment
+category: email-communication
+author: nyaya-official
+permissions:
+- gmail.read
+- gmail.labels
+- llm.query
+- slack.send
+triggers:
+  events:
+  - 'on': DataChanged
+    filter:
+      namespace: gmail
+    chain: route-by-sentiment

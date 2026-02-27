@@ -1,0 +1,15 @@
+id: track-returns
+description: Search for return/refund emails and track status
+steps:
+- id: search-returns
+  ability: gmail.search
+  params:
+    query: return OR refund OR RMA
+  on_failure: abort
+- id: track
+  ability: llm.query
+  params:
+    prompt: 'Track return/refund status from: {{search-returns.output}}'
+  depends_on:
+  - search-returns
+  on_failure: abort

@@ -1,0 +1,27 @@
+name: pipeline-tracker-constitution
+description: Constitution for pipeline-tracker
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within pipeline-tracker designated scope
+  trigger_actions:
+  - check
+  - track
+  trigger_targets:
+  - deals
+  - pipeline
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside pipeline-tracker scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: notion.query, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - notion.query
+  - llm.query

@@ -1,0 +1,27 @@
+name: escalation-router-constitution
+description: Constitution for escalation-router
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within escalation-router designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - escalation-router
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside escalation-router scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: gmail.read, slack.send, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - gmail.read
+  - slack.send
+  - llm.query

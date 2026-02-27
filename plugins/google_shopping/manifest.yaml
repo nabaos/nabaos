@@ -1,0 +1,28 @@
+name: google_shopping
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Google Custom Search API integration for shopping searches"
+
+abilities:
+  google_shopping.search:
+    type: cloud
+    endpoint: "https://customsearch.googleapis.com/customsearch/v1"
+    method: GET
+    params:
+      q: { type: string, required: true }
+      tbm: { type: string, required: true, default: "shop" }
+      key: { type: string, required: true }
+    description: "Search for products using Google Shopping"
+    receipt_fields: [result_count]
+
+  google_shopping.get_price_comparison:
+    type: cloud
+    endpoint: "https://customsearch.googleapis.com/customsearch/v1"
+    method: GET
+    params:
+      q: { type: string, required: true }
+      tbm: { type: string, required: true, default: "shop" }
+      key: { type: string, required: true }
+    description: "Get price comparison for products"
+    receipt_fields: [result_count]

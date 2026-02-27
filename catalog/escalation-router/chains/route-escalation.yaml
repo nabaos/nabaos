@@ -1,0 +1,23 @@
+id: route-escalation
+description: Analyze escalation and route to appropriate team
+steps:
+- id: read-escalation
+  ability: gmail.read
+  params:
+    message_id: '{{input.message_id}}'
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze this escalation and determine the right team to handle it: {{read-escalation.output}}'
+  depends_on:
+  - read-escalation
+  on_failure: abort
+- id: route
+  ability: slack.send
+  params:
+    channel: '{{analyze.output.team_channel}}'
+    message: 'Escalation: {{analyze.output.summary}}'
+  depends_on:
+  - analyze
+  on_failure: abort

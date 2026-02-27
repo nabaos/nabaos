@@ -1,0 +1,17 @@
+id: guide-deploy
+description: Check deployment readiness and guide through steps
+steps:
+- id: check-prs
+  ability: github.prs
+  params:
+    state: open
+    repo: '{{input.repo}}'
+  on_failure: abort
+- id: guide
+  ability: llm.query
+  params:
+    prompt: 'Create deployment checklist and guide for {{input.service}}: Open PRs:
+      {{check-prs.output}}'
+  depends_on:
+  - check-prs
+  on_failure: abort

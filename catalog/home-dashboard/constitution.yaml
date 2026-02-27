@@ -1,0 +1,30 @@
+name: home-dashboard-constitution
+description: Constitution for home-dashboard
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within home-dashboard designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - home-dashboard
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside home-dashboard scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: weather.current, calendar.list, gmail.read,
+    finance.stock_quote, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - weather.current
+  - calendar.list
+  - gmail.read
+  - finance.stock_quote
+  - llm.query

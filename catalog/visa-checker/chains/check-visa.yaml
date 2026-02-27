@@ -1,0 +1,16 @@
+id: check-visa
+description: Search for visa requirements
+steps:
+- id: search
+  ability: search.web
+  params:
+    query: '{{input.nationality}} visa requirements {{input.destination}}'
+  on_failure: abort
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Summarize visa requirements for {{input.nationality}} traveling to {{input.destination}}:
+      {{search.output}}'
+  depends_on:
+  - search
+  on_failure: abort

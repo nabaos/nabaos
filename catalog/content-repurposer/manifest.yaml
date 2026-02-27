@@ -1,0 +1,16 @@
+name: content-repurposer
+version: 1.0.0
+description: Repurpose content across formats
+category: content-creation
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - repurpose
+  - convert
+  - adapt
+  targets:
+  - content
+  - post
+  priority: 10

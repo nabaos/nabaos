@@ -1,0 +1,17 @@
+id: analyze-win-loss
+description: Query deal data and analyze patterns
+steps:
+- id: query-deals
+  ability: notion.query
+  params:
+    database: deals
+    filter: closed
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Analyze win/loss patterns from deal data: {{query-deals.output}}. Identify
+      common factors in wins and losses.'
+  depends_on:
+  - query-deals
+  on_failure: abort

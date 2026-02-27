@@ -1,0 +1,16 @@
+id: plan-social
+description: Create and schedule social media posts
+steps:
+- id: generate-posts
+  ability: llm.query
+  params:
+    prompt: 'Create {{input.count}} social media posts about ''{{input.topic}}'' for
+      {{input.platform}}. Tone: {{input.tone}}'
+  on_failure: abort
+- id: schedule
+  ability: llm.query
+  params:
+    prompt: 'Create an optimal posting schedule for these posts: {{generate-posts.output}}'
+  depends_on:
+  - generate-posts
+  on_failure: abort

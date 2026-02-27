@@ -1,0 +1,32 @@
+id: schedule-meeting
+description: Find availability and propose meeting times
+steps:
+- id: check-availability
+  ability: calendar.list
+  params:
+    range: '{{input.date_range}}'
+  on_failure: abort
+- id: find-slots
+  ability: llm.query
+  params:
+    prompt: 'Find optimal meeting slots for {{input.attendees}} given availability:
+      {{check-availability.output}}'
+  depends_on:
+  - check-availability
+  on_failure: abort
+- id: create-event
+  ability: calendar.create
+  params:
+    event: '{{find-slots.output.best_slot}}'
+  depends_on:
+  - find-slots
+  on_failure: abort
+- id: send-invite
+  ability: gmail.send
+  params:
+    to: '{{input.attendees}}'
+    subject: Meeting Invitation
+    body: '{{find-slots.output}}'
+  depends_on:
+  - create-event
+  on_failure: continue

@@ -1,0 +1,13 @@
+name: competitive-intel
+version: 1.0.0
+description: Monitor competitor activity
+category: research-analysis
+author: nyaya-official
+permissions:
+- search.web
+- news.search
+- llm.query
+triggers:
+  scheduled:
+  - chain: scan-competitors
+    interval: 24h

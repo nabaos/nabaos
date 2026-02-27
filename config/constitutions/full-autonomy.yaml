@@ -1,0 +1,49 @@
+# WARNING: This constitution is intended for development and testing only.
+# It grants the agent full access to all abilities with minimal restrictions.
+# DO NOT use this constitution in production environments.
+
+name: FullAutonomy
+description: Unrestricted agent for development and testing (NOT for production)
+
+rules:
+  - name: allow_all_actions
+    enforcement: allow
+    description: Allow all agent actions without restriction
+    trigger_actions: [search, fetch, read, write, create, delete, modify, execute, send, compose, buy, sell, trade, delegate, analyze, generate, store, schedule, browse, post, publish, deploy]
+    trigger_targets: [web, file, document, email, calendar, memory, data, channel, shell, trading, social, api, service, container, database]
+
+  - name: allow_shell_exec
+    enforcement: allow
+    description: Allow shell command execution
+    trigger_keywords: [shell, exec, bash, sh, terminal, command]
+
+  - name: allow_trading
+    enforcement: allow
+    description: Allow trading operations
+    trigger_actions: [buy, sell, trade, execute]
+    trigger_targets: [stock, option, crypto, etf, position, order]
+
+  - name: allow_deep_delegation
+    enforcement: allow
+    description: Allow deep agent delegation to all backends
+    trigger_actions: [delegate]
+    trigger_targets: [deep_agent, manus, claude_computer, openai_agent]
+
+  - name: allow_network
+    enforcement: allow
+    description: Allow all network access
+    trigger_actions: [fetch, connect, request, download, upload]
+    trigger_targets: [url, api, endpoint, service, server]
+
+  - name: confirm_expensive_delegation
+    enforcement: confirm
+    description: Require confirmation for deep delegation costing more than $5
+    trigger_actions: [delegate]
+    trigger_targets: [deep_agent, manus, claude_computer, openai_agent]
+    trigger_keywords: [expensive, costly, large, autonomous]
+
+  - name: confirm_destructive_shell
+    enforcement: confirm
+    description: Require confirmation for destructive shell commands
+    trigger_actions: [execute, run]
+    trigger_keywords: [rm -rf, mkfs, fdisk, dd, format, drop, truncate, shutdown, reboot]

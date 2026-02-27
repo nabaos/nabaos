@@ -1,0 +1,159 @@
+[package]
+name = "nabaos"
+version = "0.1.0"
+edition = "2021"
+description = "The agent that uses all agents — cached when possible, autonomous when needed, independent always"
+license = "MIT"
+rust-version = "1.80"
+
+[features]
+default = []
+tui = ["dep:ratatui", "dep:crossterm"]
+watcher = []
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# HTTP client for LLM APIs
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking", "stream"] }
+
+# Async streaming utilities
+futures = "0.3"
+futures-util = "0.3"
+tokio-stream = "0.1"
+
+# IMAP client for email inbound
+async-imap = { version = "0.10", default-features = false, features = ["runtime-tokio"] }
+async-native-tls = { version = "0.4", default-features = false, features = ["runtime-tokio"] }
+
+# URL parsing (SSRF protection: DNS rebinding prevention)
+url = "2"
+
+# URL encoding
+urlencoding = "2"
+
+# Telegram
+teloxide = { version = "0.13", features = ["macros"] }
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "rustls_backend"] }
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled"] }
+postgres = "0.19"
+
+# ONNX Runtime for local ML models
+ort = "2.0.0-rc.11"
+
+# Tokenizer (HuggingFace tokenizers)
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+
+
+# Docker API client
+bollard = "0.18"
+
+# WASM Runtime
+wasmtime = "29"
+
+# Archive (for .nap package format)
+tar = "0.4"
+flate2 = "1"
+
+# Hostname detection
+hostname = "0.4"
+
+# Crypto
+ring = "0.17"
+sha2 = "0.10"
+hex = "0.4"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Cron expression parsing
+cron = "0.12"
+
+# Secret handling
+secrecy = { version = "0.8", features = ["serde"] }
+zeroize = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# UUID generation
+uuid = { version = "1", features = ["v4"] }
+
+# Base64 encoding/decoding (used in Gmail connector for email body decoding)
+base64 = "0.22"
+
+# PDF text extraction
+pdf-extract = "0.10"
+
+# CSV parsing
+csv = "1.3"
+
+# Spreadsheet creation (xlsx)
+rust_xlsxwriter = "0.93"
+
+# Regex for credential scanning
+regex = "1"
+
+# JSONPath extraction
+jsonpath-rust = "0.7"
+
+# Handlebars templating
+handlebars = "6"
+
+# Unicode normalization (homoglyph attack prevention)
+unicode-normalization = "0.1"
+
+# Web server
+axum = "0.8"
+tower-http = { version = "0.6", features = ["fs", "cors", "set-header"] }
+
+# 2FA
+totp-rs = { version = "5", features = ["qr", "gen_secret"] }
+argon2 = "0.5"
+
+# Image processing (screenshots, YOLO input)
+image = "0.25"
+
+# Chart rendering (SVG)
+plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "area_series", "candlestick"] }
+
+# WebSocket (CDP transport)
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+
+# TUI (optional, feature-gated)
+ratatui = { version = "0.29", optional = true }
+crossterm = { version = "0.28", optional = true }
+async-trait = "0.1.89"
+
+[dev-dependencies]
+proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"
+tokio-test = "0.4"
+tower = { version = "0.5.3", features = ["util"] }
+
+# Benches will be added when benchmark files are created
+# [[bench]]
+# name = "bert_latency"
+# harness = false
+#
+# [[bench]]
+# name = "cache_lookup"
+# harness = false

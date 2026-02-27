@@ -1,0 +1,35 @@
+name: flights
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Amadeus Flight Search API integration for flight booking"
+
+abilities:
+  flights.search:
+    type: cloud
+    endpoint: "https://api.amadeus.com/v2/shopping/flight-offers"
+    method: GET
+    headers:
+      Authorization: "Bearer {{AMADEUS_ACCESS_TOKEN}}"
+    params:
+      originLocationCode: { type: string, required: true }
+      destinationLocationCode: { type: string, required: true }
+      departureDate: { type: string, required: true }
+      adults: { type: int, required: true }
+      children: { type: int, required: false }
+      infants: { type: int, required: false }
+    description: "Search for flight offers using Amadeus API"
+    receipt_fields: [flight_count]
+
+  flights.get_price_history:
+    type: cloud
+    endpoint: "https://api.amadeus.com/v1/analytics/itinerary-price-metrics"
+    method: GET
+    headers:
+      Authorization: "Bearer {{AMADEUS_ACCESS_TOKEN}}"
+    params:
+      originIataCode: { type: string, required: true }
+      destinationIataCode: { type: string, required: true }
+      departureDate: { type: string, required: true }
+    description: "Get historical price data for flight routes"
+    receipt_fields: [average_price]

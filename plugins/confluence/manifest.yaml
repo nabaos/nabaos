@@ -1,0 +1,71 @@
+name: confluence
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Atlassian Confluence API integration for wiki documentation and collaboration"
+
+abilities:
+  confluence.search:
+    type: cloud
+    endpoint: "{{CONFLUENCE_BASE}}/wiki/rest/api/search"
+    method: GET
+    headers:
+      Authorization: "Basic {{CONFLUENCE_AUTH}}"
+    params:
+      cql: { type: string, required: true, description: "Confluence Query Language" }
+      limit: { type: number, required: false, default: 25 }
+    description: "Search for content using CQL"
+    receipt_fields: [result_count]
+
+  confluence.get_page:
+    type: cloud
+    endpoint: "{{CONFLUENCE_BASE}}/wiki/rest/api/content/{{page_id}}"
+    method: GET
+    headers:
+      Authorization: "Basic {{CONFLUENCE_AUTH}}"
+    params:
+      page_id: { type: string, required: true }
+      expand: { type: string, required: false, default: "body.storage" }
+    description: "Get page content"
+    receipt_fields: [page_title, version]
+
+  confluence.create_page:
+    type: cloud
+    endpoint: "{{CONFLUENCE_BASE}}/wiki/rest/api/content"
+    method: POST
+    headers:
+      Authorization: "Basic {{CONFLUENCE_AUTH}}"
+    params:
+      type: { type: string, required: true, default: "page" }
+      title: { type: string, required: true }
+      space: { type: string, required: true, description: "Space key" }
+      body: { type: string, required: true }
+    description: "Create new page in space"
+    receipt_fields: [page_id]
+
+  confluence.update_page:
+    type: cloud
+    endpoint: "{{CONFLUENCE_BASE}}/wiki/rest/api/content/{{page_id}}"
+    method: PUT
+    headers:
+      Authorization: "Basic {{CONFLUENCE_AUTH}}"
+    params:
+      page_id: { type: string, required: true }
+      title: { type: string, required: false }
+      body: { type: string, required: false }
+      version: { type: number, required: true }
+    description: "Update page content"
+    receipt_fields: [update_success]
+
+  confluence.add_comment:
+    type: cloud
+    endpoint: "{{CONFLUENCE_BASE}}/wiki/rest/api/content"
+    method: POST
+    headers:
+      Authorization: "Basic {{CONFLUENCE_AUTH}}"
+    params:
+      type: { type: string, required: true, default: "comment" }
+      container: { type: string, required: true, description: "Parent page ID" }
+      body: { type: string, required: true }
+    description: "Add comment to page"
+    receipt_fields: [comment_id]

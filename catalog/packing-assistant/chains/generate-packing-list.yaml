@@ -1,0 +1,17 @@
+id: generate-packing-list
+description: Create a packing list based on trip details and weather
+steps:
+- id: get-weather
+  ability: weather.forecast
+  params:
+    location: '{{input.destination}}'
+    days: '{{input.duration}}'
+  on_failure: continue
+- id: generate
+  ability: llm.query
+  params:
+    prompt: 'Generate a packing list for {{input.duration}} days in {{input.destination}}.
+      Weather: {{get-weather.output}}. Trip type: {{input.trip_type}}'
+  depends_on:
+  - get-weather
+  on_failure: abort

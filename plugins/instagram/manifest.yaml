@@ -1,0 +1,54 @@
+name: instagram
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Instagram Graph API integration for media, posts, insights, and stories"
+
+abilities:
+  instagram.get_media:
+    type: cloud
+    endpoint: "https://graph.instagram.com/me/media"
+    method: GET
+    headers:
+      Authorization: "Bearer {{INSTAGRAM_ACCESS_TOKEN}}"
+    params:
+      fields: { type: string, required: false }
+      limit: { type: int, default: 10 }
+    description: "Retrieve media from Instagram account"
+    receipt_fields: [media_count]
+
+  instagram.post_image:
+    type: cloud
+    endpoint: "https://graph.instagram.com/me/media"
+    method: POST
+    headers:
+      Authorization: "Bearer {{INSTAGRAM_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      image_url: { type: url, required: true }
+      caption: { type: string, required: false }
+    description: "Post an image to Instagram"
+    receipt_fields: [media_id, created_at]
+
+  instagram.get_insights:
+    type: cloud
+    endpoint: "https://graph.instagram.com/me/insights"
+    method: GET
+    headers:
+      Authorization: "Bearer {{INSTAGRAM_ACCESS_TOKEN}}"
+    params:
+      metric: { type: string, required: true }
+      period: { type: string, default: "day" }
+    description: "Get insights and analytics for Instagram account"
+    receipt_fields: [insight_count]
+
+  instagram.get_stories:
+    type: cloud
+    endpoint: "https://graph.instagram.com/me/stories"
+    method: GET
+    headers:
+      Authorization: "Bearer {{INSTAGRAM_ACCESS_TOKEN}}"
+    params:
+      fields: { type: string, required: false }
+    description: "Retrieve stories from Instagram account"
+    receipt_fields: [story_count]

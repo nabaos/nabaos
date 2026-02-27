@@ -1,0 +1,16 @@
+name: interview-scheduler
+version: 1.0.0
+description: Schedule interviews
+category: hr-recruiting
+author: nyaya-official
+permissions:
+- calendar.list
+- calendar.create
+- gmail.send
+- llm.query
+intent_filters:
+- actions:
+  - schedule
+  targets:
+  - interview
+  priority: 10

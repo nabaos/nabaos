@@ -1,0 +1,14 @@
+name: engagement-analyzer
+version: 1.0.0
+description: Analyze social engagement metrics
+category: social-media
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - analyze
+  targets:
+  - engagement
+  - social-metrics
+  priority: 10

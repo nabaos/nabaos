@@ -1,0 +1,16 @@
+name: video-scripter
+version: 1.0.0
+description: Write video scripts
+category: content-creation
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - write
+  - create
+  targets:
+  - video
+  - script
+  - youtube
+  priority: 10

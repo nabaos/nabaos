@@ -1,0 +1,54 @@
+name: pandadoc
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "PandaDoc document management API for contract creation and e-signature"
+
+abilities:
+  pandadoc.create_document:
+    type: cloud
+    endpoint: "https://api.pandadoc.com/public/v1/documents"
+    method: POST
+    headers:
+      Authorization: "API-Key {{PANDADOC_API_KEY}}"
+    params:
+      template_uuid: { type: string, required: true }
+      name: { type: string, required: true }
+      recipients: { type: string, required: false }
+    description: "Create document from template"
+    receipt_fields: [document_id]
+
+  pandadoc.send_document:
+    type: cloud
+    endpoint: "https://api.pandadoc.com/public/v1/documents/{{document_id}}/send"
+    method: POST
+    headers:
+      Authorization: "API-Key {{PANDADOC_API_KEY}}"
+    params:
+      document_id: { type: string, required: true }
+      message: { type: string, required: false }
+      subject: { type: string, required: false }
+    description: "Send document for signing"
+    receipt_fields: [send_status]
+
+  pandadoc.get_status:
+    type: cloud
+    endpoint: "https://api.pandadoc.com/public/v1/documents/{{document_id}}"
+    method: GET
+    headers:
+      Authorization: "API-Key {{PANDADOC_API_KEY}}"
+    params:
+      document_id: { type: string, required: true }
+    description: "Get document status"
+    receipt_fields: [document_status]
+
+  pandadoc.download_pdf:
+    type: cloud
+    endpoint: "https://api.pandadoc.com/public/v1/documents/{{document_id}}/download"
+    method: GET
+    headers:
+      Authorization: "API-Key {{PANDADOC_API_KEY}}"
+    params:
+      document_id: { type: string, required: true }
+    description: "Download document as PDF"
+    receipt_fields: [pdf_url]

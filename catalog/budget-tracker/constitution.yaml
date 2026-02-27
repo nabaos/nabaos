@@ -1,0 +1,28 @@
+name: budget-tracker-constitution
+description: Constitution for budget-tracker
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within budget-tracker designated scope
+  trigger_actions:
+  - check
+  - track
+  trigger_targets:
+  - expenses
+  - spending
+  - budget
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside budget-tracker scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: gmail.search, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - gmail.search
+  - llm.query

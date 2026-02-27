@@ -1,0 +1,39 @@
+# Shared resources available to all agents.
+# Add compute pods, financial accounts, devices, and API services here.
+#
+# Each resource needs:
+#   id: unique identifier
+#   type: compute | financial | device | api_service
+#   (plus type-specific fields)
+#
+# Examples:
+#
+# - id: gpu_runpod
+#   type: compute
+#   provider: generic_http
+#   api_endpoint: "https://api.runpod.io/v2"
+#   credential_id: runpod
+#   gpu_type: "A100"
+#   cost_per_hour: 1.50
+#   default_quota:
+#     max_cost_usd: 20.0
+#     max_duration_secs: 3600
+#
+# - id: stripe_main
+#   type: financial
+#   account_type: payment
+#   provider: stripe
+#   currency: USD
+#   api_endpoint: "https://api.stripe.com/v1"
+#   credential_id: stripe
+#   daily_limit: 100.0
+#   threshold_2fa: 50.0
+#
+# - id: office_temp
+#   type: device
+#   device_type: sensor
+#   driver: home_assistant
+#   entity_id: "sensor.office_temperature"
+#   location: "office"
+
+resources: []

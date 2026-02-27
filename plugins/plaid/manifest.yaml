@@ -1,0 +1,60 @@
+name: plaid
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Plaid API integration for banking and financial data"
+
+abilities:
+  plaid.get_accounts:
+    type: cloud
+    endpoint: "https://production.plaid.com/accounts/get"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    params:
+      access_token: { type: string, required: true }
+      client_id: { type: string, required: true }
+      secret: { type: string, required: true }
+    description: "Get bank accounts from Plaid"
+    receipt_fields: [account_count]
+
+  plaid.get_transactions:
+    type: cloud
+    endpoint: "https://production.plaid.com/transactions/get"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    params:
+      access_token: { type: string, required: true }
+      start_date: { type: string, required: true }
+      end_date: { type: string, required: true }
+      client_id: { type: string, required: true }
+      secret: { type: string, required: true }
+    description: "Get transactions from Plaid"
+    receipt_fields: [transaction_count]
+
+  plaid.get_identity:
+    type: cloud
+    endpoint: "https://production.plaid.com/identity/get"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    params:
+      access_token: { type: string, required: true }
+      client_id: { type: string, required: true }
+      secret: { type: string, required: true }
+    description: "Get identity information from Plaid"
+    receipt_fields: [identity_name]
+
+  plaid.get_income:
+    type: cloud
+    endpoint: "https://production.plaid.com/income/verification/paystubs/get"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    params:
+      access_token: { type: string, required: true }
+      client_id: { type: string, required: true }
+      secret: { type: string, required: true }
+    description: "Get income information from Plaid"
+    receipt_fields: [income_amount]

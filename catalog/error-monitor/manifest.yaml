@@ -1,0 +1,12 @@
+name: error-monitor
+version: 1.0.0
+description: Monitor and analyze error logs
+category: developer-devops
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+triggers:
+  scheduled:
+  - chain: check-errors
+    interval: 15m

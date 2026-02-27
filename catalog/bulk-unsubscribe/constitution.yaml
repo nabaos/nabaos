@@ -1,0 +1,28 @@
+name: bulk-unsubscribe-constitution
+description: Constitution for bulk-unsubscribe
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within bulk-unsubscribe designated scope
+  trigger_actions:
+  - clean
+  - unsubscribe
+  trigger_targets:
+  - inbox
+  - email
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside bulk-unsubscribe scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: gmail.search, gmail.read, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - gmail.search
+  - gmail.read
+  - llm.query

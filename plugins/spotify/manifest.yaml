@@ -1,0 +1,69 @@
+name: spotify
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Spotify API integration for search, playback, playlists, and recommendations"
+
+abilities:
+  spotify.search:
+    type: cloud
+    endpoint: "https://api.spotify.com/v1/search"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SPOTIFY_ACCESS_TOKEN}}"
+    params:
+      q: { type: string, required: true }
+      type: { type: string, required: true }
+      limit: { type: int, default: 10 }
+    description: "Search for tracks, artists, or playlists on Spotify"
+    receipt_fields: [result_count]
+
+  spotify.play:
+    type: cloud
+    endpoint: "https://api.spotify.com/v1/me/player/play"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{SPOTIFY_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      context_uri: { type: string, required: false }
+      uris: { type: "list[string]", required: false }
+    description: "Start playback on Spotify"
+    receipt_fields: [status]
+
+  spotify.get_current_track:
+    type: cloud
+    endpoint: "https://api.spotify.com/v1/me/player/currently-playing"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SPOTIFY_ACCESS_TOKEN}}"
+    description: "Get the currently playing track"
+    receipt_fields: [track_name, artist]
+
+  spotify.create_playlist:
+    type: cloud
+    endpoint: "https://api.spotify.com/v1/users/{{user_id}}/playlists"
+    method: POST
+    headers:
+      Authorization: "Bearer {{SPOTIFY_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      user_id: { type: string, required: true }
+      name: { type: string, required: true }
+      description: { type: string, required: false }
+    description: "Create a new Spotify playlist"
+    receipt_fields: [playlist_id]
+
+  spotify.get_recommendations:
+    type: cloud
+    endpoint: "https://api.spotify.com/v1/recommendations"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SPOTIFY_ACCESS_TOKEN}}"
+    params:
+      seed_tracks: { type: "list[string]", required: false }
+      seed_artists: { type: "list[string]", required: false }
+      seed_genres: { type: "list[string]", required: false }
+      limit: { type: int, default: 10 }
+    description: "Get track recommendations based on seeds"
+    receipt_fields: [recommendation_count]

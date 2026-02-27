@@ -1,0 +1,17 @@
+name: knowledge-searcher
+version: 1.0.0
+description: Search knowledge base for answers
+category: customer-support
+author: nyaya-official
+permissions:
+- notion.search
+- llm.query
+intent_filters:
+- actions:
+  - search
+  - find
+  targets:
+  - answer
+  - solution
+  - knowledge
+  priority: 10

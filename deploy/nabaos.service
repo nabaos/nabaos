@@ -1,0 +1,27 @@
+[Unit]
+Description=NabaOS Personal Agent Runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nabaos
+Group=nabaos
+WorkingDirectory=/opt/nabaos
+EnvironmentFile=/opt/nabaos/.env
+ExecStart=/opt/nabaos/bin/nabaos daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nabaos
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/nabaos/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

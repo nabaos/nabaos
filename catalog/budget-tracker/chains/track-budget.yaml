@@ -1,0 +1,15 @@
+id: track-budget
+description: Search for financial emails and track spending
+steps:
+- id: search-transactions
+  ability: gmail.search
+  params:
+    query: receipt OR payment OR invoice OR charge
+  on_failure: abort
+- id: categorize
+  ability: llm.query
+  params:
+    prompt: 'Extract and categorize transactions from: {{search-transactions.output}}'
+  depends_on:
+  - search-transactions
+  on_failure: abort

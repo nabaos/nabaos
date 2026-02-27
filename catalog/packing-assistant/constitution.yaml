@@ -1,0 +1,27 @@
+name: packing-assistant-constitution
+description: Constitution for packing-assistant
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within packing-assistant designated scope
+  trigger_actions:
+  - generate
+  - create
+  trigger_targets:
+  - packing-list
+  - pack
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside packing-assistant scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: weather.forecast, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - weather.forecast
+  - llm.query

@@ -1,0 +1,43 @@
+name: wikipedia
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Wikipedia search and article retrieval"
+
+abilities:
+  wikipedia.search:
+    type: cloud
+    endpoint: "https://en.wikipedia.org/w/api.php"
+    method: GET
+    params:
+      action: { type: string, default: "query" }
+      list: { type: string, default: "search" }
+      srsearch: { type: string, required: true }
+      srlimit: { type: int, default: 10 }
+      format: { type: string, default: "json" }
+    description: "Search Wikipedia for articles"
+    receipt_fields: [result_count]
+
+  wikipedia.get_article:
+    type: cloud
+    endpoint: "https://en.wikipedia.org/w/api.php"
+    method: GET
+    params:
+      action: { type: string, default: "query" }
+      prop: { type: string, default: "extracts" }
+      titles: { type: string, required: true }
+      format: { type: string, default: "json" }
+    description: "Get full text of a Wikipedia article"
+    receipt_fields: [title]
+
+  wikipedia.get_sections:
+    type: cloud
+    endpoint: "https://en.wikipedia.org/w/api.php"
+    method: GET
+    params:
+      action: { type: string, default: "parse" }
+      prop: { type: string, default: "sections" }
+      page: { type: string, required: true }
+      format: { type: string, default: "json" }
+    description: "Get table of contents and sections for a Wikipedia article"
+    receipt_fields: [section_count]

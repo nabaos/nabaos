@@ -1,0 +1,26 @@
+name: email-campaign-constitution
+description: Constitution for email-campaign
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within email-campaign designated scope
+  trigger_actions:
+  - create
+  - plan
+  trigger_targets:
+  - email-marketing
+  - campaign
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside email-campaign scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - llm.query

@@ -1,0 +1,56 @@
+name: sentry
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Sentry API integration for error tracking and monitoring"
+
+abilities:
+  sentry.list_issues:
+    type: cloud
+    endpoint: "https://sentry.io/api/0/projects/{{org}}/{{project}}/issues/"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SENTRY_AUTH_TOKEN}}"
+    params:
+      org: { type: string, required: true }
+      project: { type: string, required: true }
+      query: { type: string, required: false }
+      sort: { type: string, required: false, default: "date" }
+    description: "List issues from Sentry project"
+    receipt_fields: [issue_count]
+
+  sentry.get_issue_detail:
+    type: cloud
+    endpoint: "https://sentry.io/api/0/issues/{{issue_id}}/"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SENTRY_AUTH_TOKEN}}"
+    params:
+      issue_id: { type: string, required: true }
+    description: "Get detailed information about a Sentry issue"
+    receipt_fields: [issue_id]
+
+  sentry.resolve_issue:
+    type: cloud
+    endpoint: "https://sentry.io/api/0/issues/{{issue_id}}/"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{SENTRY_AUTH_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      issue_id: { type: string, required: true }
+    description: "Resolve a Sentry issue"
+    receipt_fields: [issue_status]
+
+  sentry.search_events:
+    type: cloud
+    endpoint: "https://sentry.io/api/0/projects/{{org}}/{{project}}/events/"
+    method: GET
+    headers:
+      Authorization: "Bearer {{SENTRY_AUTH_TOKEN}}"
+    params:
+      org: { type: string, required: true }
+      project: { type: string, required: true }
+      query: { type: string, required: false }
+    description: "Search events in Sentry project"
+    receipt_fields: [event_count]

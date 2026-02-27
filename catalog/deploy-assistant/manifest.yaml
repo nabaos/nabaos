@@ -1,0 +1,16 @@
+name: deploy-assistant
+version: 1.0.0
+description: Guide through deployments
+category: developer-devops
+author: nyaya-official
+permissions:
+- github.prs
+- llm.query
+intent_filters:
+- actions:
+  - deploy
+  - release
+  targets:
+  - app
+  - service
+  priority: 10

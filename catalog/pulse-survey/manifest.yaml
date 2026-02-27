@@ -1,0 +1,12 @@
+name: pulse-survey
+version: 1.0.0
+description: Conduct team pulse surveys
+category: hr-recruiting
+author: nyaya-official
+permissions:
+- slack.send
+- llm.query
+triggers:
+  scheduled:
+  - chain: send-survey
+    interval: 14d

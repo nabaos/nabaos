@@ -1,0 +1,15 @@
+name: workout-planner
+version: 1.0.0
+description: Create workout plans
+category: health-wellness
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - create
+  - plan
+  targets:
+  - workout
+  - exercise
+  priority: 10

@@ -1,0 +1,60 @@
+name: google_drive
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Google Drive API integration for file search, read, upload, and sharing"
+
+abilities:
+  gdrive.search_files:
+    type: cloud
+    endpoint: "https://www.googleapis.com/drive/v3/files"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GOOGLE_DRIVE_TOKEN}}"
+    params:
+      q: { type: string, required: false }
+      pageSize: { type: int, default: 10 }
+      fields: { type: string, required: false }
+    description: "Search files in Google Drive"
+    receipt_fields: [file_count]
+
+  gdrive.read_file:
+    type: cloud
+    endpoint: "https://www.googleapis.com/drive/v3/files/{{file_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{GOOGLE_DRIVE_TOKEN}}"
+    params:
+      file_id: { type: string, required: true }
+      alt: { type: string, default: "media" }
+    description: "Read/download a file from Google Drive"
+    receipt_fields: [file_name, file_size]
+
+  gdrive.upload_file:
+    type: cloud
+    endpoint: "https://www.googleapis.com/upload/drive/v3/files"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GOOGLE_DRIVE_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      name: { type: string, required: true }
+      mimeType: { type: string, required: false }
+      parents: { type: "list[string]", required: false }
+    description: "Upload a file to Google Drive"
+    receipt_fields: [file_id, created_time]
+
+  gdrive.share_file:
+    type: cloud
+    endpoint: "https://www.googleapis.com/drive/v3/files/{{file_id}}/permissions"
+    method: POST
+    headers:
+      Authorization: "Bearer {{GOOGLE_DRIVE_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      file_id: { type: string, required: true }
+      role: { type: string, required: true }
+      type: { type: string, required: true }
+      emailAddress: { type: email, required: false }
+    description: "Share a file in Google Drive with others"
+    receipt_fields: [permission_id]

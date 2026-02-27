@@ -1,0 +1,16 @@
+id: write-proposal
+description: Create a sales proposal
+steps:
+- id: analyze-needs
+  ability: llm.query
+  params:
+    prompt: 'Analyze client needs: {{input.client_needs}}'
+  on_failure: abort
+- id: write
+  ability: llm.query
+  params:
+    prompt: 'Write a professional sales proposal for {{input.client}}. Needs: {{analyze-needs.output}}.
+      Our solution: {{input.solution}}'
+  depends_on:
+  - analyze-needs
+  on_failure: abort

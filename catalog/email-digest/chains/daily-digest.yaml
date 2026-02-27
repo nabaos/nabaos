@@ -1,0 +1,16 @@
+id: daily-digest
+description: Summarize all emails from the past 24 hours
+steps:
+- id: read-emails
+  ability: gmail.read
+  params:
+    max_results: 100
+    range: past_24h
+  on_failure: abort
+- id: create-digest
+  ability: llm.query
+  params:
+    prompt: 'Create a concise daily email digest from: {{read-emails.output}}'
+  depends_on:
+  - read-emails
+  on_failure: abort

@@ -1,0 +1,16 @@
+name: hotel-finder
+version: 1.0.0
+description: Find and compare hotels
+category: travel
+author: nyaya-official
+permissions:
+- search.web
+- llm.query
+intent_filters:
+- actions:
+  - find
+  - search
+  targets:
+  - hotel
+  - accommodation
+  priority: 10

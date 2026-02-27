@@ -1,0 +1,29 @@
+name: weather
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Weather data via Open-Meteo (free, no API key)"
+
+abilities:
+  weather.current:
+    type: cloud
+    endpoint: "https://api.open-meteo.com/v1/forecast"
+    method: GET
+    params:
+      latitude: { type: string, required: true }
+      longitude: { type: string, required: true }
+      current_weather: { type: string, default: "true" }
+    description: "Get current weather for a location"
+    receipt_fields: [temperature, windspeed]
+
+  weather.forecast:
+    type: cloud
+    endpoint: "https://api.open-meteo.com/v1/forecast"
+    method: GET
+    params:
+      latitude: { type: string, required: true }
+      longitude: { type: string, required: true }
+      daily: { type: string, default: "temperature_2m_max,temperature_2m_min,precipitation_sum" }
+      forecast_days: { type: int, default: 7 }
+    description: "Get weather forecast"
+    receipt_fields: [forecast_days]

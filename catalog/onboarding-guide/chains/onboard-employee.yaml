@@ -1,0 +1,26 @@
+id: onboard-employee
+description: Create onboarding plan and send welcome materials
+steps:
+- id: get-checklist
+  ability: notion.query
+  params:
+    database: onboarding
+    filter: '{{input.role}}'
+  on_failure: abort
+- id: personalize
+  ability: llm.query
+  params:
+    prompt: 'Create a personalized onboarding plan for {{input.name}}, role: {{input.role}}.
+      Template: {{get-checklist.output}}'
+  depends_on:
+  - get-checklist
+  on_failure: abort
+- id: send-welcome
+  ability: gmail.send
+  params:
+    to: '{{input.email}}'
+    subject: Welcome to the team!
+    body: '{{personalize.output}}'
+  depends_on:
+  - personalize
+  on_failure: continue

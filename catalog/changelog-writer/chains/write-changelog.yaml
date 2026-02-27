@@ -1,0 +1,26 @@
+id: write-changelog
+description: Fetch commits and issues to generate changelog
+steps:
+- id: fetch-prs
+  ability: github.prs
+  params:
+    state: closed
+    repo: '{{input.repo}}'
+    since: '{{input.since}}'
+  on_failure: continue
+- id: fetch-issues
+  ability: github.issues
+  params:
+    state: closed
+    repo: '{{input.repo}}'
+    since: '{{input.since}}'
+  on_failure: continue
+- id: generate
+  ability: llm.query
+  params:
+    prompt: 'Generate a changelog for version {{input.version}}: PRs: {{fetch-prs.output}},
+      Issues: {{fetch-issues.output}}'
+  depends_on:
+  - fetch-prs
+  - fetch-issues
+  on_failure: abort

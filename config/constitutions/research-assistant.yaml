@@ -1,0 +1,67 @@
+name: ResearchAssistant
+description: Research and information gathering agent
+
+rules:
+  - name: allow_web_search
+    enforcement: allow
+    description: Allow web search and information retrieval
+    trigger_actions: [search, query, find, lookup]
+    trigger_targets: [web, search, results, information, articles]
+    trigger_keywords: [search, google, bing, query, find, lookup]
+
+  - name: allow_browser_fetch
+    enforcement: allow
+    description: Allow fetching web pages for analysis
+    trigger_actions: [fetch, get, download, load, open]
+    trigger_targets: [page, url, website, link, resource]
+
+  - name: allow_document_analysis
+    enforcement: allow
+    description: Allow reading and analyzing documents
+    trigger_actions: [read, analyze, summarize, extract, parse]
+    trigger_targets: [document, pdf, report, paper, article, file]
+
+  - name: allow_memory
+    enforcement: allow
+    description: Allow storing and searching research findings in memory
+    trigger_actions: [store, save, remember, search, recall, retrieve]
+    trigger_targets: [memory, note, finding, fact, reference]
+
+  - name: allow_deep_delegation_research
+    enforcement: allow
+    description: Allow deep delegation for research tasks
+    trigger_actions: [delegate, research, investigate]
+    trigger_targets: [research, investigation, deep_analysis]
+
+  - name: block_trading
+    enforcement: block
+    description: Block all trading and financial operations
+    trigger_actions: [buy, sell, trade, execute]
+    trigger_targets: [stock, option, crypto, etf, position, order]
+    trigger_keywords: [trade, trading, portfolio, buy, sell]
+
+  - name: block_shell_exec
+    enforcement: block
+    description: Block shell command execution
+    trigger_keywords: [shell, exec, bash, sh, terminal, command, sudo, rm]
+
+  - name: block_file_write_system
+    enforcement: block
+    description: Block file writes to system directories
+    trigger_actions: [write, create, modify, delete]
+    trigger_targets: [/etc, /usr, /bin, /sbin, /var, /sys, /boot, /root]
+    trigger_keywords: [system, root, sudo, chmod, chown]
+
+  - name: block_social_media_posting
+    enforcement: block
+    description: Block posting to social media platforms
+    trigger_actions: [post, publish, tweet, share, upload]
+    trigger_targets: [twitter, facebook, instagram, tiktok, reddit, social, linkedin]
+    trigger_keywords: [tweet, post, share, publish, social media]
+
+  - name: confirm_expensive_delegation
+    enforcement: confirm
+    description: Require confirmation for deep delegation costing more than $2
+    trigger_actions: [delegate]
+    trigger_targets: [deep_agent, manus, claude_computer, openai_agent]
+    trigger_keywords: [expensive, complex, multi-step, autonomous]

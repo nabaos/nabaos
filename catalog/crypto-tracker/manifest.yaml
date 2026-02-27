@@ -1,0 +1,12 @@
+name: crypto-tracker
+version: 1.0.0
+description: Track cryptocurrency portfolio
+category: finance-budgeting
+author: nyaya-official
+permissions:
+- finance.crypto_price
+- llm.query
+triggers:
+  scheduled:
+  - chain: track-crypto
+    interval: 30m

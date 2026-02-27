@@ -1,0 +1,44 @@
+name: huggingface
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Hugging Face Inference API integration for ML models, listings, and model info"
+
+abilities:
+  hf.inference:
+    type: cloud
+    endpoint: "https://api-inference.huggingface.co/models/{{model_id}}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{HF_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      inputs: { type: "any", required: true }
+      model_id: { type: string, required: true }
+    description: "Run inference on a Hugging Face model"
+    receipt_fields: [outputs]
+
+  hf.list_models:
+    type: cloud
+    endpoint: "https://huggingface.co/api/models"
+    method: GET
+    headers:
+      Authorization: "Bearer {{HF_TOKEN}}"
+    params:
+      search: { type: string, required: false }
+      filter: { type: string, required: false }
+      sort: { type: string, required: false }
+      limit: { type: int, default: 10 }
+    description: "List available models on Hugging Face"
+    receipt_fields: [model_count]
+
+  hf.get_model_info:
+    type: cloud
+    endpoint: "https://huggingface.co/api/models/{{model_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{HF_TOKEN}}"
+    params:
+      model_id: { type: string, required: true }
+    description: "Get information about a specific Hugging Face model"
+    receipt_fields: [model_name, description, downloads]

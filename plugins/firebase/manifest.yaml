@@ -1,0 +1,71 @@
+name: firebase
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Firebase Firestore and Realtime Database API integration for NoSQL operations"
+
+abilities:
+  firebase.firestore_get:
+    type: cloud
+    endpoint: "https://firestore.googleapis.com/v1/projects/{{project}}/databases/(default)/documents/{{collection}}/{{document}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{FIREBASE_ID_TOKEN}}"
+    params:
+      project: { type: string, required: true }
+      collection: { type: string, required: true }
+      document: { type: string, required: true }
+    description: "Get Firestore document"
+    receipt_fields: [document_data]
+
+  firebase.firestore_query:
+    type: cloud
+    endpoint: "https://firestore.googleapis.com/v1/projects/{{project}}/databases/(default)/documents:runQuery"
+    method: POST
+    headers:
+      Authorization: "Bearer {{FIREBASE_ID_TOKEN}}"
+    params:
+      project: { type: string, required: true }
+      collection: { type: string, required: true }
+      where: { type: string, required: false }
+      orderBy: { type: string, required: false }
+      limit: { type: number, required: false }
+    description: "Query Firestore documents"
+    receipt_fields: [result_count]
+
+  firebase.firestore_set:
+    type: cloud
+    endpoint: "https://firestore.googleapis.com/v1/projects/{{project}}/databases/(default)/documents/{{collection}}/{{document}}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{FIREBASE_ID_TOKEN}}"
+    params:
+      project: { type: string, required: true }
+      collection: { type: string, required: true }
+      document: { type: string, required: true }
+      fields: { type: string, required: true, description: "Fields to update" }
+    description: "Set or update Firestore document"
+    receipt_fields: [update_success]
+
+  firebase.realtime_read:
+    type: cloud
+    endpoint: "https://{{FIREBASE_PROJECT}}.firebaseio.com/{{path}}.json"
+    method: GET
+    headers:
+      Authorization: "Bearer {{FIREBASE_ID_TOKEN}}"
+    params:
+      path: { type: string, required: true }
+    description: "Read data from Realtime Database"
+    receipt_fields: [data_snapshot]
+
+  firebase.realtime_write:
+    type: cloud
+    endpoint: "https://{{FIREBASE_PROJECT}}.firebaseio.com/{{path}}.json"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{FIREBASE_ID_TOKEN}}"
+    params:
+      path: { type: string, required: true }
+      data: { type: string, required: true, description: "JSON data to write" }
+    description: "Write data to Realtime Database"
+    receipt_fields: [write_success]

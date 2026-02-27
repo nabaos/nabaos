@@ -1,0 +1,16 @@
+name: email-drafts
+version: 1.0.0
+description: Draft email replies using LLM
+category: email-communication
+author: nyaya-official
+permissions:
+- gmail.read
+- llm.query
+intent_filters:
+- actions:
+  - draft
+  - write
+  targets:
+  - email
+  - reply
+  priority: 10

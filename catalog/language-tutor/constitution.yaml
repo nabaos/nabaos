@@ -1,0 +1,27 @@
+name: language-tutor-constitution
+description: Constitution for language-tutor
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within language-tutor designated scope
+  trigger_actions:
+  - learn
+  - practice
+  - translate
+  trigger_targets:
+  - word
+  - language
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside language-tutor scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - llm.query

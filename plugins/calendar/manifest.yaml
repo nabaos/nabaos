@@ -1,0 +1,45 @@
+name: calendar
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Google Calendar API integration"
+
+abilities:
+  calendar.list:
+    type: cloud
+    endpoint: "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+    method: GET
+    headers:
+      Authorization: "Bearer {{CALENDAR_ACCESS_TOKEN}}"
+    params:
+      time_min: { type: string, required: false }
+      time_max: { type: string, required: false }
+      max_results: { type: int, default: 10 }
+    description: "List upcoming calendar events"
+    receipt_fields: [event_count]
+
+  calendar.create:
+    type: cloud
+    endpoint: "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+    method: POST
+    headers:
+      Authorization: "Bearer {{CALENDAR_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      summary: { type: string, required: true }
+      start: { type: string, required: true }
+      end: { type: string, required: true }
+      description: { type: string, required: false }
+    description: "Create a calendar event"
+    receipt_fields: [event_id]
+
+  calendar.delete:
+    type: cloud
+    endpoint: "https://www.googleapis.com/calendar/v3/calendars/primary/events/{{event_id}}"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{CALENDAR_ACCESS_TOKEN}}"
+    params:
+      event_id: { type: string, required: true }
+    description: "Delete a calendar event"
+    receipt_fields: [deleted]

@@ -1,0 +1,67 @@
+name: intercom
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Intercom messaging API integration for customer conversations and support"
+
+abilities:
+  intercom.list_conversations:
+    type: cloud
+    endpoint: "https://api.intercom.io/conversations"
+    method: GET
+    headers:
+      Authorization: "Bearer {{INTERCOM_ACCESS_TOKEN}}"
+    params:
+      state: { type: string, required: false }
+      sort_field: { type: string, required: false }
+      per_page: { type: number, required: false, default: 50 }
+    description: "List conversations with optional filters"
+    receipt_fields: [conversation_count]
+
+  intercom.get_conversation:
+    type: cloud
+    endpoint: "https://api.intercom.io/conversations/{{conversation_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{INTERCOM_ACCESS_TOKEN}}"
+    params:
+      conversation_id: { type: string, required: true }
+    description: "Get full conversation details"
+    receipt_fields: [conversation_id, message_count]
+
+  intercom.reply:
+    type: cloud
+    endpoint: "https://api.intercom.io/conversations/{{conversation_id}}/reply"
+    method: POST
+    headers:
+      Authorization: "Bearer {{INTERCOM_ACCESS_TOKEN}}"
+    params:
+      conversation_id: { type: string, required: true }
+      body: { type: string, required: true }
+      message_type: { type: string, required: false }
+    description: "Reply to a conversation"
+    receipt_fields: [message_id]
+
+  intercom.search_contacts:
+    type: cloud
+    endpoint: "https://api.intercom.io/contacts/search"
+    method: POST
+    headers:
+      Authorization: "Bearer {{INTERCOM_ACCESS_TOKEN}}"
+    params:
+      query: { type: string, required: true }
+    description: "Search for contacts by name, email, or ID"
+    receipt_fields: [contact_count]
+
+  intercom.add_note:
+    type: cloud
+    endpoint: "https://api.intercom.io/conversations/{{conversation_id}}/parts"
+    method: POST
+    headers:
+      Authorization: "Bearer {{INTERCOM_ACCESS_TOKEN}}"
+    params:
+      conversation_id: { type: string, required: true }
+      body: { type: string, required: true }
+      message_type: { type: string, required: true, default: "note" }
+    description: "Add internal note to conversation"
+    receipt_fields: [note_id]

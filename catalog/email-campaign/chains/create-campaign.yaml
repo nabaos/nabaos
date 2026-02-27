@@ -1,0 +1,16 @@
+id: create-campaign
+description: Design an email marketing campaign
+steps:
+- id: strategy
+  ability: llm.query
+  params:
+    prompt: 'Design an email marketing campaign strategy for: {{input.goal}}. Audience:
+      {{input.audience}}. Duration: {{input.duration}}'
+  on_failure: abort
+- id: write-emails
+  ability: llm.query
+  params:
+    prompt: 'Write all email sequences for this campaign: {{strategy.output}}'
+  depends_on:
+  - strategy
+  on_failure: abort

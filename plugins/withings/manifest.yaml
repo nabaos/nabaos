@@ -1,0 +1,46 @@
+name: withings
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Withings health API integration for body measurements, sleep, and activity tracking"
+
+abilities:
+  withings.get_measurements:
+    type: cloud
+    endpoint: "https://wbsapi.withings.net/measure"
+    method: POST
+    headers:
+      Authorization: "Bearer {{WITHINGS_ACCESS_TOKEN}}"
+    params:
+      action: { type: string, required: true, default: "getmeas" }
+      meastype: { type: string, required: true, description: "Measurement type (weight, height, body_fat, etc)" }
+      startdate: { type: string, required: false }
+      enddate: { type: string, required: false }
+    description: "Get body measurements within a date range"
+    receipt_fields: [measurement_count]
+
+  withings.get_sleep:
+    type: cloud
+    endpoint: "https://wbsapi.withings.net/v2/sleep"
+    method: GET
+    headers:
+      Authorization: "Bearer {{WITHINGS_ACCESS_TOKEN}}"
+    params:
+      action: { type: string, required: true, default: "getsummary" }
+      startdateymd: { type: string, required: false }
+      enddateymd: { type: string, required: false }
+    description: "Get sleep summary data"
+    receipt_fields: [sleep_sessions_count, total_sleep_duration]
+
+  withings.get_activity:
+    type: cloud
+    endpoint: "https://wbsapi.withings.net/v2/measure"
+    method: GET
+    headers:
+      Authorization: "Bearer {{WITHINGS_ACCESS_TOKEN}}"
+    params:
+      action: { type: string, required: true, default: "getactivity" }
+      startdateymd: { type: string, required: false }
+      enddateymd: { type: string, required: false }
+    description: "Get activity data within a date range"
+    receipt_fields: [activity_count, total_steps]

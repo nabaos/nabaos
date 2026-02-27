@@ -1,0 +1,18 @@
+id: triage-ticket
+description: Read support email and classify/prioritize
+steps:
+- id: read-ticket
+  ability: gmail.read
+  params:
+    unread: true
+    labels:
+    - support
+  on_failure: abort
+- id: triage
+  ability: llm.query
+  params:
+    prompt: 'Triage this support ticket. Classify by category, priority, and suggested
+      response: {{read-ticket.output}}'
+  depends_on:
+  - read-ticket
+  on_failure: abort

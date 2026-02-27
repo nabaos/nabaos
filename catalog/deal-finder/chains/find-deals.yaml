@@ -1,0 +1,15 @@
+id: find-deals
+description: Search for deals and coupons
+steps:
+- id: search-deals
+  ability: search.web
+  params:
+    query: '{{input.product}} deal coupon discount'
+  on_failure: abort
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Summarize the best deals for {{input.product}}: {{search-deals.output}}'
+  depends_on:
+  - search-deals
+  on_failure: abort

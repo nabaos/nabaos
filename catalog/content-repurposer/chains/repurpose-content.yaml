@@ -1,0 +1,15 @@
+id: repurpose-content
+description: Transform content into different formats
+steps:
+- id: analyze-content
+  ability: llm.query
+  params:
+    prompt: 'Analyze this content and identify key messages: {{input.content}}'
+  on_failure: abort
+- id: repurpose
+  ability: llm.query
+  params:
+    prompt: 'Repurpose the content into {{input.target_format}}: Key messages: {{analyze-content.output}}'
+  depends_on:
+  - analyze-content
+  on_failure: abort

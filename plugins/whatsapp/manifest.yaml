@@ -1,0 +1,51 @@
+name: whatsapp
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "WhatsApp Business API integration for messaging, templates, and media"
+
+abilities:
+  whatsapp.send_message:
+    type: cloud
+    endpoint: "https://graph.facebook.com/v18.0/{{phone_number_id}}/messages"
+    method: POST
+    headers:
+      Authorization: "Bearer {{WHATSAPP_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      phone_number_id: { type: string, required: true }
+      to: { type: string, required: true }
+      text: { type: string, required: true }
+    description: "Send a text message via WhatsApp"
+    receipt_fields: [message_id]
+
+  whatsapp.send_template:
+    type: cloud
+    endpoint: "https://graph.facebook.com/v18.0/{{phone_number_id}}/messages"
+    method: POST
+    headers:
+      Authorization: "Bearer {{WHATSAPP_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      phone_number_id: { type: string, required: true }
+      to: { type: string, required: true }
+      template_name: { type: string, required: true }
+      language: { type: string, default: "en" }
+      components: { type: "list", required: false }
+    description: "Send a template message via WhatsApp"
+    receipt_fields: [message_id]
+
+  whatsapp.send_media:
+    type: cloud
+    endpoint: "https://graph.facebook.com/v18.0/{{phone_number_id}}/messages"
+    method: POST
+    headers:
+      Authorization: "Bearer {{WHATSAPP_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      phone_number_id: { type: string, required: true }
+      to: { type: string, required: true }
+      type: { type: string, required: true }
+      media_url: { type: url, required: true }
+    description: "Send media (image, video, document) via WhatsApp"
+    receipt_fields: [message_id]

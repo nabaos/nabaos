@@ -1,0 +1,14 @@
+name: ticket-triage
+version: 1.0.0
+description: Triage support tickets
+category: customer-support
+author: nyaya-official
+permissions:
+- gmail.read
+- llm.query
+triggers:
+  events:
+  - 'on': DataChanged
+    filter:
+      namespace: gmail
+    chain: triage-ticket

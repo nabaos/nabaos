@@ -1,0 +1,16 @@
+id: find-hotels
+description: Search and compare hotel options
+steps:
+- id: search
+  ability: search.web
+  params:
+    query: '{{input.destination}} hotel {{input.dates}} {{input.budget}}'
+  on_failure: abort
+- id: compare
+  ability: llm.query
+  params:
+    prompt: 'Compare hotel options in {{input.destination}}: {{search.output}}. Budget:
+      {{input.budget}}'
+  depends_on:
+  - search
+  on_failure: abort

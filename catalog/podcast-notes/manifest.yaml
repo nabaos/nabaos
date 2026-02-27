@@ -1,0 +1,16 @@
+name: podcast-notes
+version: 1.0.0
+description: Generate show notes from podcast content
+category: content-creation
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - summarize
+  - create
+  targets:
+  - podcast
+  - shownotes
+  - episode
+  priority: 10

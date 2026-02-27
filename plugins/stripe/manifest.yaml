@@ -1,0 +1,64 @@
+name: stripe
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Stripe API integration for payment processing"
+
+abilities:
+  stripe.list_payments:
+    type: cloud
+    endpoint: "https://api.stripe.com/v1/payment_intents"
+    method: GET
+    headers:
+      Authorization: "Bearer {{STRIPE_SECRET_KEY}}"
+    params:
+      limit: { type: int, required: false, default: 10 }
+      created: { type: string, required: false }
+    description: "List payment intents from Stripe"
+    receipt_fields: [payment_count]
+
+  stripe.get_customer:
+    type: cloud
+    endpoint: "https://api.stripe.com/v1/customers/{{customer_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{STRIPE_SECRET_KEY}}"
+    params:
+      customer_id: { type: string, required: true }
+    description: "Get customer details from Stripe"
+    receipt_fields: [customer_name]
+
+  stripe.create_payment_link:
+    type: cloud
+    endpoint: "https://api.stripe.com/v1/payment_links"
+    method: POST
+    headers:
+      Authorization: "Bearer {{STRIPE_SECRET_KEY}}"
+      Content-Type: "application/x-www-form-urlencoded"
+    params:
+      line_items: { type: string, required: true }
+      after_completion: { type: string, required: false }
+    description: "Create a payment link in Stripe"
+    receipt_fields: [payment_link_url]
+
+  stripe.get_balance:
+    type: cloud
+    endpoint: "https://api.stripe.com/v1/balance"
+    method: GET
+    headers:
+      Authorization: "Bearer {{STRIPE_SECRET_KEY}}"
+    description: "Get balance information from Stripe"
+    receipt_fields: [account_balance]
+
+  stripe.refund_payment:
+    type: cloud
+    endpoint: "https://api.stripe.com/v1/refunds"
+    method: POST
+    headers:
+      Authorization: "Bearer {{STRIPE_SECRET_KEY}}"
+      Content-Type: "application/x-www-form-urlencoded"
+    params:
+      payment_intent: { type: string, required: true }
+      amount: { type: int, required: false }
+    description: "Create a refund for a Stripe payment"
+    receipt_fields: [refund_id]

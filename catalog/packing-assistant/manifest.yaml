@@ -1,0 +1,16 @@
+name: packing-assistant
+version: 1.0.0
+description: Generate packing lists
+category: travel
+author: nyaya-official
+permissions:
+- weather.forecast
+- llm.query
+intent_filters:
+- actions:
+  - create
+  - generate
+  targets:
+  - packing-list
+  - pack
+  priority: 10

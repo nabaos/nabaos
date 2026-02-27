@@ -1,0 +1,60 @@
+name: default
+version: "1.0.0"
+description: Default safety constitution with common-sense boundaries
+
+default_enforcement: allow
+
+rules:
+  - name: block_destructive_keywords
+    description: Block queries containing destructive keywords
+    trigger_actions: []
+    trigger_targets: []
+    trigger_keywords:
+      - "delete all"
+      - "rm -rf"
+      - "drop table"
+      - "format disk"
+      - "wipe"
+      - "destroy"
+    enforcement: block
+    reason: Destructive operations require explicit confirmation
+
+  - name: confirm_send_actions
+    description: Require confirmation for sending messages/emails
+    trigger_actions: ["send"]
+    trigger_targets: []
+    trigger_keywords: []
+    enforcement: confirm
+    reason: Sending actions can have external effects
+
+  - name: warn_control_actions
+    description: Warn on device control actions
+    trigger_actions: ["control"]
+    trigger_targets: []
+    trigger_keywords: []
+    enforcement: warn
+    reason: Device control changes physical state
+
+  - name: allow_check_actions
+    description: Allow all read-only check actions
+    trigger_actions: ["check"]
+    trigger_targets: []
+    trigger_keywords: []
+    enforcement: allow
+    reason: Read-only operations are safe
+
+  - name: allow_add_actions
+    description: Allow adding items to lists
+    trigger_actions: ["add"]
+    trigger_targets: []
+    trigger_keywords: []
+    enforcement: allow
+    reason: Adding to lists is safe
+
+  - name: allow_set_reminders
+    description: Allow setting reminders
+    trigger_actions: ["set"]
+    trigger_targets: ["reminder"]
+    trigger_keywords: []
+    enforcement: allow
+    reason: Reminders are safe local operations

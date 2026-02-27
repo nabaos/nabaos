@@ -1,0 +1,15 @@
+name: weekly-review
+version: 1.0.0
+description: Weekly productivity summary
+category: daily-productivity
+author: nyaya-official
+permissions:
+- calendar.list
+- gmail.read
+- notion.query
+- llm.query
+triggers:
+  scheduled:
+  - chain: weekly-review
+    interval: 7d
+    at: '18:00'

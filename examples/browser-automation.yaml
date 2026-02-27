@@ -1,0 +1,14 @@
+# Example manifest for a browser automation agent
+# Register with: nyaya plugin register examples/browser-automation.yaml
+
+name: browser-automation-agent
+version: "0.1.0"
+description: Browser automation agent for web scraping and screenshot capture
+permissions:
+  - browser.fetch
+  - browser.screenshot
+  - memory.store
+memory_limit_mb: 128
+fuel_limit: 2000000
+kv_namespace: browser_automation
+author: nyaya-examples

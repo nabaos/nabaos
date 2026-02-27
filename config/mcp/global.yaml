@@ -1,0 +1,29 @@
+# MCP Server Configuration
+# Servers defined here are available to agents that declare them in their mcp.servers list.
+# Credentials use $SECRET: prefix — store via Web UI or CLI, never plaintext.
+
+servers:
+  github:
+    command: "npx"
+    args: ["@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: "$SECRET:mcp_github_token"
+    trust_level: "verified"
+    idle_timeout_secs: 300
+    max_concurrent_calls: 5
+    call_timeout_secs: 30
+    max_output_bytes: 1048576
+
+  filesystem:
+    command: "npx"
+    args: ["@modelcontextprotocol/server-filesystem", "/home"]
+    trust_level: "builtin"
+    idle_timeout_secs: 600
+    max_output_bytes: 2097152
+
+  fetch:
+    command: "npx"
+    args: ["@modelcontextprotocol/server-fetch"]
+    trust_level: "verified"
+    idle_timeout_secs: 300
+    call_timeout_secs: 60

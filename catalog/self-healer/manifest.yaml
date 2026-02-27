@@ -1,0 +1,11 @@
+name: self-healer
+version: 1.0.0
+description: Auto-remediate common server issues
+category: developer-devops
+author: nyaya-official
+permissions:
+- llm.query
+triggers:
+  events:
+  - 'on': AlertRaised
+    chain: auto-remediate

@@ -1,0 +1,16 @@
+id: monitor-news
+description: Search news for topics and summarize
+steps:
+- id: search-news
+  ability: news.search
+  params:
+    query: '{{input.topics}}'
+    max_results: 20
+  on_failure: abort
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Summarize the latest news on {{input.topics}}: {{search-news.output}}'
+  depends_on:
+  - search-news
+  on_failure: abort

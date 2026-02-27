@@ -1,0 +1,30 @@
+id: check-maintenance
+description: Query maintenance schedule and create reminders
+steps:
+- id: query-tasks
+  ability: notion.query
+  params:
+    database: home-maintenance
+  on_failure: abort
+- id: analyze
+  ability: llm.query
+  params:
+    prompt: 'Check which maintenance tasks are due: {{query-tasks.output}}'
+  depends_on:
+  - query-tasks
+  on_failure: abort
+- id: create-reminders
+  ability: calendar.create
+  params:
+    events: '{{analyze.output}}'
+  depends_on:
+  - analyze
+  on_failure: continue
+- id: log
+  ability: notion.create_page
+  params:
+    database: home-maintenance
+    content: '{{analyze.output}}'
+  depends_on:
+  - analyze
+  on_failure: continue

@@ -1,0 +1,47 @@
+name: whisper
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "OpenAI Whisper API integration for audio transcription and translation"
+
+abilities:
+  whisper.transcribe:
+    type: cloud
+    endpoint: "https://api.openai.com/v1/audio/transcriptions"
+    method: POST
+    headers:
+      Authorization: "Bearer {{OPENAI_API_KEY}}"
+      Content-Type: "multipart/form-data"
+    params:
+      file: { type: path, required: true }
+      model: { type: string, default: "whisper-1" }
+      language: { type: string, required: false }
+    description: "Transcribe audio to text using Whisper"
+    receipt_fields: [text, language]
+
+  whisper.translate:
+    type: cloud
+    endpoint: "https://api.openai.com/v1/audio/translations"
+    method: POST
+    headers:
+      Authorization: "Bearer {{OPENAI_API_KEY}}"
+      Content-Type: "multipart/form-data"
+    params:
+      file: { type: path, required: true }
+      model: { type: string, default: "whisper-1" }
+    description: "Translate audio from any language to English"
+    receipt_fields: [text]
+
+  whisper.detect_language:
+    type: cloud
+    endpoint: "https://api.openai.com/v1/audio/transcriptions"
+    method: POST
+    headers:
+      Authorization: "Bearer {{OPENAI_API_KEY}}"
+      Content-Type: "multipart/form-data"
+    params:
+      file: { type: path, required: true }
+      model: { type: string, default: "whisper-1" }
+      response_format: { type: string, default: "verbose_json" }
+    description: "Detect the language of an audio file"
+    receipt_fields: [language, language_probability]

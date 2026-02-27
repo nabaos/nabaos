@@ -1,0 +1,12 @@
+name: subscription-tracker
+version: 1.0.0
+description: Track and manage subscriptions and recurring payments
+category: daily-productivity
+author: nyaya-official
+permissions:
+- gmail.search
+- llm.query
+triggers:
+  scheduled:
+  - chain: scan-subscriptions
+    interval: 7d

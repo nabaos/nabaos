@@ -1,0 +1,16 @@
+name: template-responder
+version: 1.0.0
+description: Reply with templates for common queries
+category: email-communication
+author: nyaya-official
+permissions:
+- gmail.read
+- gmail.send
+- llm.query
+intent_filters:
+- actions:
+  - respond
+  - reply
+  targets:
+  - template
+  priority: 10

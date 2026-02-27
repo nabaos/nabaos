@@ -1,0 +1,16 @@
+name: pr-reviewer
+version: 1.0.0
+description: Review pull requests
+category: developer-devops
+author: nyaya-official
+permissions:
+- github.prs
+- llm.query
+intent_filters:
+- actions:
+  - review
+  targets:
+  - pr
+  - pull-request
+  - code
+  priority: 10

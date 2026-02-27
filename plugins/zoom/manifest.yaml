@@ -1,0 +1,55 @@
+name: zoom
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Zoom API integration for meeting management, recordings, and participants"
+
+abilities:
+  zoom.create_meeting:
+    type: cloud
+    endpoint: "https://api.zoom.us/v2/users/me/meetings"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ZOOM_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      topic: { type: string, required: true }
+      start_time: { type: datetime, required: true }
+      duration: { type: int, required: true }
+      password: { type: string, required: false }
+    description: "Create a new Zoom meeting"
+    receipt_fields: [meeting_id, join_url]
+
+  zoom.list_meetings:
+    type: cloud
+    endpoint: "https://api.zoom.us/v2/users/me/meetings"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ZOOM_ACCESS_TOKEN}}"
+    params:
+      type: { type: string, default: "upcoming" }
+      page_size: { type: int, default: 10 }
+    description: "List all Zoom meetings"
+    receipt_fields: [meeting_count]
+
+  zoom.get_recording:
+    type: cloud
+    endpoint: "https://api.zoom.us/v2/meetings/{{meeting_id}}/recordings"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ZOOM_ACCESS_TOKEN}}"
+    params:
+      meeting_id: { type: string, required: true }
+    description: "Get recording details for a Zoom meeting"
+    receipt_fields: [recording_count, file_count]
+
+  zoom.list_participants:
+    type: cloud
+    endpoint: "https://api.zoom.us/v2/past_meetings/{{meeting_id}}/participants"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ZOOM_ACCESS_TOKEN}}"
+    params:
+      meeting_id: { type: string, required: true }
+    description: "List participants from a past Zoom meeting"
+    receipt_fields: [participant_count]

@@ -1,0 +1,56 @@
+name: elevenlabs
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "ElevenLabs API integration for text-to-speech, voice cloning, and speech-to-speech"
+
+abilities:
+  elevenlabs.text_to_speech:
+    type: cloud
+    endpoint: "https://api.elevenlabs.io/v1/text-to-speech/{{voice_id}}"
+    method: POST
+    headers:
+      xi-api-key: "{{ELEVENLABS_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      text: { type: string, required: true }
+      voice_id: { type: string, required: true }
+      model_id: { type: string, default: "eleven_monolingual_v1" }
+    description: "Convert text to speech using ElevenLabs"
+    receipt_fields: [audio_url, duration]
+
+  elevenlabs.list_voices:
+    type: cloud
+    endpoint: "https://api.elevenlabs.io/v1/voices"
+    method: GET
+    headers:
+      xi-api-key: "{{ELEVENLABS_API_KEY}}"
+    description: "List available voices in ElevenLabs"
+    receipt_fields: [voice_count]
+
+  elevenlabs.clone_voice:
+    type: cloud
+    endpoint: "https://api.elevenlabs.io/v1/voices/add"
+    method: POST
+    headers:
+      xi-api-key: "{{ELEVENLABS_API_KEY}}"
+      Content-Type: "multipart/form-data"
+    params:
+      name: { type: string, required: true }
+      files: { type: "list[path]", required: true }
+      description: { type: string, required: false }
+    description: "Clone a voice by uploading audio samples"
+    receipt_fields: [voice_id]
+
+  elevenlabs.speech_to_speech:
+    type: cloud
+    endpoint: "https://api.elevenlabs.io/v1/speech-to-speech/{{voice_id}}"
+    method: POST
+    headers:
+      xi-api-key: "{{ELEVENLABS_API_KEY}}"
+      Content-Type: "multipart/form-data"
+    params:
+      audio: { type: path, required: true }
+      voice_id: { type: string, required: true }
+    description: "Convert speech to different voice using ElevenLabs"
+    receipt_fields: [audio_url]

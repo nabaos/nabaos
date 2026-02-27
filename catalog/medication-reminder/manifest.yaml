@@ -1,0 +1,12 @@
+name: medication-reminder
+version: 1.0.0
+description: Remind about medications
+category: health-wellness
+author: nyaya-official
+permissions:
+- calendar.create
+- llm.query
+triggers:
+  scheduled:
+  - chain: check-medications
+    interval: 8h

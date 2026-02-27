@@ -1,0 +1,28 @@
+name: portfolio-monitor-constitution
+description: Constitution for portfolio-monitor
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within portfolio-monitor designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - portfolio-monitor
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside portfolio-monitor scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: finance.stock_quote, finance.crypto_price,
+    llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - finance.stock_quote
+  - finance.crypto_price
+  - llm.query

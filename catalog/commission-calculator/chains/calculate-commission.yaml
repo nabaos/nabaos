@@ -1,0 +1,17 @@
+id: calculate-commission
+description: Query sales data and calculate commissions
+steps:
+- id: query-sales
+  ability: notion.query
+  params:
+    database: sales
+    filter: '{{input.period}}'
+  on_failure: abort
+- id: calculate
+  ability: llm.query
+  params:
+    prompt: 'Calculate commissions based on: Sales data: {{query-sales.output}}. Commission
+      structure: {{input.commission_structure}}'
+  depends_on:
+  - query-sales
+  on_failure: abort

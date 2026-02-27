@@ -1,0 +1,15 @@
+id: track-flight
+description: Search for flight status information
+steps:
+- id: search-flight
+  ability: search.web
+  params:
+    query: '{{input.flight_number}} flight status'
+  on_failure: abort
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Summarize flight status for {{input.flight_number}}: {{search-flight.output}}'
+  depends_on:
+  - search-flight
+  on_failure: abort

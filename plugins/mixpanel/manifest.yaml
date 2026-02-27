@@ -1,0 +1,43 @@
+name: mixpanel
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Mixpanel analytics API integration for event tracking and funnel analysis"
+
+abilities:
+  mixpanel.get_funnel:
+    type: cloud
+    endpoint: "https://data.mixpanel.com/api/2.0/funnels"
+    method: GET
+    headers:
+      Authorization: "Basic {{MIXPANEL_AUTH}}"
+    params:
+      funnel_id: { type: string, required: true }
+      from_date: { type: string, required: true, description: "YYYY-MM-DD" }
+      to_date: { type: string, required: true, description: "YYYY-MM-DD" }
+    description: "Get funnel analysis data"
+    receipt_fields: [funnel_steps, conversion_rates]
+
+  mixpanel.get_retention:
+    type: cloud
+    endpoint: "https://data.mixpanel.com/api/2.0/retention"
+    method: GET
+    headers:
+      Authorization: "Basic {{MIXPANEL_AUTH}}"
+    params:
+      event: { type: string, required: true }
+      from_date: { type: string, required: true, description: "YYYY-MM-DD" }
+      to_date: { type: string, required: true, description: "YYYY-MM-DD" }
+    description: "Get user retention analysis"
+    receipt_fields: [retention_cohorts]
+
+  mixpanel.query_jql:
+    type: cloud
+    endpoint: "https://data.mixpanel.com/api/2.0/jql"
+    method: POST
+    headers:
+      Authorization: "Basic {{MIXPANEL_AUTH}}"
+    params:
+      script: { type: string, required: true, description: "JQL query script" }
+    description: "Run JQL query on event data"
+    receipt_fields: [query_result]

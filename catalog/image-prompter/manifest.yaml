@@ -1,0 +1,16 @@
+name: image-prompter
+version: 1.0.0
+description: Generate image prompts for AI art
+category: content-creation
+author: nyaya-official
+permissions:
+- llm.query
+intent_filters:
+- actions:
+  - generate
+  - create
+  targets:
+  - image
+  - prompt
+  - art
+  priority: 10

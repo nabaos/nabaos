@@ -1,0 +1,15 @@
+id: organize-taxes
+description: Find and organize tax documents from email
+steps:
+- id: search-tax-docs
+  ability: gmail.search
+  params:
+    query: W-2 OR 1099 OR tax OR deduction
+  on_failure: abort
+- id: organize
+  ability: llm.query
+  params:
+    prompt: 'Organize these tax-related documents by category: {{search-tax-docs.output}}'
+  depends_on:
+  - search-tax-docs
+  on_failure: abort

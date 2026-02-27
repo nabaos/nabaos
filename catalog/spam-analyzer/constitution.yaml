@@ -1,0 +1,28 @@
+name: spam-analyzer-constitution
+description: Constitution for spam-analyzer
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within spam-analyzer designated scope
+  trigger_actions:
+  - check
+  - analyze
+  trigger_targets:
+  - spam
+  - scam
+  - phishing
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside spam-analyzer scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: gmail.read, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - gmail.read
+  - llm.query

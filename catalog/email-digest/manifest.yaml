@@ -1,0 +1,13 @@
+name: email-digest
+version: 1.0.0
+description: Daily email digest summary
+category: email-communication
+author: nyaya-official
+permissions:
+- gmail.read
+- llm.query
+triggers:
+  scheduled:
+  - chain: daily-digest
+    interval: 24h
+    at: 08:00

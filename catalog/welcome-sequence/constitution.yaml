@@ -1,0 +1,27 @@
+name: welcome-sequence-constitution
+description: Constitution for welcome-sequence
+rules:
+- name: scope
+  enforcement: hard_block
+  description: Only operate within welcome-sequence designated scope
+  trigger_actions:
+  - execute
+  - query
+  trigger_targets:
+  - welcome-sequence
+- name: no-unauthorized-access
+  enforcement: hard_block
+  description: Never access data outside welcome-sequence scope
+  trigger_keywords:
+  - unauthorized
+  - private
+  - secret
+- name: permission-boundary
+  enforcement: hard_block
+  description: 'Only use granted permissions: gmail.read, gmail.send, llm.query'
+  trigger_actions:
+  - use_permission
+  trigger_targets:
+  - gmail.read
+  - gmail.send
+  - llm.query

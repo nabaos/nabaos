@@ -1,0 +1,24 @@
+id: manage-wishlist
+description: Add or check items in wishlist
+steps:
+- id: query-wishlist
+  ability: notion.query
+  params:
+    database: wishlist
+  on_failure: continue
+- id: process
+  ability: llm.query
+  params:
+    prompt: 'Process wishlist command ''{{input.command}}'' for item ''{{input.item}}''.
+      Current wishlist: {{query-wishlist.output}}'
+  depends_on:
+  - query-wishlist
+  on_failure: abort
+- id: update
+  ability: notion.create_page
+  params:
+    database: wishlist
+    content: '{{process.output}}'
+  depends_on:
+  - process
+  on_failure: abort

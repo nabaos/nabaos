@@ -1,0 +1,60 @@
+name: stability
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Stability AI API integration for text-to-image, image-to-image, upscaling, and background removal"
+
+abilities:
+  stability.text_to_image:
+    type: cloud
+    endpoint: "https://api.stability.ai/v2beta/stable-image/generate/sd3"
+    method: POST
+    headers:
+      Authorization: "Bearer {{STABILITY_API_KEY}}"
+      Content-Type: "application/json"
+    params:
+      prompt: { type: string, required: true }
+      negative_prompt: { type: string, required: false }
+      aspect_ratio: { type: string, default: "1:1" }
+      output_format: { type: string, default: "jpeg" }
+    description: "Generate images from text using Stability AI"
+    receipt_fields: [image_url, finish_reason]
+
+  stability.image_to_image:
+    type: cloud
+    endpoint: "https://api.stability.ai/v2beta/stable-image/generate/sd3"
+    method: POST
+    headers:
+      Authorization: "Bearer {{STABILITY_API_KEY}}"
+      Content-Type: "multipart/form-data"
+    params:
+      image: { type: path, required: true }
+      prompt: { type: string, required: true }
+      strength: { type: float, default: 0.5 }
+    description: "Transform images using Stability AI image-to-image"
+    receipt_fields: [image_url]
+
+  stability.upscale:
+    type: cloud
+    endpoint: "https://api.stability.ai/v2beta/stable-image/upscale/conservative"
+    method: POST
+    headers:
+      Authorization: "Bearer {{STABILITY_API_KEY}}"
+      Content-Type: "multipart/form-data"
+    params:
+      image: { type: path, required: true }
+      prompt: { type: string, required: false }
+    description: "Upscale images using Stability AI"
+    receipt_fields: [image_url]
+
+  stability.remove_background:
+    type: cloud
+    endpoint: "https://api.stability.ai/v2beta/stable-image/edit/remove-background"
+    method: POST
+    headers:
+      Authorization: "Bearer {{STABILITY_API_KEY}}"
+      Content-Type: "multipart/form-data"
+    params:
+      image: { type: path, required: true }
+    description: "Remove background from images"
+    receipt_fields: [image_url]

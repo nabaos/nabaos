@@ -1,0 +1,9 @@
+id: write-press-release
+description: Draft a professional press release
+steps:
+- id: draft
+  ability: llm.query
+  params:
+    prompt: 'Write a professional press release about: {{input.announcement}}. Company:
+      {{input.company}}. Include quotes, boilerplate, and contact info.'
+  on_failure: abort

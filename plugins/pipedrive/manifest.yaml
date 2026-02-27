@@ -1,0 +1,56 @@
+name: pipedrive
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Pipedrive CRM API integration for sales pipeline and deal management"
+
+abilities:
+  pipedrive.list_deals:
+    type: cloud
+    endpoint: "https://api.pipedrive.com/v1/deals"
+    method: GET
+    params:
+      api_token: { type: string, required: true, secret: true }
+      status: { type: string, required: false }
+      stage_id: { type: string, required: false }
+      sort: { type: string, required: false }
+    description: "List deals with optional filters"
+    receipt_fields: [deal_count]
+
+  pipedrive.create_deal:
+    type: cloud
+    endpoint: "https://api.pipedrive.com/v1/deals"
+    method: POST
+    params:
+      api_token: { type: string, required: true, secret: true }
+      title: { type: string, required: true }
+      value: { type: number, required: false }
+      person_id: { type: string, required: false }
+      org_id: { type: string, required: false }
+      stage_id: { type: string, required: false }
+    description: "Create a new deal"
+    receipt_fields: [deal_id]
+
+  pipedrive.update_stage:
+    type: cloud
+    endpoint: "https://api.pipedrive.com/v1/deals/{{deal_id}}"
+    method: PUT
+    params:
+      api_token: { type: string, required: true, secret: true }
+      deal_id: { type: string, required: true }
+      stage_id: { type: string, required: true }
+    description: "Move deal to a different stage"
+    receipt_fields: [update_success]
+
+  pipedrive.add_activity:
+    type: cloud
+    endpoint: "https://api.pipedrive.com/v1/activities"
+    method: POST
+    params:
+      api_token: { type: string, required: true, secret: true }
+      deal_id: { type: string, required: false }
+      type: { type: string, required: true, description: "call, email, meeting, etc" }
+      subject: { type: string, required: true }
+      due_date: { type: string, required: false, description: "YYYY-MM-DD" }
+    description: "Add activity to deal or person"
+    receipt_fields: [activity_id]

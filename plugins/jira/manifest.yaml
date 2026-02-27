@@ -1,0 +1,71 @@
+name: jira
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Jira API integration for issue tracking and project management"
+
+abilities:
+  jira.search_issues:
+    type: cloud
+    endpoint: "https://{{JIRA_BASE_URL}}/rest/api/3/search"
+    method: POST
+    headers:
+      Authorization: "Basic {{JIRA_AUTH}}"
+      Content-Type: "application/json"
+    params:
+      jql: { type: string, required: true }
+      maxResults: { type: int, required: false, default: 50 }
+    description: "Search for Jira issues using JQL"
+    receipt_fields: [issue_count]
+
+  jira.create_issue:
+    type: cloud
+    endpoint: "https://{{JIRA_BASE_URL}}/rest/api/3/issue"
+    method: POST
+    headers:
+      Authorization: "Basic {{JIRA_AUTH}}"
+      Content-Type: "application/json"
+    params:
+      project: { type: string, required: true }
+      issuetype: { type: string, required: true }
+      summary: { type: string, required: true }
+      description: { type: string, required: false }
+    description: "Create a new Jira issue"
+    receipt_fields: [issue_key]
+
+  jira.update_status:
+    type: cloud
+    endpoint: "https://{{JIRA_BASE_URL}}/rest/api/3/issue/{{issue_key}}/transitions"
+    method: POST
+    headers:
+      Authorization: "Basic {{JIRA_AUTH}}"
+      Content-Type: "application/json"
+    params:
+      issue_key: { type: string, required: true }
+      transition_id: { type: string, required: true }
+    description: "Update the status of a Jira issue via transition"
+    receipt_fields: [transition_status]
+
+  jira.add_comment:
+    type: cloud
+    endpoint: "https://{{JIRA_BASE_URL}}/rest/api/3/issue/{{issue_key}}/comment"
+    method: POST
+    headers:
+      Authorization: "Basic {{JIRA_AUTH}}"
+      Content-Type: "application/json"
+    params:
+      issue_key: { type: string, required: true }
+      body: { type: string, required: true }
+    description: "Add a comment to a Jira issue"
+    receipt_fields: [comment_id]
+
+  jira.get_sprint:
+    type: cloud
+    endpoint: "https://{{JIRA_BASE_URL}}/rest/agile/1.0/sprint/{{sprint_id}}"
+    method: GET
+    headers:
+      Authorization: "Basic {{JIRA_AUTH}}"
+    params:
+      sprint_id: { type: string, required: true }
+    description: "Get sprint details from Jira Agile"
+    receipt_fields: [sprint_name]

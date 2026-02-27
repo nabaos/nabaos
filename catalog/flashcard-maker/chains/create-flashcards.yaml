@@ -1,0 +1,9 @@
+id: create-flashcards
+description: Generate flashcards from provided content
+steps:
+- id: generate
+  ability: llm.query
+  params:
+    prompt: 'Create {{input.count}} flashcards (question/answer pairs) from this content:
+      {{input.content}}'
+  on_failure: abort

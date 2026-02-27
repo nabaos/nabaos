@@ -1,0 +1,16 @@
+id: review-product
+description: Search and aggregate product reviews
+steps:
+- id: search-reviews
+  ability: search.web
+  params:
+    query: '{{input.product}} review rating'
+  on_failure: abort
+- id: summarize
+  ability: llm.query
+  params:
+    prompt: 'Aggregate and summarize reviews for {{input.product}}: {{search-reviews.output}}.
+      Include pros, cons, and overall rating.'
+  depends_on:
+  - search-reviews
+  on_failure: abort

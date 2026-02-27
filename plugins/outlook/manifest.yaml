@@ -1,0 +1,65 @@
+name: outlook
+version: "1.0.0"
+author: nyaya-official
+trust_level: OFFICIAL
+description: "Microsoft 365 Outlook mail integration"
+
+abilities:
+  outlook.list_inbox:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/messages"
+    method: GET
+    headers:
+      Authorization: "Bearer {{OUTLOOK_ACCESS_TOKEN}}"
+    params:
+      filter: { type: string, required: false }
+      top: { type: int, default: 10 }
+      select: { type: string, default: "subject,from,receivedDateTime,isRead" }
+    description: "List Outlook inbox messages"
+    receipt_fields: [message_count]
+
+  outlook.read_message:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/messages/{{message_id}}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{OUTLOOK_ACCESS_TOKEN}}"
+    params:
+      message_id: { type: string, required: true }
+    description: "Read a specific Outlook message with body and attachments"
+    receipt_fields: [message_id]
+
+  outlook.send:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/sendMail"
+    method: POST
+    headers:
+      Authorization: "Bearer {{OUTLOOK_ACCESS_TOKEN}}"
+      Content-Type: "application/json"
+    params:
+      to: { type: string, required: true }
+      subject: { type: string, required: true }
+      body: { type: string, required: true }
+    description: "Send email via Outlook"
+    receipt_fields: [message_id]
+
+  outlook.search:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/messages"
+    method: GET
+    headers:
+      Authorization: "Bearer {{OUTLOOK_ACCESS_TOKEN}}"
+    params:
+      search: { type: string, required: true }
+      top: { type: int, default: 10 }
+    description: "Search Outlook messages"
+    receipt_fields: [result_count]
+
+  outlook.manage_rules:
+    type: cloud
+    endpoint: "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messageRules"
+    method: GET
+    headers:
+      Authorization: "Bearer {{OUTLOOK_ACCESS_TOKEN}}"
+    description: "List inbox rules and auto-reply settings"
+    receipt_fields: [rule_count]
