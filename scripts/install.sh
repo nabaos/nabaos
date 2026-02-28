@@ -378,6 +378,8 @@ ensure_path() {
         *)    rc_file="$HOME/.bashrc" ;;
     esac
 
+    local model_line="export NABA_MODEL_PATH=\"${DATA_DIR}/models/setfit-w5h2\""
+
     if [ "$current_shell" = "fish" ]; then
         # fish doesn't use export PATH=..., it has its own command
         fish -c "fish_add_path ${INSTALL_DIR}" 2>/dev/null || true
@@ -390,10 +392,18 @@ ensure_path() {
         else
             ok "PATH entry already in ${rc_file}"
         fi
+        # Add model path if models were downloaded
+        if [ -f "${DATA_DIR}/models/setfit-w5h2/model.onnx" ]; then
+            if ! grep -qF "NABA_MODEL_PATH" "$rc_file" 2>/dev/null; then
+                printf '%s\n' "$model_line" >> "$rc_file"
+                ok "Added NABA_MODEL_PATH to ${rc_file}"
+            fi
+        fi
     fi
 
     # Make it available for the rest of this script
     export PATH="${INSTALL_DIR}:$PATH"
+    export NABA_MODEL_PATH="${DATA_DIR}/models/setfit-w5h2"
     ok "${BINARY_NAME} is now available in this session"
 }
 
