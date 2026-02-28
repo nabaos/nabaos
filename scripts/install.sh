@@ -17,7 +17,7 @@ INSTALL_DIR="${NABA_INSTALL_DIR:-$HOME/.local/bin}"
 DATA_DIR="${NABA_DATA_DIR:-$HOME/.nabaos}"
 BINARY_NAME="nabaos"
 DOC_URL="https://nabaos.github.io/nabaos/"
-CONSTITUTION_URL="https://raw.githubusercontent.com/${REPO}/main/config/constitutions/general.toml"
+CONSTITUTION_URL="https://raw.githubusercontent.com/${REPO}/main/config/constitutions/default.yaml"
 
 # ─── Color helpers ──────────────────────────────────────────────────────────
 if [ -t 1 ] && command -v tput &>/dev/null && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
@@ -236,7 +236,7 @@ create_directories() {
 
 # ─── Download default constitution if not present ───────────────────────────
 ensure_default_constitution() {
-    local dest="${DATA_DIR}/config/constitutions/general.toml"
+    local dest="${DATA_DIR}/config/constitutions/default.yaml"
     if [ -f "$dest" ]; then
         ok "Default constitution already exists — skipping download"
         return
@@ -249,38 +249,42 @@ ensure_default_constitution() {
     fi
 }
 
-# ─── PATH check with shell-specific advice ──────────────────────────────────
-check_path() {
+# ─── Ensure INSTALL_DIR is in PATH (auto-configure) ─────────────────────────
+ensure_path() {
     if [[ ":${PATH}:" == *":${INSTALL_DIR}:"* ]]; then
         ok "${INSTALL_DIR} is already in your PATH"
         return
     fi
 
-    warn "${INSTALL_DIR} is not in your PATH"
-    printf "\n"
-    printf "  Add it by running:\n"
-    printf "\n"
-    printf "    export PATH=\"%s:\$PATH\"\n" "$INSTALL_DIR"
-    printf "\n"
-    printf "  To make it permanent, add that line to your shell config:\n"
-    printf "\n"
+    info "Adding ${INSTALL_DIR} to your PATH..."
 
-    local current_shell
+    local current_shell rc_file export_line
     current_shell="$(basename "${SHELL:-/bin/bash}")"
+    export_line="export PATH=\"${INSTALL_DIR}:\$PATH\""
+
     case "$current_shell" in
-        zsh)
-            printf "    echo 'export PATH=\"%s:\$PATH\"' >> ~/.zshrc\n" "$INSTALL_DIR"
-            printf "    source ~/.zshrc\n"
-            ;;
-        fish)
-            printf "    fish_add_path %s\n" "$INSTALL_DIR"
-            ;;
-        *)
-            printf "    echo 'export PATH=\"%s:\$PATH\"' >> ~/.bashrc\n" "$INSTALL_DIR"
-            printf "    source ~/.bashrc\n"
-            ;;
+        zsh)  rc_file="$HOME/.zshrc" ;;
+        fish) rc_file="" ;;  # fish uses a different mechanism
+        *)    rc_file="$HOME/.bashrc" ;;
     esac
-    printf "\n"
+
+    if [ "$current_shell" = "fish" ]; then
+        # fish doesn't use export PATH=..., it has its own command
+        fish -c "fish_add_path ${INSTALL_DIR}" 2>/dev/null || true
+        ok "Added ${INSTALL_DIR} to fish PATH"
+    elif [ -n "$rc_file" ]; then
+        # Only add if not already present in the rc file
+        if ! grep -qF "$INSTALL_DIR" "$rc_file" 2>/dev/null; then
+            printf '\n# Added by NabaOS installer\n%s\n' "$export_line" >> "$rc_file"
+            ok "Added PATH entry to ${rc_file}"
+        else
+            ok "PATH entry already in ${rc_file}"
+        fi
+    fi
+
+    # Make it available for the rest of this script
+    export PATH="${INSTALL_DIR}:$PATH"
+    ok "${BINARY_NAME} is now available in this session"
 }
 
 # ─── Success banner with next steps ─────────────────────────────────────────
@@ -292,18 +296,24 @@ success_banner() {
     printf "  ╚══════════════════════════════════════════════╝\n"
     printf "%s" "${RESET}"
     printf "\n"
-    printf "  %sNext steps:%s\n" "${BOLD}" "${RESET}"
+
+    # Remind user to reload their shell if PATH was just added
+    local current_shell
+    current_shell="$(basename "${SHELL:-/bin/bash}")"
+    if ! command -v "$BINARY_NAME" &>/dev/null 2>&1; then
+        case "$current_shell" in
+            zsh)  printf "  %sReload your shell:%s  source ~/.zshrc\n\n" "${YELLOW}" "${RESET}" ;;
+            fish) printf "  %sReload your shell:%s  exec fish\n\n" "${YELLOW}" "${RESET}" ;;
+            *)    printf "  %sReload your shell:%s  source ~/.bashrc  (or open a new terminal)\n\n" "${YELLOW}" "${RESET}" ;;
+        esac
+    fi
+
+    printf "  %sGet started:%s\n" "${BOLD}" "${RESET}"
     printf "\n"
-    printf "    %s1.%s  Run the setup wizard:\n" "${CYAN}" "${RESET}"
+    printf "    %s1.%s  Run the setup wizard (configures your LLM key + constitution):\n" "${CYAN}" "${RESET}"
     printf "        %s setup\n" "$BINARY_NAME"
     printf "\n"
-    printf "    %s2.%s  Set your LLM API key:\n" "${CYAN}" "${RESET}"
-    printf "        export NABA_LLM_API_KEY=\"your-key-here\"\n"
-    printf "\n"
-    printf "    %s3.%s  Browse the agent catalog:\n" "${CYAN}" "${RESET}"
-    printf "        %s catalog list\n" "$BINARY_NAME"
-    printf "\n"
-    printf "    %s4.%s  Start the daemon:\n" "${CYAN}" "${RESET}"
+    printf "    %s2.%s  Start the daemon:\n" "${CYAN}" "${RESET}"
     printf "        %s daemon\n" "$BINARY_NAME"
     printf "\n"
     printf "  %sDocs:%s  %s\n" "${BOLD}" "${RESET}" "$DOC_URL"
@@ -337,7 +347,7 @@ main() {
     ensure_default_constitution
 
     printf "\n"
-    check_path
+    ensure_path
 
     # Check if binary was built without BERT and print guidance
     if command -v "$BINARY_NAME" &>/dev/null || [ -x "${INSTALL_DIR}/${BINARY_NAME}" ]; then
