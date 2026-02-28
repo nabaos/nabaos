@@ -298,12 +298,8 @@ download_models() {
 
 # ─── Install ONNX Runtime (for local AI classification) ──────────────────────
 install_onnx_runtime() {
-    # Skip if already installed
-    if ldconfig -p 2>/dev/null | grep -q libonnxruntime; then
-        ok "ONNX Runtime already installed"
-        return
-    fi
-    if [ -f "/usr/local/lib/libonnxruntime.so" ]; then
+    # Skip if already installed (check actual file, not just ldconfig cache)
+    if [ -f "/usr/local/lib/libonnxruntime.so" ] || [ -f "${DATA_DIR}/lib/libonnxruntime.so" ]; then
         ok "ONNX Runtime already installed"
         return
     fi
