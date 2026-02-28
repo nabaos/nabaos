@@ -60,7 +60,7 @@ detect_platform() {
 
     case "$raw_os" in
         Linux)  OS="linux"  ;;
-        Darwin) OS="macos"  ;;
+        Darwin) OS="darwin" ;;
         *)
             fail "Unsupported operating system: $raw_os"
             exit 1
@@ -68,8 +68,8 @@ detect_platform() {
     esac
 
     case "$raw_arch" in
-        x86_64|amd64)   ARCH="x86_64"  ;;
-        aarch64|arm64)  ARCH="aarch64" ;;
+        x86_64|amd64)   ARCH="amd64"  ;;
+        aarch64|arm64)  ARCH="arm64"  ;;
         *)
             fail "Unsupported architecture: $raw_arch"
             exit 1
