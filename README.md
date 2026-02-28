@@ -37,7 +37,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/nabaos/nabaos/main/scripts/i
 nabaos setup --interactive    # pick constitution, add API keys, choose channels
 
 # Run
-nabaos daemon                 # start the agent
+nabaos start                  # start the agent runtime
 ```
 
 <details>
@@ -60,7 +60,7 @@ docker run -d --name nabaos \
 git clone https://github.com/nabaos/nabaos.git && cd nabaos
 cargo build --release
 ./target/release/nabaos setup --interactive
-./target/release/nabaos daemon
+./target/release/nabaos start
 ```
 
 </details>
@@ -689,10 +689,9 @@ The ROS 2 export automatically maps hardware abilities to DDS topics (reads → 
 
 ```bash
 nabaos setup --interactive    # First-time setup wizard
-nabaos daemon                 # Start the agent daemon
+nabaos start                  # Start the agent runtime
 nabaos ask "your question"    # One-shot query
-nabaos status                 # Agent status + cache stats
-nabaos costs                  # Spending summary by provider
+nabaos status                 # Agent status, costs + cache stats
 
 # Autonomous objectives
 nabaos pea start "goal" --budget 10.0
@@ -703,24 +702,24 @@ nabaos pea status <id>        # Progress + spend
 nabaos research "topic"       # Parallel multi-source research
 
 # Cache management
-nabaos retrain                # Retrain local classifiers
+nabaos admin retrain          # Retrain local classifiers
 nabaos export list            # List cached behaviors
 nabaos export generate <id>   # Export to Cloud Run / RPi / ESP32 / ROS 2
 
 # API discovery
-nabaos resource discover stripe     # Search 2,800+ APIs
-nabaos resource auto-add stripe     # Auto-register from OpenAPI spec
+nabaos config resource discover stripe     # Search 2,800+ APIs
+nabaos config resource auto-add stripe     # Auto-register from OpenAPI spec
 
 # Security & monitoring
-nabaos security-scan "text"   # Check for threats
+nabaos admin scan "text"      # Check for threats
 nabaos check                  # Validate config
 nabaos check --health         # HTTP health check
 nabaos watcher status         # Anomaly scores
 nabaos watcher resume <comp>  # Resume paused component
 
 # Plugins
-nabaos plugin install <url>   # Install from manifest
-nabaos plugin list            # Installed plugins
+nabaos admin plugin install <url>   # Install from manifest
+nabaos admin plugin list            # Installed plugins
 ```
 
 ---

@@ -18,4 +18,4 @@ ENV NABA_MODEL_PATH=/models
 VOLUME ["/data", "/models"]
 USER nyaya
 ENTRYPOINT ["nabaos"]
-CMD ["daemon"]
+CMD ["start"]
