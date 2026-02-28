@@ -19,7 +19,9 @@ use super::captcha_solver::CaptchaSolver;
 use super::dom_heuristics::{
     dom_heuristic_action, ActionDecision, DomElement, NavAction, ScrollDirection, TaskContext,
 };
+#[cfg(feature = "bert")]
 use super::element_detector::{DetectedElement, ElementDetector};
+#[cfg(feature = "bert")]
 use super::web_bert::{WebBertClassifier, WebBertElement, WebBertPrediction};
 
 // ---------------------------------------------------------------------------
@@ -58,18 +60,22 @@ pub struct CascadeTrainingEntry {
 /// confident decision. Records training data when L3 (LLM) is reached so
 /// that earlier layers can be improved over time.
 pub struct NavCascade {
+    #[cfg(feature = "bert")]
     element_detector: Option<ElementDetector>,
+    #[cfg(feature = "bert")]
     web_bert: Option<WebBertClassifier>,
     llm_provider: Option<Arc<LlmProvider>>,
     captcha_solver: CaptchaSolver,
     stats: CascadeStats,
     training_log: Vec<CascadeTrainingEntry>,
     l0_threshold: f32,
+    #[cfg(feature = "bert")]
     l2_threshold: f32,
 }
 
 impl NavCascade {
     /// Create a new cascade with optional detector and classifier.
+    #[cfg(feature = "bert")]
     pub fn new(
         element_detector: Option<ElementDetector>,
         web_bert: Option<WebBertClassifier>,
@@ -83,6 +89,18 @@ impl NavCascade {
             training_log: Vec::new(),
             l0_threshold: 0.90,
             l2_threshold: 0.85,
+        }
+    }
+
+    /// Create a new cascade without BERT/YOLO support.
+    #[cfg(not(feature = "bert"))]
+    pub fn new() -> Self {
+        Self {
+            llm_provider: None,
+            captcha_solver: CaptchaSolver::default(),
+            stats: CascadeStats::default(),
+            training_log: Vec::new(),
+            l0_threshold: 0.90,
         }
     }
 
@@ -128,8 +146,12 @@ impl NavCascade {
         }
 
         // ----- Layer 1: YOLO element detection -----
+        #[cfg(not(feature = "bert"))]
+        let _ = screenshot_bytes;
+        #[cfg(feature = "bert")]
         let mut detected_elements: Vec<DetectedElement> = Vec::new();
 
+        #[cfg(feature = "bert")]
         if let (Some(detector), Some(screenshot)) =
             (self.element_detector.as_mut(), screenshot_bytes)
         {
@@ -138,6 +160,7 @@ impl NavCascade {
         }
 
         // ----- Layer 2: WebBERT classification -----
+        #[cfg(feature = "bert")]
         if let Some(classifier) = self.web_bert.as_mut() {
             if !detected_elements.is_empty() {
                 let wb_elements = detected_to_webbert(&detected_elements);
@@ -228,6 +251,7 @@ impl NavCascade {
 // ---------------------------------------------------------------------------
 
 /// Convert `DetectedElement`s (from YOLO) to `WebBertElement`s (for WebBERT).
+#[cfg(feature = "bert")]
 pub fn detected_to_webbert(elements: &[DetectedElement]) -> Vec<WebBertElement> {
     elements
         .iter()
@@ -246,6 +270,7 @@ pub fn detected_to_webbert(elements: &[DetectedElement]) -> Vec<WebBertElement> 
 
 /// Map a `WebBertPrediction` back to a `NavAction`, using detected elements
 /// for target selectors when applicable.
+#[cfg(feature = "bert")]
 pub fn webbert_prediction_to_action(
     prediction: &WebBertPrediction,
     elements: &[DetectedElement],
@@ -325,7 +350,15 @@ pub fn parse_llm_nav_response(text: &str) -> Option<NavAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "bert")]
     use crate::browser::element_detector::{BoundingBox, ElementType};
+
+    fn make_test_cascade() -> NavCascade {
+        #[cfg(feature = "bert")]
+        { NavCascade::new(None, None) }
+        #[cfg(not(feature = "bert"))]
+        { NavCascade::new() }
+    }
 
     fn make_dom_element(tag: &str) -> DomElement {
         DomElement {
@@ -354,7 +387,7 @@ mod tests {
     #[test]
     fn test_cascade_dom_only() {
         // Cookie banner button should be caught at L0
-        let mut cascade = NavCascade::new(None, None);
+        let mut cascade = make_test_cascade();
 
         let mut btn = make_dom_element("button");
         btn.text = "Accept All".into();
@@ -374,7 +407,7 @@ mod tests {
 
     #[test]
     fn test_cascade_stats_tracking() {
-        let mut cascade = NavCascade::new(None, None);
+        let mut cascade = make_test_cascade();
 
         let mut btn = make_dom_element("button");
         btn.text = "Accept All".into();
@@ -392,7 +425,7 @@ mod tests {
     #[test]
     fn test_cascade_all_exhausted() {
         // Plain div with no matching patterns — should fall through to L3 fallback
-        let mut cascade = NavCascade::new(None, None);
+        let mut cascade = make_test_cascade();
         let div = make_dom_element("div");
         let task = make_task("do something unusual");
 
@@ -410,7 +443,7 @@ mod tests {
     #[test]
     fn test_cascade_with_llm_none_still_works() {
         // No LLM provider → same Skip behavior
-        let mut cascade = NavCascade::new(None, None);
+        let mut cascade = make_test_cascade();
         assert!(cascade.llm_provider.is_none());
 
         let div = make_dom_element("div");
@@ -422,7 +455,7 @@ mod tests {
     #[test]
     fn test_cascade_builder_pattern() {
         use crate::browser::captcha_solver::CaptchaSolver;
-        let cascade = NavCascade::new(None, None).with_captcha_solver(CaptchaSolver::default());
+        let cascade = make_test_cascade().with_captcha_solver(CaptchaSolver::default());
         assert!(!cascade.captcha_solver().is_enabled());
     }
 
@@ -454,6 +487,7 @@ mod tests {
         assert!(parse_llm_nav_response(r#"{"action": "unknown_action"}"#).is_none());
     }
 
+    #[cfg(feature = "bert")]
     #[test]
     fn test_detected_to_webbert_conversion() {
         let detected = vec![DetectedElement {
@@ -477,6 +511,7 @@ mod tests {
         assert_eq!(wb[0].label.as_deref(), Some("Submit"));
     }
 
+    #[cfg(feature = "bert")]
     #[test]
     fn test_webbert_prediction_to_click() {
         let elements = vec![DetectedElement {
@@ -509,7 +544,7 @@ mod tests {
 
     #[test]
     fn test_training_data_recorded() {
-        let mut cascade = NavCascade::new(None, None);
+        let mut cascade = make_test_cascade();
         let div = make_dom_element("div");
         let task = make_task("do something unusual");
 

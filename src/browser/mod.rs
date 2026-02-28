@@ -9,8 +9,10 @@ pub mod captcha_solver;
 pub mod cascade;
 pub mod chrome_pool;
 pub mod dom_heuristics;
+#[cfg(feature = "bert")]
 pub mod element_detector;
 pub mod extension_bridge;
 pub mod session_store;
 pub mod stealth;
+#[cfg(feature = "bert")]
 pub mod web_bert;

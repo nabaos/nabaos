@@ -25,11 +25,25 @@ jobs:
             arch: amd64
             platform: linux
             use_cross: false
+            features: "--features bert"
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            arch: arm64
+            platform: linux
+            use_cross: true
+            features: "--no-default-features"
+          - target: x86_64-apple-darwin
+            os: macos-13
+            arch: amd64
+            platform: darwin
+            use_cross: false
+            features: "--no-default-features"
           - target: aarch64-apple-darwin
             os: macos-latest
             arch: arm64
             platform: darwin
             use_cross: false
+            features: "--features bert"
 
     steps:
       - uses: actions/checkout@v4
@@ -42,8 +56,23 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build (native)
+        if: "!matrix.use_cross"
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          BUILD_FEATURES: ${{ matrix.features }}
+        run: cargo build --release --target "$BUILD_TARGET" $BUILD_FEATURES
+
+      - name: Build (cross)
+        if: matrix.use_cross
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          BUILD_FEATURES: ${{ matrix.features }}
+        run: cross build --release --target "$BUILD_TARGET" $BUILD_FEATURES
 
       - name: Package
         shell: bash

@@ -338,6 +338,19 @@ main() {
 
     printf "\n"
     check_path
+
+    # Check if binary was built without BERT and print guidance
+    if command -v "$BINARY_NAME" &>/dev/null || [ -x "${INSTALL_DIR}/${BINARY_NAME}" ]; then
+        local bin_path
+        bin_path="$(command -v "$BINARY_NAME" 2>/dev/null || echo "${INSTALL_DIR}/${BINARY_NAME}")"
+        if "$bin_path" admin classify "test" 2>&1 | grep -qi "without BERT"; then
+            printf "\n"
+            info "This binary was built without local AI classification (Tiers 1-2)."
+            info "To enable it, install ONNX Runtime:"
+            info "  https://onnxruntime.ai/docs/install/"
+        fi
+    fi
+
     success_banner
 }
 

@@ -4,13 +4,16 @@ use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use nabaos::core::config::{resolve_model_path, NyayaConfig};
+#[cfg(feature = "bert")]
+use nabaos::core::config::resolve_model_path;
+use nabaos::core::config::NyayaConfig;
 use nabaos::core::error::{NyayaError, Result};
 use nabaos::core::orchestrator::Orchestrator;
 use nabaos::export::ExportTarget;
 use nabaos::runtime::manifest::AgentManifest;
 use nabaos::runtime::sandbox::WasmSandbox;
 use nabaos::security::constitution::{self, ConstitutionEnforcer};
+#[cfg(feature = "bert")]
 use nabaos::w5h2::classifier::W5H2Classifier;
 use nabaos::w5h2::fingerprint::FingerprintCache;
 
@@ -1596,6 +1599,7 @@ fn cmd_status(
     cmd_costs(config)
 }
 
+#[cfg(feature = "bert")]
 fn cmd_classify(model_dir: &Path, query: &str) -> Result<()> {
     let model_path = resolve_model_path(model_dir)?;
     let mut classifier = W5H2Classifier::load(&model_path)?;
@@ -1611,6 +1615,12 @@ fn cmd_classify(model_dir: &Path, query: &str) -> Result<()> {
     println!("Confidence: {:.1}%", intent.confidence * 100.0);
     println!("Latency:    {:.1}ms", elapsed.as_secs_f64() * 1000.0);
 
+    Ok(())
+}
+
+#[cfg(not(feature = "bert"))]
+fn cmd_classify(_model_dir: &Path, _query: &str) -> Result<()> {
+    eprintln!("Built without BERT support. Rebuild with `--features bert` to enable classification.");
     Ok(())
 }
 
@@ -1702,25 +1712,33 @@ fn cmd_constitution(action: ConstitutionCommands, config: &NyayaConfig) -> Resul
 
     match action {
         ConstitutionCommands::Check { query } => {
-            // First classify the query to get intent
-            let model_path = resolve_model_path(&config.model_path)?;
-            let mut classifier = W5H2Classifier::load(&model_path)?;
-            let intent = classifier.classify(&query)?;
+            #[cfg(feature = "bert")]
+            {
+                // First classify the query to get intent
+                let model_path = resolve_model_path(&config.model_path)?;
+                let mut classifier = W5H2Classifier::load(&model_path)?;
+                let intent = classifier.classify(&query)?;
 
-            let check = enforcer.check(&intent, Some(&query));
+                let check = enforcer.check(&intent, Some(&query));
 
-            println!("Query:       {}", query);
-            println!("Intent:      {}", intent.key());
-            println!("Enforcement: {:?}", check.enforcement);
-            println!(
-                "Allowed:     {}",
-                if check.allowed { "YES" } else { "BLOCKED" }
-            );
-            if let Some(rule) = &check.matched_rule {
-                println!("Matched:     {}", rule);
+                println!("Query:       {}", query);
+                println!("Intent:      {}", intent.key());
+                println!("Enforcement: {:?}", check.enforcement);
+                println!(
+                    "Allowed:     {}",
+                    if check.allowed { "YES" } else { "BLOCKED" }
+                );
+                if let Some(rule) = &check.matched_rule {
+                    println!("Matched:     {}", rule);
+                }
+                if let Some(reason) = &check.reason {
+                    println!("Reason:      {}", reason);
+                }
             }
-            if let Some(reason) = &check.reason {
-                println!("Reason:      {}", reason);
+            #[cfg(not(feature = "bert"))]
+            {
+                let _ = (&enforcer, &query);
+                eprintln!("Built without BERT support. Rebuild with `--features bert` to enable constitution check.");
             }
             Ok(())
         }
@@ -1819,59 +1837,69 @@ fn cmd_query(model_dir: &Path, data_dir: &Path, config: &NyayaConfig, query: &st
     }
 
     // Tier 2: SetFit ONNX classification
-    let model_path = resolve_model_path(model_dir)?;
-    let mut classifier = W5H2Classifier::load(&model_path)?;
-    let intent = classifier.classify(query)?;
-    let elapsed_classify = start.elapsed();
+    #[cfg(feature = "bert")]
+    {
+        let model_path = resolve_model_path(model_dir)?;
+        let mut classifier = W5H2Classifier::load(&model_path)?;
+        let intent = classifier.classify(query)?;
+        let elapsed_classify = start.elapsed();
 
-    println!("=== Tier 2: SetFit ONNX Classification ===");
-    println!("Intent:     {}", intent.key());
-    println!("Confidence: {:.1}%", intent.confidence * 100.0);
-    println!(
-        "Latency:    {:.1}ms",
-        elapsed_classify.as_secs_f64() * 1000.0
-    );
-
-    // Store in fingerprint cache for next time
-    let intent_key = intent.key();
-    fp_cache.store(query, &intent_key, intent.confidence)?;
-    println!("(Stored in fingerprint cache for future instant lookup)");
-
-    // Constitution check
-    let enforcer = if let Some(ref path) = config.constitution_path {
-        ConstitutionEnforcer::load(path)?
-    } else {
-        ConstitutionEnforcer::from_constitution(constitution::default_constitution())
-    };
-
-    let check = enforcer.check(&intent, Some(query));
-    println!();
-    println!("=== Constitution Check ===");
-    println!("Enforcement: {:?}", check.enforcement);
-    println!(
-        "Allowed:     {}",
-        if check.allowed { "YES" } else { "BLOCKED" }
-    );
-    if let Some(rule) = &check.matched_rule {
-        println!("Matched:     {}", rule);
-    }
-
-    // Intent cache lookup
-    let intent_cache = nabaos::cache::intent_cache::IntentCache::open(&db_path)?;
-    if let Some(entry) = intent_cache.lookup(&intent_key)? {
-        println!();
-        println!("=== Intent Cache HIT ===");
-        println!("Description: {}", entry.description);
-        println!("Tool steps:  {}", entry.tool_sequence.len());
-        println!("Hit count:   {}", entry.hit_count);
-        println!("Success rate: {:.0}%", entry.success_rate() * 100.0);
-    } else {
-        println!();
-        println!("=== Intent Cache MISS ===");
+        println!("=== Tier 2: SetFit ONNX Classification ===");
+        println!("Intent:     {}", intent.key());
+        println!("Confidence: {:.1}%", intent.confidence * 100.0);
         println!(
-            "No cached execution plan for '{}'. Would route to LLM.",
-            intent_key
+            "Latency:    {:.1}ms",
+            elapsed_classify.as_secs_f64() * 1000.0
         );
+
+        // Store in fingerprint cache for next time
+        let intent_key = intent.key();
+        fp_cache.store(query, &intent_key, intent.confidence)?;
+        println!("(Stored in fingerprint cache for future instant lookup)");
+
+        // Constitution check
+        let enforcer = if let Some(ref path) = config.constitution_path {
+            ConstitutionEnforcer::load(path)?
+        } else {
+            ConstitutionEnforcer::from_constitution(constitution::default_constitution())
+        };
+
+        let check = enforcer.check(&intent, Some(query));
+        println!();
+        println!("=== Constitution Check ===");
+        println!("Enforcement: {:?}", check.enforcement);
+        println!(
+            "Allowed:     {}",
+            if check.allowed { "YES" } else { "BLOCKED" }
+        );
+        if let Some(rule) = &check.matched_rule {
+            println!("Matched:     {}", rule);
+        }
+
+        // Intent cache lookup
+        let intent_cache = nabaos::cache::intent_cache::IntentCache::open(&db_path)?;
+        if let Some(entry) = intent_cache.lookup(&intent_key)? {
+            println!();
+            println!("=== Intent Cache HIT ===");
+            println!("Description: {}", entry.description);
+            println!("Tool steps:  {}", entry.tool_sequence.len());
+            println!("Hit count:   {}", entry.hit_count);
+            println!("Success rate: {:.0}%", entry.success_rate() * 100.0);
+        } else {
+            println!();
+            println!("=== Intent Cache MISS ===");
+            println!(
+                "No cached execution plan for '{}'. Would route to LLM.",
+                intent_key
+            );
+        }
+    }
+    #[cfg(not(feature = "bert"))]
+    {
+        let _ = (model_dir, config);
+        println!("=== Tier 2: BERT/SetFit Classification ===");
+        println!("Skipped (built without `bert` feature).");
+        println!("Rebuild with `--features bert` to enable local AI classification.");
     }
 
     Ok(())

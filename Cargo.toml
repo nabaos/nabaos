@@ -7,7 +7,8 @@ license = "MIT"
 rust-version = "1.80"
 
 [features]
-default = []
+default = ["bert"]
+bert = ["dep:ort", "dep:tokenizers"]
 tui = ["dep:ratatui", "dep:crossterm"]
 watcher = []
 
@@ -50,11 +51,11 @@ serenity = { version = "0.12", default-features = false, features = ["client", "
 rusqlite = { version = "0.31", features = ["bundled"] }
 postgres = "0.19"
 
-# ONNX Runtime for local ML models
-ort = "2.0.0-rc.11"
+# ONNX Runtime for local ML models (optional, behind `bert` feature)
+ort = { version = "2.0.0-rc.11", features = ["load-dynamic"], optional = true }
 
-# Tokenizer (HuggingFace tokenizers)
-tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+# Tokenizer (HuggingFace tokenizers, optional, behind `bert` feature)
+tokenizers = { version = "0.20", default-features = false, features = ["onig"], optional = true }
 
 
 # Docker API client

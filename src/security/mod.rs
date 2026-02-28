@@ -1,4 +1,5 @@
 pub mod anomaly_detector;
+#[cfg(feature = "bert")]
 pub mod bert_classifier;
 pub mod channel_permissions;
 pub mod constitution;

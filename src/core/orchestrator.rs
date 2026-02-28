@@ -10,7 +10,9 @@ use crate::chain::executor::ChainExecutor;
 use crate::chain::scheduler::Scheduler;
 use crate::chain::store::ChainStore;
 use crate::chain::trust::TrustManager;
-use crate::core::config::{resolve_model_path, NyayaConfig};
+#[cfg(feature = "bert")]
+use crate::core::config::resolve_model_path;
+use crate::core::config::NyayaConfig;
 use crate::core::error::{NyayaError, Result};
 use crate::llm_router::cost_tracker::CostTracker;
 use crate::llm_router::function_library::{
@@ -24,10 +26,12 @@ use crate::runtime::host_functions::AbilityRegistry;
 use crate::runtime::manifest::AgentManifest;
 use crate::runtime::receipt::{ReceiptSigner, ReceiptStore};
 use crate::security::anomaly_detector::{self, BehaviorProfile, SecurityEvent};
+#[cfg(feature = "bert")]
 use crate::security::bert_classifier::{self, BertClassifier};
 use crate::security::constitution::{self, ConstitutionEnforcer};
 use crate::security::credential_scanner;
 use crate::security::pattern_matcher;
+#[cfg(feature = "bert")]
 use crate::w5h2::classifier::W5H2Classifier;
 use crate::w5h2::fingerprint::FingerprintCache;
 use crate::w5h2::types::IntentKey;
@@ -225,6 +229,7 @@ pub struct Orchestrator {
     receipt_store: ReceiptStore,
     chain_store: ChainStore,
     /// Optional BERT Tier 1 classifier — loaded if model files exist
+    #[cfg(feature = "bert")]
     bert_classifier: Option<BertClassifier>,
     /// Interval-based chain scheduler
     scheduler: Scheduler,
@@ -243,6 +248,7 @@ pub struct Orchestrator {
     /// Behavioral anomaly detection profile
     behavior_profile: BehaviorProfile,
     /// Cached SetFit W5H2 classifier (loaded once, graceful fallback to None)
+    #[cfg(feature = "bert")]
     setfit_classifier: Option<W5H2Classifier>,
     /// Semantic work cache (optional — lookup requires embeddings)
     semantic_cache: Option<SemanticCache>,
@@ -285,10 +291,13 @@ impl Orchestrator {
         let cost_tracker = CostTracker::open(&config.data_dir.join("costs.db"))?;
 
         // Try to load BERT Tier 1 classifier (graceful degradation if missing)
-        let model_path = resolve_model_path(&config.model_path).ok();
-        let bert_classifier = model_path
-            .as_deref()
-            .and_then(bert_classifier::try_load_bert);
+        #[cfg(feature = "bert")]
+        let bert_classifier = {
+            let model_path = resolve_model_path(&config.model_path).ok();
+            model_path
+                .as_deref()
+                .and_then(bert_classifier::try_load_bert)
+        };
 
         // Initialize function registry with core function definitions
         let function_registry = FunctionRegistry::open(&config.data_dir.join("functions.db"))?;
@@ -319,6 +328,7 @@ impl Orchestrator {
         let behavior_profile = BehaviorProfile::new("nyaya-orchestrator");
 
         // Fix 14: Cache SetFit classifier (graceful degradation)
+        #[cfg(feature = "bert")]
         let setfit_classifier = resolve_model_path(&config.model_path)
             .ok()
             .and_then(|p| W5H2Classifier::load(&p).ok());
@@ -408,6 +418,7 @@ impl Orchestrator {
             ability_registry,
             receipt_store,
             chain_store,
+            #[cfg(feature = "bert")]
             bert_classifier,
             scheduler,
             cost_tracker,
@@ -417,6 +428,7 @@ impl Orchestrator {
             breaker_registry,
             trust_manager,
             behavior_profile,
+            #[cfg(feature = "bert")]
             setfit_classifier,
             semantic_cache,
             provider_registry,
@@ -883,6 +895,7 @@ impl Orchestrator {
         // Per Paper 1: 97.3% accuracy, cascade at <0.85 confidence
         // ═══════════════════════════════════════════
 
+        #[cfg(feature = "bert")]
         if let Some(ref mut bert) = self.bert_classifier {
             match bert.classify(safe_query) {
                 Ok(bert_result) if bert_result.confident => {
@@ -1087,15 +1100,26 @@ impl Orchestrator {
         // Fix 14: Use cached SetFit classifier instead of loading per-query
         // ═══════════════════════════════════════════
 
-        let intent = if let Some(ref mut cached) = self.setfit_classifier {
-            cached.classify(safe_query)?
-        } else {
-            let model_path = resolve_model_path(&self.config.model_path)?;
-            let mut classifier = W5H2Classifier::load(&model_path)?;
-            classifier.classify(safe_query)?
+        #[cfg(feature = "bert")]
+        let (intent, intent_key_obj, intent_key);
+        #[cfg(feature = "bert")]
+        {
+            intent = if let Some(ref mut cached) = self.setfit_classifier {
+                cached.classify(safe_query)?
+            } else {
+                let model_path = resolve_model_path(&self.config.model_path)?;
+                let mut classifier = W5H2Classifier::load(&model_path)?;
+                classifier.classify(safe_query)?
+            };
+            intent_key_obj = intent.key();
+            intent_key = intent_key_obj.to_string();
+        }
+        #[cfg(not(feature = "bert"))]
+        let (intent_key_obj, intent_key) = {
+            let key = IntentKey("unknown_unknown".to_string());
+            let key_str = key.to_string();
+            (key, key_str)
         };
-        let intent_key_obj = intent.key();
-        let intent_key = intent_key_obj.to_string();
 
         // ═══════════════════════════════════════════
         // CONSTITUTION CHECK — full intent-based domain enforcement
@@ -1103,36 +1127,42 @@ impl Orchestrator {
         // Runs BEFORE fingerprint cache storage to prevent caching blocked queries
         // ═══════════════════════════════════════════
 
-        // Fix 1: Use cached constitution_enforcer
-        let check = self.constitution_enforcer.check(&intent, Some(safe_query));
+        #[cfg(feature = "bert")]
+        {
+            // Fix 1: Use cached constitution_enforcer
+            let check = self.constitution_enforcer.check(&intent, Some(safe_query));
 
-        if !check.allowed {
-            return Ok(QueryResult {
-                tier: Tier::Blocked,
-                intent_key: intent_key.clone(),
-                confidence: intent.confidence as f64,
-                allowed: false,
-                latency_ms: start.elapsed().as_secs_f64() * 1000.0,
-                description: format!(
-                    "Blocked by constitution: {}",
-                    check.reason.unwrap_or_default()
-                ),
-                response_text: None,
-                nyaya_mode: None,
-                receipts_generated: 0,
-                training_signal: None,
-                security,
-            });
+            if !check.allowed {
+                return Ok(QueryResult {
+                    tier: Tier::Blocked,
+                    intent_key: intent_key.clone(),
+                    confidence: intent.confidence as f64,
+                    allowed: false,
+                    latency_ms: start.elapsed().as_secs_f64() * 1000.0,
+                    description: format!(
+                        "Blocked by constitution: {}",
+                        check.reason.unwrap_or_default()
+                    ),
+                    response_text: None,
+                    nyaya_mode: None,
+                    receipts_generated: 0,
+                    training_signal: None,
+                    security,
+                });
+            }
+
+            // Store in fingerprint cache AFTER constitution check passes
+            fp_cache.store(safe_query, &intent_key_obj, intent.confidence)?;
         }
-
-        // Store in fingerprint cache AFTER constitution check passes
-        fp_cache.store(safe_query, &intent_key_obj, intent.confidence)?;
 
         // ═══════════════════════════════════════════
         // INTENT CACHE + CHAIN STORE LOOKUP
+        // (requires BERT/SetFit for intent classification)
         // ═══════════════════════════════════════════
 
+        #[cfg(feature = "bert")]
         let intent_cache = IntentCache::open(&db_path)?;
+        #[cfg(feature = "bert")]
         if let Some(entry) = intent_cache.lookup(&intent_key_obj)? {
             // Fix 2: Execute tool sequences from intent cache
             if !entry.tool_sequence.is_empty() {
@@ -1232,6 +1262,7 @@ impl Orchestrator {
         }
 
         // Chain store lookup (compiled chain for this intent)
+        #[cfg(feature = "bert")]
         if let Some(chain_record) = self.chain_store.lookup(&intent_key)? {
             let chain = ChainDef::from_yaml(&chain_record.yaml)?;
             let manifest = self.default_manifest();
@@ -1281,7 +1312,10 @@ impl Orchestrator {
         // ═══════════════════════════════════════════
         // TIER 2.5: Semantic work cache (embedding similarity)
         // ═══════════════════════════════════════════
+        #[cfg(feature = "bert")]
         let query_embedding = self.generate_embedding(safe_query);
+        #[cfg(not(feature = "bert"))]
+        let query_embedding: Option<Vec<f32>> = None;
         if let Some(ref cache) = self.semantic_cache {
             if let Some(ref embedding) = query_embedding {
                 match cache.lookup(embedding, safe_query) {
@@ -1420,6 +1454,12 @@ impl Orchestrator {
         // TIER 3: LLM call with self-annotating prompt
         // ═══════════════════════════════════════════
 
+        // Capture confidence for shared code paths
+        #[cfg(feature = "bert")]
+        let intent_confidence = intent.confidence as f64;
+        #[cfg(not(feature = "bert"))]
+        let intent_confidence = 0.0f64;
+
         // Fix 13: Check budget before making LLM call
         if let Some(daily_limit) = self.config.daily_budget_usd {
             if let Ok(ok) = self.cost_tracker.check_budget(daily_limit) {
@@ -1427,7 +1467,7 @@ impl Orchestrator {
                     return Ok(QueryResult {
                         tier: Tier::Blocked,
                         intent_key: intent_key.clone(),
-                        confidence: intent.confidence as f64,
+                        confidence: intent_confidence,
                         allowed: false,
                         latency_ms: start.elapsed().as_secs_f64() * 1000.0,
                         description: format!(
@@ -1625,7 +1665,7 @@ impl Orchestrator {
                 Tier::CheapLlm
             },
             intent_key: intent_key.clone(),
-            confidence: intent.confidence as f64,
+            confidence: intent_confidence,
             allowed: true,
             latency_ms: start.elapsed().as_secs_f64() * 1000.0,
             description: format!(
@@ -2126,6 +2166,7 @@ impl Orchestrator {
 
     /// Generate a 384-dim embedding for semantic cache lookup.
     /// Reuses the W5H2 classifier's ONNX model if available.
+    #[cfg(feature = "bert")]
     fn generate_embedding(&mut self, text: &str) -> Option<Vec<f32>> {
         self.setfit_classifier
             .as_mut()
