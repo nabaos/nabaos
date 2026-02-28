@@ -33,8 +33,14 @@ impl NyayaConfig {
         let model_path = std::env::var("NABA_MODEL_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
-                // Look for models relative to the binary or in the project
-                PathBuf::from("models/setfit-w5h2")
+                // Prefer models in the data directory (installed by setup)
+                let data_models = data_dir.join("models").join("setfit-w5h2");
+                if data_models.join("model.onnx").exists() {
+                    data_models
+                } else {
+                    // Fallback: relative to CWD (for development)
+                    PathBuf::from("models/setfit-w5h2")
+                }
             });
 
         let constitution_path = std::env::var("NABA_CONSTITUTION_PATH")
@@ -119,6 +125,15 @@ pub fn resolve_model_path(configured: &Path) -> Result<PathBuf> {
                 return Ok(exe_relative);
             }
         }
+    }
+
+    // Check in the default data directory (~/.nabaos/models/setfit-w5h2)
+    let data_dir = std::env::var("NABA_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| dirs_or_default().join(".nabaos"));
+    let data_models = data_dir.join("models").join("setfit-w5h2");
+    if data_models.join("model.onnx").exists() {
+        return Ok(data_models);
     }
 
     Err(NyayaError::ModelLoad(format!(

@@ -178,7 +178,7 @@ Figure 1. Layered Architecture
 ├─────────────────────────────────────────────────────────────────────┤
 │ Layer 2: Security & Governance                                      │
 │                                                                     │
-│  Constitution ── Ed25519-signed YAML, tamper-proof, 8 templates     │
+│  Constitution ── Ed25519-signed YAML, tamper-proof, 21 templates     │
 │  BERT classifier ── ONNX threat detection in <10ms                  │
 │  Credential scanner ── 16 secret patterns + 4 PII patterns          │
 │  Injection detector ── 6 categories incl. multilingual + Unicode    │
@@ -379,7 +379,7 @@ Figure 4. Security Pipeline — 8 Layers, Every Query
   ┌──────────────────────────┐
   │ 1. Constitution Check     │  Ed25519-signed YAML
   │    Typed rules: deny /    │  Agent cannot modify
-  │    warn / confirm / allow │  8 templates included
+  │    warn / confirm / allow │  21 templates included
   └────────────┬─────────────┘
                │
   ┌────────────▼─────────────┐
@@ -460,7 +460,7 @@ deep_agent:
   approval_threshold_usd: 2.00             # ask user above this
 ```
 
-**8 templates included:** Default, Developer, Trading, Research, Content Creator, Home Assistant, HR, Full Autonomy.
+**21 templates included:** Default, Solopreneur, Freelancer, Digital Marketer, Student, Sales, Customer Support, Legal, E-commerce, HR, Finance, Healthcare, Engineering, Media, Government, NGO, Logistics, Research, Consulting, Creative, Agriculture.
 
 ---
 
@@ -751,7 +751,7 @@ nabaos admin plugin list            # Installed plugins
 | Source modules | 30 subsystems |
 | Agent catalog | 130 pre-built agents |
 | Provider plugins | 106 service integrations |
-| Constitution templates | 8 (Default, Dev, Trading, Research, Content, Home, HR, Full Autonomy) |
+| Constitution templates | 21 (Default, Solopreneur, Freelancer, Digital Marketer, Student, Sales, Support, Legal, E-commerce, HR, Finance, Healthcare, Engineering, Media, Government, NGO, Logistics, Research, Consulting, Creative, Agriculture) |
 | Persona templates | 5 (each binds voice/tone/quirks to an LLM provider preference) |
 | Communication channels | 6 (Telegram, Discord, Slack, WhatsApp, Email, Web) |
 | LLM providers | 5+ (Anthropic, OpenAI, Gemini, DeepSeek, Ollama/local) |

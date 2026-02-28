@@ -234,6 +234,86 @@ create_directories() {
     ok "Data directories ready"
 }
 
+# ─── Download agent catalog ───────────────────────────────────────────────────
+ensure_agent_catalog() {
+    local catalog_dir="${DATA_DIR}/catalog"
+    local catalog_url="https://github.com/${REPO}/archive/refs/heads/main.tar.gz"
+
+    # Skip if catalog already has content
+    if [ -n "$(ls -A "${catalog_dir}" 2>/dev/null)" ]; then
+        ok "Agent catalog already populated ($(ls "${catalog_dir}" | wc -l) agents)"
+        return
+    fi
+
+    info "Downloading agent catalog..."
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    if download "$catalog_url" "${tmp_dir}/repo.tar.gz" 2>/dev/null; then
+        tar -xzf "${tmp_dir}/repo.tar.gz" -C "$tmp_dir" --wildcards '*/catalog/*' 2>/dev/null || true
+        local extracted_catalog
+        extracted_catalog="$(find "$tmp_dir" -type d -name "catalog" | head -1)"
+        if [ -n "$extracted_catalog" ] && [ -d "$extracted_catalog" ]; then
+            cp -r "${extracted_catalog}"/* "${catalog_dir}/" 2>/dev/null || true
+            local count
+            count="$(ls "${catalog_dir}" | wc -l)"
+            ok "Agent catalog installed (${count} agents)"
+        else
+            warn "Could not extract agent catalog"
+        fi
+    else
+        warn "Could not download agent catalog (you can add agents later)"
+    fi
+    rm -rf "$tmp_dir"
+}
+
+# ─── Install ONNX Runtime (for local AI classification) ──────────────────────
+install_onnx_runtime() {
+    # Skip if already installed
+    if ldconfig -p 2>/dev/null | grep -q libonnxruntime; then
+        ok "ONNX Runtime already installed"
+        return
+    fi
+    if [ -f "/usr/local/lib/libonnxruntime.so" ]; then
+        ok "ONNX Runtime already installed"
+        return
+    fi
+
+    info "Installing ONNX Runtime 1.23.0 (for local AI classification)..."
+    local ort_version="1.23.0"
+    local ort_arch
+    case "$ARCH" in
+        amd64) ort_arch="x64" ;;
+        arm64) ort_arch="aarch64" ;;
+        *) warn "No ONNX Runtime binary for $ARCH — local classification disabled"; return ;;
+    esac
+
+    local ort_url="https://github.com/microsoft/onnxruntime/releases/download/v${ort_version}/onnxruntime-linux-${ort_arch}-${ort_version}.tgz"
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    if download "$ort_url" "${tmp_dir}/ort.tgz" 2>/dev/null; then
+        tar -xzf "${tmp_dir}/ort.tgz" -C "$tmp_dir"
+        local lib_dir
+        lib_dir="$(find "$tmp_dir" -type d -name "lib" | head -1)"
+        if [ -n "$lib_dir" ]; then
+            if [ -w /usr/local/lib ]; then
+                cp "${lib_dir}"/libonnxruntime.so* /usr/local/lib/
+                ldconfig 2>/dev/null || true
+                ok "ONNX Runtime ${ort_version} installed to /usr/local/lib"
+            else
+                # No root access — install to user lib dir
+                mkdir -p "${DATA_DIR}/lib"
+                cp "${lib_dir}"/libonnxruntime.so* "${DATA_DIR}/lib/"
+                ok "ONNX Runtime ${ort_version} installed to ${DATA_DIR}/lib"
+                warn "Add to your shell: export LD_LIBRARY_PATH=\"${DATA_DIR}/lib:\$LD_LIBRARY_PATH\""
+            fi
+        fi
+    else
+        warn "Could not download ONNX Runtime — local classification disabled"
+        info "Install manually: https://onnxruntime.ai/docs/install/"
+    fi
+    rm -rf "$tmp_dir"
+}
+
 # ─── Download default constitution if not present ───────────────────────────
 ensure_default_constitution() {
     local dest="${DATA_DIR}/config/constitutions/default.yaml"
@@ -345,6 +425,13 @@ main() {
     printf "\n"
     create_directories
     ensure_default_constitution
+    ensure_agent_catalog
+
+    # Install ONNX Runtime for local classification (Linux only)
+    if [ "$OS" = "linux" ]; then
+        printf "\n"
+        install_onnx_runtime
+    fi
 
     printf "\n"
     ensure_path
