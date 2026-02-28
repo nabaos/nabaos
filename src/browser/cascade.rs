@@ -355,9 +355,13 @@ mod tests {
 
     fn make_test_cascade() -> NavCascade {
         #[cfg(feature = "bert")]
-        { NavCascade::new(None, None) }
+        {
+            NavCascade::new(None, None)
+        }
         #[cfg(not(feature = "bert"))]
-        { NavCascade::new() }
+        {
+            NavCascade::new()
+        }
     }
 
     fn make_dom_element(tag: &str) -> DomElement {

@@ -1620,7 +1620,9 @@ fn cmd_classify(model_dir: &Path, query: &str) -> Result<()> {
 
 #[cfg(not(feature = "bert"))]
 fn cmd_classify(_model_dir: &Path, _query: &str) -> Result<()> {
-    eprintln!("Built without BERT support. Rebuild with `--features bert` to enable classification.");
+    eprintln!(
+        "Built without BERT support. Rebuild with `--features bert` to enable classification."
+    );
     Ok(())
 }
 
