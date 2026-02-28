@@ -25,16 +25,6 @@ jobs:
             arch: amd64
             platform: linux
             use_cross: false
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            arch: arm64
-            platform: linux
-            use_cross: true
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            arch: amd64
-            platform: darwin
-            use_cross: false
           - target: aarch64-apple-darwin
             os: macos-latest
             arch: arm64
@@ -52,16 +42,7 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install cross
-        if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Build (cross)
-        if: matrix.use_cross
-        run: cross build --release --target ${{ matrix.target }}
-
-      - name: Build (cargo)
-        if: ${{ !matrix.use_cross }}
+      - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package
