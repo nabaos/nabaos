@@ -1,4 +1,13 @@
-#!/usr/bin/env bash
+#!/bin/bash
+#
+# NabaOS installer — https://github.com/nabaos/nabaos
+#
+# Usage:
+#   bash <(curl -fsSL https://raw.githubusercontent.com/nabaos/nabaos/main/scripts/install.sh)
+#
+# NOTE: This script requires bash (not sh/dash). The curl|sh shorthand
+# in the README pipes to bash explicitly.
+#
 set -euo pipefail
 
 # ─── Configuration ──────────────────────────────────────────────────────────
@@ -33,15 +42,14 @@ banner() {
     printf "\n"
     printf "%s" "${CYAN}${BOLD}"
     cat <<'ART'
-    _   __                         ___                    __     ____  _____
-   / | / /_  ____  ___ ___  ____ _/   | ____ ____  ____  / /_   / __ \/ ___/
-  /  |/ / / / / / / / __ `/ / / / / /| |/ __ `/ _ \/ __ \/ __/  / / / /\__ \
- / /|  / /_/ / /_/ / /_/ / /_/ / ___ / /_/ /  __/ / / / /_/   / /_/ /___/ /
-/_/ |_/\__, /\__,_/\__,_/\__, /_/  |_\__, /\___/_/ /_/\__/    \____//____/
-      /____/            /____/       /____/
+    _   __      __          ____  _____
+   / | / /___ _/ /_  ____ _/ __ \/ ___/
+  /  |/ / __ `/ __ \/ __ `/ / / /\__ \
+ / /|  / /_/ / /_/ / /_/ / /_/ /___/ /
+/_/ |_/\__,_/_.___/\__,_/\____//____/
 ART
     printf "%s" "${RESET}"
-    printf "\n%s         Nyaya Agent OS  —  Installer%s\n\n" "${BOLD}" "${RESET}"
+    printf "\n%s              NabaOS  —  Installer%s\n\n" "${BOLD}" "${RESET}"
 }
 
 # ─── Detect OS and arch ────────────────────────────────────────────────────

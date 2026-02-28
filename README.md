@@ -11,7 +11,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.80+-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/tests-1%2C500+-brightgreen.svg?style=flat-square)]()
 
-[Quick Start](#quick-start) · [Why an OS?](#why-an-operating-system) · [Architecture](#architecture) · [Docs](https://nabaos.github.io/nabaos/) · [Contributing](#contributing)
+[Quick Start](#quick-start) · [Why an OS?](#why-an-operating-system) · [Architecture](#architecture) · [Security](#security-model) · [Docs](https://nabaos.github.io/nabaos/) · [Contributing](#contributing)
 
 </div>
 
@@ -24,6 +24,56 @@ NabaOS is a **self-hosted runtime for AI agents** — written in Rust, designed 
 It provides the same abstractions an operating system provides to programs — process isolation, a permission model, a filesystem, inter-process communication, hardware drivers, a package manager — but adapted for autonomous AI agents that act in the real world.
 
 After a one-week learning period, **~90% of daily requests resolve from a local cache in under 10ms at zero cost.** The remaining requests route to whichever AI backend offers the best cost/quality tradeoff. Agents can pursue multi-week objectives autonomously, generate media, browse the web, send messages across six channels, and integrate with 2,800+ APIs — all governed by cryptographically signed constitutions that the agent cannot modify.
+
+---
+
+## Quick Start
+
+```bash
+# Install (requires bash, not sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/nabaos/nabaos/main/scripts/install.sh)
+
+# Configure
+nabaos setup --interactive    # pick constitution, add API keys, choose channels
+
+# Run
+nabaos daemon                 # start the agent
+```
+
+<details>
+<summary><b>Docker</b></summary>
+
+```bash
+docker run -d --name nabaos \
+  -e NABA_LLM_API_KEY=sk-... \
+  -e NABA_TELEGRAM_BOT_TOKEN=... \
+  -v nabaos-data:/data \
+  ghcr.io/nabaos/nabaos:latest
+```
+
+</details>
+
+<details>
+<summary><b>Build from source</b></summary>
+
+```bash
+git clone https://github.com/nabaos/nabaos.git && cd nabaos
+cargo build --release
+./target/release/nabaos setup --interactive
+./target/release/nabaos daemon
+```
+
+</details>
+
+<details>
+<summary><b>ARM (Oracle Cloud Free Tier / Raspberry Pi)</b></summary>
+
+```bash
+make build-arm    # cross-compile for aarch64
+scp target/aarch64-unknown-linux-musl/release/nabaos user@host:/opt/nabaos/bin/
+```
+
+</details>
 
 ---
 
@@ -632,51 +682,6 @@ Cached agent behaviors compile to deployable artifacts for 4 platforms:
 | **ROS 2** | `ament_cargo` package with auto-mapped topics/services | Robotics |
 
 The ROS 2 export automatically maps hardware abilities to DDS topics (reads → `r2r::Publisher`) and services (writes → `r2r::ServiceServer`).
-
----
-
-## Quick Start
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/nabaos/nabaos/main/scripts/install.sh | sh
-nabaos setup --interactive    # pick constitution, add API keys, choose channels
-nabaos daemon                 # start the agent
-```
-
-<details>
-<summary><b>Docker</b></summary>
-
-```bash
-docker run -d --name nabaos \
-  -e NABA_LLM_API_KEY=sk-... \
-  -e NABA_TELEGRAM_BOT_TOKEN=... \
-  -v nabaos-data:/data \
-  ghcr.io/nabaos/nabaos:latest
-```
-
-</details>
-
-<details>
-<summary><b>Build from source</b></summary>
-
-```bash
-git clone https://github.com/nabaos/nabaos.git && cd nabaos
-cargo build --release
-./target/release/nabaos setup --interactive
-./target/release/nabaos daemon
-```
-
-</details>
-
-<details>
-<summary><b>ARM (Oracle Cloud Free Tier / Raspberry Pi)</b></summary>
-
-```bash
-make build-arm    # cross-compile for aarch64
-scp target/aarch64-unknown-linux-musl/release/nabaos user@host:/opt/nabaos/bin/
-```
-
-</details>
 
 ---
 
