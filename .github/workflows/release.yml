@@ -24,25 +24,16 @@ jobs:
             os: ubuntu-latest
             arch: amd64
             platform: linux
-            use_cross: false
+
             features: "--features bert"
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            arch: arm64
-            platform: linux
-            use_cross: true
-            features: "--no-default-features"
-          - target: x86_64-apple-darwin
-            os: macos-13
-            arch: amd64
-            platform: darwin
-            use_cross: false
-            features: "--no-default-features"
+          # aarch64-linux and x86_64-darwin require OpenSSL cross-compilation
+          # and are not yet supported. Users on those platforms can build from
+          # source with: cargo install --git ... --no-default-features
           - target: aarch64-apple-darwin
             os: macos-latest
             arch: arm64
             platform: darwin
-            use_cross: false
+
             features: "--features bert"
 
     steps:
@@ -56,23 +47,11 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install cross
-        if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Build (native)
-        if: "!matrix.use_cross"
+      - name: Build
         env:
           BUILD_TARGET: ${{ matrix.target }}
           BUILD_FEATURES: ${{ matrix.features }}
         run: cargo build --release --target "$BUILD_TARGET" $BUILD_FEATURES
-
-      - name: Build (cross)
-        if: matrix.use_cross
-        env:
-          BUILD_TARGET: ${{ matrix.target }}
-          BUILD_FEATURES: ${{ matrix.features }}
-        run: cross build --release --target "$BUILD_TARGET" $BUILD_FEATURES
 
       - name: Package
         shell: bash
