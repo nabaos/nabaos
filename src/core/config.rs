@@ -12,6 +12,10 @@ pub struct NyayaConfig {
     pub llm_provider: Option<String>,
     pub daily_budget_usd: Option<f64>,
     pub per_task_budget_usd: Option<f64>,
+    /// Custom OpenAI-compatible base URL (e.g. nano-gpt, OpenRouter).
+    pub llm_base_url: Option<String>,
+    /// Model name override (instead of hardcoded defaults).
+    pub llm_model: Option<String>,
     /// Directory for installed plugins.
     pub plugin_dir: PathBuf,
     /// Path to subprocess abilities config file.
@@ -67,6 +71,9 @@ impl NyayaConfig {
 
         let constitution_template = std::env::var("NABA_CONSTITUTION_TEMPLATE").ok();
 
+        let llm_base_url = std::env::var("NABA_LLM_BASE_URL").ok();
+        let llm_model = std::env::var("NABA_LLM_MODEL").ok();
+
         let profile =
             crate::modules::profile::ModuleProfile::load_or_default(&data_dir.join("profile.toml"));
 
@@ -81,6 +88,8 @@ impl NyayaConfig {
             plugin_dir,
             subprocess_config,
             constitution_template,
+            llm_base_url,
+            llm_model,
             profile,
         })
     }

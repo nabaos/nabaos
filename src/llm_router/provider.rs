@@ -143,6 +143,18 @@ impl LlmProvider {
         }
     }
 
+    pub fn openai_with_url(api_key: &str, model: &str, base_url: &str) -> Self {
+        let base = base_url.trim_end_matches('/');
+        let base = base.strip_suffix("/v1").unwrap_or(base);
+        Self {
+            provider: ProviderType::OpenAI,
+            api_key: api_key.to_string(),
+            model: model.to_string(),
+            base_url: format!("{}/v1/chat/completions", base),
+            timeout_secs: None,
+        }
+    }
+
     pub fn deepseek(api_key: &str, model: &str) -> Self {
         Self {
             provider: ProviderType::DeepSeek,
@@ -874,6 +886,25 @@ mod tests {
 
         let p3 = LlmProvider::deepseek("test-key", "deepseek-v3");
         assert!(matches!(p3.provider, ProviderType::DeepSeek));
+    }
+
+    #[test]
+    fn test_openai_with_url() {
+        let p = LlmProvider::openai_with_url("key", "qwen3.5-32b", "https://nano-gpt.com/api/v1");
+        assert_eq!(p.model, "qwen3.5-32b");
+        assert_eq!(
+            p.base_url,
+            "https://nano-gpt.com/api/v1/chat/completions"
+        );
+        assert!(matches!(p.provider, ProviderType::OpenAI));
+
+        // trailing slash + v1 normalization
+        let p2 =
+            LlmProvider::openai_with_url("key", "gpt-4o", "https://openrouter.ai/api/v1/");
+        assert_eq!(
+            p2.base_url,
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
     }
 
     #[test]

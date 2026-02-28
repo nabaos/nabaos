@@ -2230,15 +2230,41 @@ impl Orchestrator {
             })?;
 
         let provider = self.config.llm_provider.as_deref().unwrap_or("anthropic");
+        let model_override = self.config.llm_model.as_deref();
+        let base_url_override = self.config.llm_base_url.as_deref();
 
         match provider {
             "anthropic" => {
-                Ok(LlmProvider::anthropic(api_key, "claude-haiku-4-5-20251001").with_timeout(30))
+                let model = model_override.unwrap_or("claude-haiku-4-5-20251001");
+                Ok(LlmProvider::anthropic(api_key, model).with_timeout(30))
             }
-            "openai" => Ok(LlmProvider::openai(api_key, "gpt-4o-mini").with_timeout(30)),
-            "deepseek" => Ok(LlmProvider::deepseek(api_key, "deepseek-v3").with_timeout(30)),
+            "openai" => {
+                let model = model_override.unwrap_or("gpt-4o-mini");
+                if let Some(base_url) = base_url_override {
+                    Ok(LlmProvider::openai_with_url(api_key, model, base_url).with_timeout(30))
+                } else {
+                    Ok(LlmProvider::openai(api_key, model).with_timeout(30))
+                }
+            }
+            "openai-compatible" => {
+                let base_url = base_url_override.ok_or_else(|| {
+                    NyayaError::Config(
+                        "openai-compatible provider requires NABA_LLM_BASE_URL".into(),
+                    )
+                })?;
+                let model = model_override.ok_or_else(|| {
+                    NyayaError::Config(
+                        "openai-compatible provider requires NABA_LLM_MODEL".into(),
+                    )
+                })?;
+                Ok(LlmProvider::openai_with_url(api_key, model, base_url).with_timeout(30))
+            }
+            "deepseek" => {
+                let model = model_override.unwrap_or("deepseek-v3");
+                Ok(LlmProvider::deepseek(api_key, model).with_timeout(30))
+            }
             other => Err(NyayaError::Config(format!(
-                "Unknown LLM provider: '{}'. Use 'anthropic', 'openai', or 'deepseek'.",
+                "Unknown LLM provider: '{}'. Use 'anthropic', 'openai', 'openai-compatible', or 'deepseek'.",
                 other
             ))),
         }
@@ -2699,6 +2725,8 @@ R:weather in {city}|forecast for {city}|temperature {city}
             constitution_path: None,
             llm_api_key: None,
             llm_provider: None,
+            llm_base_url: None,
+            llm_model: None,
             daily_budget_usd: None,
             per_task_budget_usd: None,
             plugin_dir: dir.path().join("plugins"),
@@ -2745,6 +2773,8 @@ R:weather in {city}|forecast for {city}|temperature {city}
             constitution_path: None,
             llm_api_key: None,
             llm_provider: None,
+            llm_base_url: None,
+            llm_model: None,
             daily_budget_usd: None,
             per_task_budget_usd: None,
             plugin_dir: dir.path().join("plugins"),
@@ -2777,6 +2807,8 @@ R:weather in {city}|forecast for {city}|temperature {city}
             constitution_path: None,
             llm_api_key: None,
             llm_provider: None,
+            llm_base_url: None,
+            llm_model: None,
             daily_budget_usd: None,
             per_task_budget_usd: None,
             plugin_dir: dir.path().join("plugins"),
@@ -2841,6 +2873,8 @@ steps:
             constitution_path: None,
             llm_api_key: None,
             llm_provider: None,
+            llm_base_url: None,
+            llm_model: None,
             daily_budget_usd: None,
             per_task_budget_usd: None,
             plugin_dir: dir.path().join("plugins"),

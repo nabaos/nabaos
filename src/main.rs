@@ -391,6 +391,20 @@ Examples:
         #[command(subcommand)]
         action: BrowserAdminCommands,
     },
+    /// List available models from an OpenAI-compatible endpoint
+    #[command(after_help = "\
+Examples:
+  nabaos admin models --base-url https://nano-gpt.com/api/v1 --api-key sk-...
+  NABA_LLM_BASE_URL=https://nano-gpt.com/api/v1 NABA_LLM_API_KEY=sk-... nabaos admin models
+")]
+    Models {
+        /// OpenAI-compatible base URL (falls back to NABA_LLM_BASE_URL)
+        #[arg(long)]
+        base_url: Option<String>,
+        /// API key (falls back to NABA_LLM_API_KEY)
+        #[arg(long)]
+        api_key: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1475,6 +1489,29 @@ fn cmd_admin(
         AdminCommands::Latex { action } => cmd_latex(action),
         AdminCommands::Voice { file } => cmd_voice(config, &file),
         AdminCommands::OAuth { action } => cmd_oauth(action),
+        AdminCommands::Models { base_url, api_key } => {
+            let base_url = base_url
+                .or_else(|| config.llm_base_url.clone())
+                .ok_or_else(|| {
+                    NyayaError::Config(
+                        "No base URL. Pass --base-url or set NABA_LLM_BASE_URL.".into(),
+                    )
+                })?;
+            let api_key = api_key
+                .or_else(|| config.llm_api_key.clone())
+                .unwrap_or_default();
+            let models =
+                nabaos::providers::discovery::fetch_available_models(&base_url, &api_key)?;
+            if models.is_empty() {
+                println!("No models found at {}", base_url);
+            } else {
+                println!("Available models ({}):", models.len());
+                for (i, m) in models.iter().enumerate() {
+                    println!("  {:>3}) {}", i + 1, m);
+                }
+            }
+            Ok(())
+        }
         AdminCommands::Browser { action } => {
             match action {
                 BrowserAdminCommands::Sessions => {
@@ -2787,10 +2824,14 @@ fn cmd_setup(
             BOLD, MAGENTA, RESET, BOLD, RESET
         );
         println!("Which LLM provider will you use?");
-        println!("  {}1){} anthropic  (Claude)", GREEN, RESET);
-        println!("  {}2){} openai     (GPT)", GREEN, RESET);
-        println!("  {}3){} local      (Ollama / llama.cpp)", GREEN, RESET);
-        print!("{}Choose [1/2/3] (default: 1): {}", YELLOW, RESET);
+        println!("  {}1){} anthropic           (Claude)", GREEN, RESET);
+        println!("  {}2){} openai              (GPT)", GREEN, RESET);
+        println!(
+            "  {}3){} openai-compatible   (nano-gpt, OpenRouter, etc.)",
+            GREEN, RESET
+        );
+        println!("  {}4){} local               (Ollama / llama.cpp)", GREEN, RESET);
+        print!("{}Choose [1/2/3/4] (default: 1): {}", YELLOW, RESET);
         // Flush stdout so the prompt appears before reading
         use std::io::Write;
         std::io::stdout().flush().unwrap_or_default();
@@ -2801,29 +2842,117 @@ fn cmd_setup(
             .unwrap_or_default();
         let provider = match provider_input.trim() {
             "2" => "openai",
-            "3" => "local",
+            "3" => "openai-compatible",
+            "4" => "local",
             _ => "anthropic",
         };
 
         if provider != "local" {
-            print!("{}Enter your {} API key: {}", YELLOW, provider, RESET);
-            std::io::stdout().flush().unwrap_or_default();
-            let mut api_key = String::new();
-            std::io::stdin().read_line(&mut api_key).unwrap_or_default();
-            let api_key = api_key.trim();
-            if api_key.is_empty() {
-                println!(
-                    "  {}No API key entered. Set NABA_LLM_API_KEY later.{}",
-                    DIM, RESET
+            // For openai-compatible, also ask for the base URL
+            if provider == "openai-compatible" {
+                print!(
+                    "{}Enter your OpenAI-compatible base URL (e.g. https://nano-gpt.com/api/v1): {}",
+                    YELLOW, RESET
                 );
-            } else {
-                // Mask the key for display
-                let masked = if api_key.len() > 8 {
-                    format!("{}...{}", &api_key[..4], &api_key[api_key.len() - 4..])
+                std::io::stdout().flush().unwrap_or_default();
+                let mut base_url_input = String::new();
+                std::io::stdin()
+                    .read_line(&mut base_url_input)
+                    .unwrap_or_default();
+                let base_url = base_url_input.trim();
+                if base_url.is_empty() {
+                    println!(
+                        "  {}No base URL entered. Set NABA_LLM_BASE_URL later.{}",
+                        DIM, RESET
+                    );
                 } else {
-                    "****".to_string()
-                };
-                println!("  {}OK:{} API key recorded ({})", GREEN, RESET, masked);
+                    println!("  {}Base URL:{} {}", GREEN, RESET, base_url);
+                }
+
+                print!("{}Enter your API key: {}", YELLOW, RESET);
+                std::io::stdout().flush().unwrap_or_default();
+                let mut api_key = String::new();
+                std::io::stdin().read_line(&mut api_key).unwrap_or_default();
+                let api_key = api_key.trim();
+                if api_key.is_empty() {
+                    println!(
+                        "  {}No API key entered. Set NABA_LLM_API_KEY later.{}",
+                        DIM, RESET
+                    );
+                } else {
+                    let masked = if api_key.len() > 8 {
+                        format!("{}...{}", &api_key[..4], &api_key[api_key.len() - 4..])
+                    } else {
+                        "****".to_string()
+                    };
+                    println!("  {}OK:{} API key recorded ({})", GREEN, RESET, masked);
+                }
+
+                // Try model discovery if we have both base_url and api_key
+                if !base_url.is_empty() && !api_key.is_empty() {
+                    println!();
+                    println!("  Querying available models...");
+                    match nabaos::providers::discovery::fetch_available_models(base_url, api_key) {
+                        Ok(models) if !models.is_empty() => {
+                            println!("  Found {} models. Pick one:", models.len());
+                            for (i, m) in models.iter().enumerate() {
+                                println!("    {}{:>3}){} {}", GREEN, i + 1, RESET, m);
+                            }
+                            print!(
+                                "{}Choose model number (default: 1): {}",
+                                YELLOW, RESET
+                            );
+                            std::io::stdout().flush().unwrap_or_default();
+                            let mut model_input = String::new();
+                            std::io::stdin()
+                                .read_line(&mut model_input)
+                                .unwrap_or_default();
+                            let idx = model_input
+                                .trim()
+                                .parse::<usize>()
+                                .unwrap_or(1)
+                                .saturating_sub(1);
+                            let chosen = models.get(idx).unwrap_or(&models[0]);
+                            println!("  {}Model:{} {}", GREEN, RESET, chosen);
+                        }
+                        Ok(_) => {
+                            println!(
+                                "  {}No models found. Set NABA_LLM_MODEL manually.{}",
+                                DIM, RESET
+                            );
+                        }
+                        Err(e) => {
+                            println!(
+                                "  {}Could not fetch models: {}{}",
+                                DIM, e, RESET
+                            );
+                            println!(
+                                "  {}Set NABA_LLM_MODEL manually.{}",
+                                DIM, RESET
+                            );
+                        }
+                    }
+                }
+            } else {
+                print!("{}Enter your {} API key: {}", YELLOW, provider, RESET);
+                std::io::stdout().flush().unwrap_or_default();
+                let mut api_key = String::new();
+                std::io::stdin().read_line(&mut api_key).unwrap_or_default();
+                let api_key = api_key.trim();
+                if api_key.is_empty() {
+                    println!(
+                        "  {}No API key entered. Set NABA_LLM_API_KEY later.{}",
+                        DIM, RESET
+                    );
+                } else {
+                    // Mask the key for display
+                    let masked = if api_key.len() > 8 {
+                        format!("{}...{}", &api_key[..4], &api_key[api_key.len() - 4..])
+                    } else {
+                        "****".to_string()
+                    };
+                    println!("  {}OK:{} API key recorded ({})", GREEN, RESET, masked);
+                }
             }
         } else {
             println!("  {}Local mode selected. No API key needed.{}", DIM, RESET);
