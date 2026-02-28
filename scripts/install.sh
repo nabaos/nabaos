@@ -395,6 +395,13 @@ ensure_path() {
                 ok "Added NABA_MODEL_PATH to ${rc_file}"
             fi
         fi
+        # Add ORT_DYLIB_PATH for ONNX Runtime dynamic loading
+        if [ -f "/usr/local/lib/libonnxruntime.so" ]; then
+            if ! grep -qF "ORT_DYLIB_PATH" "$rc_file" 2>/dev/null; then
+                printf 'export ORT_DYLIB_PATH="/usr/local/lib/libonnxruntime.so"\n' >> "$rc_file"
+                ok "Added ORT_DYLIB_PATH to ${rc_file}"
+            fi
+        fi
     fi
 
     # Make it available for the rest of this script
