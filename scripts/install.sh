@@ -18,6 +18,7 @@ DATA_DIR="${NABA_DATA_DIR:-$HOME/.nabaos}"
 BINARY_NAME="nabaos"
 DOC_URL="https://nabaos.github.io/nabaos/"
 CONSTITUTION_URL="https://raw.githubusercontent.com/${REPO}/main/config/constitutions/default.yaml"
+MODELS_URL="https://github.com/${REPO}/releases/download/${VERSION:-latest}/models-setfit-w5h2.tar.gz"
 
 # ─── Color helpers ──────────────────────────────────────────────────────────
 if [ -t 1 ] && command -v tput &>/dev/null && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
@@ -266,6 +267,35 @@ ensure_agent_catalog() {
     rm -rf "$tmp_dir"
 }
 
+# ─── Download ML models for local classification ─────────────────────────────
+download_models() {
+    local models_dir="${DATA_DIR}/models/setfit-w5h2"
+    if [ -f "${models_dir}/model.onnx" ]; then
+        ok "ML models already present"
+        return
+    fi
+
+    # Need a resolved version for the download URL
+    if [ -z "${VERSION:-}" ] || [ "$VERSION" = "latest" ]; then
+        warn "Skipping model download (version not resolved)"
+        return
+    fi
+
+    local models_url="https://github.com/${REPO}/releases/download/${VERSION}/models-setfit-w5h2.tar.gz"
+    info "Downloading W5H2 intent classifier models (~80 MB)..."
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    if download "$models_url" "${tmp_dir}/models.tar.gz" 2>/dev/null; then
+        mkdir -p "${models_dir}"
+        tar -xzf "${tmp_dir}/models.tar.gz" -C "${DATA_DIR}/models/"
+        ok "ML models installed to ${models_dir}"
+    else
+        warn "Could not download ML models (local classification disabled)"
+        info "Download manually from: ${models_url}"
+    fi
+    rm -rf "$tmp_dir"
+}
+
 # ─── Install ONNX Runtime (for local AI classification) ──────────────────────
 install_onnx_runtime() {
     # Skip if already installed
@@ -426,6 +456,7 @@ main() {
     create_directories
     ensure_default_constitution
     ensure_agent_catalog
+    download_models
 
     # Install ONNX Runtime for local classification (Linux only)
     if [ "$OS" = "linux" ]; then
