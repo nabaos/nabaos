@@ -23,7 +23,7 @@
 1. Open Telegram and search for **@BotFather**.
 2. Send the command `/newbot`.
 3. Choose a **display name** for your bot (e.g., `My NabaOS Agent`).
-4. Choose a **username** for your bot. It must end in `bot` (e.g., `my_nyaya_agent_bot`).
+4. Choose a **username** for your bot. It must end in `bot` (e.g., `my_nabaos_bot`).
 5. BotFather will reply with your **bot token**. It looks like this:
 
 ```
@@ -55,35 +55,18 @@ For multiple allowed chats, separate IDs with commas:
 export NABA_ALLOWED_CHAT_IDS="123456789,-1001234567890"
 ```
 
-To persist these, add them to your shell profile (`~/.bashrc`, `~/.zshrc`) or a `.env` file:
-
-```bash
-# ~/.bashrc or ~/.zshrc
-export NABA_TELEGRAM_BOT_TOKEN="7123456789:AAHfiqksKZ8WmR2zSjiQ7_v4TpcG2cCkHHI"
-export NABA_ALLOWED_CHAT_IDS="123456789"
-```
-
 ## Step 4: Start the Telegram bot
 
 Run the bot in standalone mode:
 
 ```bash
-nabaos telegram
+nabaos start --telegram-only
 ```
 
-Expected output:
-
-```
-  2026-02-24T10:00:00  INFO  Starting Telegram bot...
-  2026-02-24T10:00:01  INFO  Bot username: @my_nyaya_agent_bot
-  2026-02-24T10:00:01  INFO  Allowed chat IDs: [123456789]
-  2026-02-24T10:00:01  INFO  Listening for messages...
-```
-
-Or run it as part of the daemon (which also handles scheduled jobs and the web dashboard):
+Or run it as part of the full server (which also handles scheduled jobs and the web dashboard):
 
 ```bash
-nabaos daemon
+nabaos start
 ```
 
 ## Step 5: Test the bot
@@ -106,77 +89,45 @@ NabaOS supports 2FA on the Telegram channel. When enabled, users must authentica
 
 ### Option A: TOTP (recommended)
 
-TOTP (Time-based One-Time Password) is compatible with Google Authenticator, Authy, and similar apps.
+```bash
+nabaos config security 2fa totp
+```
 
-**Generate a TOTP secret:**
+Configure the environment:
 
 ```bash
-nabaos telegram-setup-2fa totp
-```
-
-Expected output:
-
-```
-=== TOTP Setup ===
-Secret: JBSWY3DPEHPK3PXP
-URI: otpauth://totp/NabaOS?secret=JBSWY3DPEHPK3PXP&issuer=NabaOS
-
-Scan the QR code or enter the secret manually in your authenticator app.
-
-Set these environment variables:
-  export NABA_TELEGRAM_2FA=totp
-  export NABA_TOTP_SECRET="JBSWY3DPEHPK3PXP"
-```
-
-**Configure the environment:**
-
-```bash
-export NABA_TELEGRAM_2FA="totp"
 export NABA_TOTP_SECRET="JBSWY3DPEHPK3PXP"
 ```
 
-**How it works:**
-
-1. When you send a message to the bot for the first time (or after the session expires), it replies: `Two-factor authentication required. Please enter your 6-digit TOTP code.`
-2. Open your authenticator app, find the `NabaOS` entry, and send the 6-digit code.
-3. If the code is valid, the bot creates a session and processes your message.
-4. Subsequent messages within the session do not require re-authentication.
-
 ### Option B: Password
 
-For simpler setups, you can use a static password:
+```bash
+nabaos config security 2fa password
+```
+
+---
+
+## Running in production
+
+For production deployments, run the server which manages Telegram, scheduled jobs, and optionally the web dashboard:
 
 ```bash
-nabaos telegram-setup-2fa password
+export NABA_TELEGRAM_BOT_TOKEN="..."
+export NABA_ALLOWED_CHAT_IDS="..."
+export NABA_TOTP_SECRET="..."
+export NABA_WEB_PASSWORD="your-dashboard-password"
+
+nabaos start
 ```
 
 Expected output:
 
 ```
-=== Password Setup ===
-Enter a password for Telegram 2FA:
-> ********
-
-Password hash: $argon2id$v=19$m=65536,t=3,p=4$...
-
-Set these environment variables:
-  export NABA_TELEGRAM_2FA=password
-  export NABA_2FA_PASSWORD_HASH="$argon2id$v=19$m=65536,t=3,p=4$..."
-```
-
-**Configure the environment:**
-
-```bash
-export NABA_TELEGRAM_2FA="password"
-export NABA_2FA_PASSWORD_HASH="$argon2id$v=19$..."
-```
-
-### Option C: No 2FA
-
-By default, 2FA is disabled. To explicitly disable it:
-
-```bash
-export NABA_TELEGRAM_2FA="none"
+[start] Starting Telegram bot...
+[start] Bot username: @my_nabaos_bot
+[start] Starting web dashboard on http://127.0.0.1:8919...
+[start] Scheduler running (3 scheduled jobs)
+[start] Ready.
 ```
 
 ---
@@ -187,75 +138,7 @@ export NABA_TELEGRAM_2FA="none"
 |----------|----------|-------------|
 | `NABA_TELEGRAM_BOT_TOKEN` | Yes | Bot token from @BotFather |
 | `NABA_ALLOWED_CHAT_IDS` | No | Comma-separated list of allowed chat IDs |
-| `NABA_TELEGRAM_2FA` | No | 2FA method: `none`, `totp`, `password`, `weblink` |
 | `NABA_TOTP_SECRET` | If TOTP | Base32-encoded TOTP secret |
-| `NABA_2FA_PASSWORD_HASH` | If password | Argon2id password hash |
-| `NABA_SECURITY_BOT_TOKEN` | No | Separate bot token for security alerts |
-| `NABA_ALERT_CHAT_ID` | No | Chat ID for security alert notifications |
-
----
-
-## Security alert bot (optional)
-
-You can run a separate Telegram bot dedicated to security alerts. This keeps security notifications in a separate chat from regular agent interactions.
-
-1. Create a second bot via @BotFather (e.g., `my_nyaya_security_bot`).
-2. Set the environment variables:
-
-```bash
-export NABA_SECURITY_BOT_TOKEN="7987654321:BBCdefghijk..."
-export NABA_ALERT_CHAT_ID="123456789"
-```
-
-3. The security bot sends alerts for:
-   - Blocked requests (constitution violations)
-   - Anomalous behavior patterns
-   - Failed authentication attempts
-   - Credential detection in messages
-
----
-
-## Running in production
-
-For production deployments, run the daemon which manages Telegram, scheduled jobs, and optionally the web dashboard:
-
-```bash
-export NABA_TELEGRAM_BOT_TOKEN="..."
-export NABA_ALLOWED_CHAT_IDS="..."
-export NABA_TELEGRAM_2FA="totp"
-export NABA_TOTP_SECRET="..."
-export NABA_WEB_PASSWORD="your-dashboard-password"
-
-nabaos daemon
-```
-
-Expected output:
-
-```
-[daemon] Starting Telegram bot...
-[daemon] Bot username: @my_nyaya_agent_bot
-[daemon] Starting web dashboard on http://127.0.0.1:8919...
-[daemon] Scheduler running (3 scheduled jobs)
-[daemon] Ready.
-```
-
----
-
-## Troubleshooting
-
-**Bot does not respond to messages:**
-- Verify `NABA_TELEGRAM_BOT_TOKEN` is correct.
-- Check that your chat ID is in `NABA_ALLOWED_CHAT_IDS`.
-- Look at the terminal output for errors.
-- Make sure no other process is using the same bot token.
-
-**2FA code is rejected:**
-- TOTP codes are time-sensitive. Make sure your device clock is accurate.
-- Verify `NABA_TOTP_SECRET` matches the secret shown during setup.
-
-**Bot responds slowly:**
-- The first query after startup may be slower due to model loading.
-- Cache hits are near-instant (<300ms). Cache misses go to the LLM.
 
 ---
 

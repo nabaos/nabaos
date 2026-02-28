@@ -1,7 +1,7 @@
 # Agent Manifest Format
 
-Every agent in NabaOS is declared by a `manifest.yaml` (or JSON)
-file. The manifest specifies the agent's identity, permissions, resource
+Every agent in NabaOS is declared by a manifest file (JSON or YAML).
+The manifest specifies the agent's identity, permissions, resource
 limits, intent routing filters, background behavior, and triggers.
 
 ## Schema
@@ -18,7 +18,7 @@ permissions:              # List of ability names this agent is allowed to call
 
 # Optional identity
 author: string            # Author name or organization
-signature: string         # Ed25519 signature for package verification
+signature: string         # Signature for package verification
 
 # Resource limits (WASM sandbox)
 memory_limit_mb: u32      # Max memory in MB [default: 64, max: 512]
@@ -97,69 +97,50 @@ Plugin and subprocess abilities extend this list dynamically.
 
 ## Annotated Example
 
-```yaml
-name: weather-monitor
-version: 1.2.0
-description: Monitors weather conditions and sends alerts for severe events
-author: nyaya-community
-signature: "ed25519:abc123..."
-
-permissions:
-  - data.fetch_url
-  - notify.user
-  - kv.read
-  - kv.write
-  - schedule.delay
-
-memory_limit_mb: 32
-fuel_limit: 500000
-kv_namespace: weather
-
-background: true
-
-subscriptions:
-  - weather.alert
-  - location.changed
-
-intent_filters:
-  - actions: [check, search]
-    targets: [weather, forecast]
-    priority: 10
-  - actions: [notify]
-    targets: [weather]
-    priority: 5
-
-resources:
-  max_memory_mb: 64
-  max_fuel: 500000
-  max_api_calls_per_hour: 50
-
-triggers:
-  scheduled:
-    - chain: check_severe_weather
-      interval: "30m"
-      params:
-        region: "us-west"
-
-    - chain: daily_forecast
-      interval: "24h"
-      at: "07:00"
-      params:
-        detail_level: "full"
-
-  events:
-    - on: location.changed
-      chain: update_forecast
-      filter:
-        source: gps
-      params:
-        refresh: "true"
-
-  webhooks:
-    - path: /hook/weather-alert
-      chain: process_external_alert
-      secret: "whsec_..."
+```json
+{
+  "name": "weather-monitor",
+  "version": "1.2.0",
+  "description": "Monitors weather conditions and sends alerts for severe events",
+  "author": "nabaos-community",
+  "permissions": [
+    "data.fetch_url",
+    "notify.user",
+    "kv.read",
+    "kv.write",
+    "schedule.delay"
+  ],
+  "memory_limit_mb": 32,
+  "fuel_limit": 500000,
+  "kv_namespace": "weather",
+  "background": true,
+  "subscriptions": [
+    "weather.alert",
+    "location.changed"
+  ],
+  "intent_filters": [
+    {
+      "actions": ["check", "search"],
+      "targets": ["weather", "forecast"],
+      "priority": 10
+    },
+    {
+      "actions": ["notify"],
+      "targets": ["weather"],
+      "priority": 5
+    }
+  ],
+  "resources": {
+    "max_memory_mb": 64,
+    "max_fuel": 500000,
+    "max_api_calls_per_hour": 50
+  }
+}
 ```
+
+> **Note:** Without the `bert` feature enabled at compile time, intent-based
+> routing degrades to `unknown_unknown`. Agents that rely on specific intent
+> filters should document this dependency.
 
 ## Validation Rules
 
@@ -178,8 +159,8 @@ The manifest is validated on load with the following constraints:
 Agent source directories are packaged into `.nap` files using:
 
 ```bash
-nabaos agent package ./my-agent/ -o my-agent.nap
+nabaos config agent package ./my-agent/ -o my-agent.nap
 ```
 
-The source directory must contain a `manifest.yaml` at its root. The
-resulting `.nap` file can be installed with `nabaos agent install`.
+The source directory must contain a manifest file at its root. The
+resulting `.nap` file can be installed with `nabaos config agent install`.

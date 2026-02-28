@@ -27,12 +27,6 @@ Verify:
 nabaos --version
 ```
 
-Expected output:
-
-```
-nabaos 0.1.0
-```
-
 ---
 
 ## Create a Dedicated User
@@ -40,14 +34,14 @@ nabaos 0.1.0
 Run the agent under its own unprivileged user for security isolation:
 
 ```bash
-sudo useradd -r -s /usr/sbin/nologin -m -d /var/lib/nabaos nyaya
+sudo useradd -r -s /usr/sbin/nologin -m -d /var/lib/nabaos nabaos
 ```
 
 Create the data directories:
 
 ```bash
 sudo mkdir -p /var/lib/nabaos/{agents,plugins,catalog,models,config/constitutions,logs}
-sudo chown -R nyaya:nyaya /var/lib/nabaos
+sudo chown -R nabaos:nabaos /var/lib/nabaos
 ```
 
 ---
@@ -66,6 +60,9 @@ NABA_LLM_API_KEY=sk-ant-api03-xxxxx
 # Telegram bot token (optional)
 NABA_TELEGRAM_BOT_TOKEN=123456:ABC-DEF
 
+# Web dashboard password (optional)
+NABA_WEB_PASSWORD=secure-dashboard-pw
+
 # Data and model paths
 NABA_DATA_DIR=/var/lib/nabaos
 NABA_MODEL_PATH=/var/lib/nabaos/models
@@ -74,7 +71,7 @@ NABA_MODEL_PATH=/var/lib/nabaos/models
 NABA_DAILY_BUDGET_USD=10.0
 
 # Logging
-NABA_LOG_LEVEL=info
+RUST_LOG=info
 
 # Security alerts (optional)
 # NABA_SECURITY_BOT_TOKEN=...
@@ -86,7 +83,7 @@ Lock down the file permissions (it contains API keys):
 
 ```bash
 sudo chmod 600 /etc/nabaos/env
-sudo chown nyaya:nyaya /etc/nabaos/env
+sudo chown nabaos:nabaos /etc/nabaos/env
 ```
 
 ---
@@ -105,8 +102,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=nyaya
-Group=nyaya
+User=nabaos
+Group=nabaos
 
 # Environment
 EnvironmentFile=/etc/nabaos/env
@@ -114,8 +111,8 @@ EnvironmentFile=/etc/nabaos/env
 # Working directory
 WorkingDirectory=/var/lib/nabaos
 
-# Start the daemon
-ExecStart=/usr/local/bin/nabaos daemon
+# Start the server
+ExecStart=/usr/local/bin/nabaos start
 
 # Restart policy: always restart with a 5-second delay
 Restart=always
@@ -158,13 +155,6 @@ sudo systemctl enable nabaos
 sudo systemctl start nabaos
 ```
 
-Expected output from `enable`:
-
-```
-Created symlink /etc/systemd/system/multi-user.target.wants/nabaos.service
-  → /etc/systemd/system/nabaos.service.
-```
-
 Check the service status:
 
 ```bash
@@ -183,12 +173,11 @@ Expected output:
      Memory: 45.2M
         CPU: 320ms
      CGroup: /system.slice/nabaos.service
-             └─12345 /usr/local/bin/nabaos daemon
+             └─12345 /usr/local/bin/nabaos start
 
 Feb 24 10:00:01 server nabaos[12345]: INFO  NabaOS starting...
-Feb 24 10:00:01 server nabaos[12345]: INFO  Loading configuration from /var/lib/nabaos/config
 Feb 24 10:00:02 server nabaos[12345]: INFO  Security layer initialized
-Feb 24 10:00:02 server nabaos[12345]: INFO  Daemon listening
+Feb 24 10:00:02 server nabaos[12345]: INFO  Ready.
 ```
 
 ---
@@ -201,14 +190,6 @@ The agent logs to journald via `tracing-subscriber`. Use `journalctl` to view th
 
 ```bash
 sudo journalctl -u nabaos -f
-```
-
-Expected output:
-
-```
-Feb 24 10:00:02 server nabaos[12345]: INFO  Daemon listening
-Feb 24 10:05:11 server nabaos[12345]: INFO  Cache hit: check_email (fingerprint match)
-Feb 24 10:05:11 server nabaos[12345]: INFO  Request completed in 12ms
 ```
 
 ### View logs since boot
@@ -274,56 +255,8 @@ sudo systemctl restart nabaos
 sudo systemctl show nabaos --property=MemoryCurrent,CPUUsageNSec
 ```
 
-Expected output:
-
-```
-MemoryCurrent=47316992
-CPUUsageNSec=1250000000
-```
-
 ### View the full unit file
 
 ```bash
 systemctl cat nabaos
 ```
-
----
-
-## Running the Web Dashboard as a Separate Service
-
-If you also want to run the web dashboard under systemd, create a second unit file:
-
-```bash
-sudo tee /etc/systemd/system/nyaya-web.service > /dev/null << 'EOF'
-[Unit]
-Description=NabaOS - Web Dashboard
-After=nabaos.service
-Requires=nabaos.service
-
-[Service]
-Type=simple
-User=nyaya
-Group=nyaya
-EnvironmentFile=/etc/nabaos/env
-WorkingDirectory=/var/lib/nabaos
-ExecStart=/usr/local/bin/nabaos web --bind 127.0.0.1:3000
-Restart=always
-RestartSec=5
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/var/lib/nabaos
-PrivateTmp=yes
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=nyaya-web
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now nyaya-web
-```
-
-The dashboard will be available at `http://127.0.0.1:3000`. Place a reverse proxy (nginx, Caddy) in front of it for HTTPS.

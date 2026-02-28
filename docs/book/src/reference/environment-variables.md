@@ -8,56 +8,86 @@ optional variable.
 
 | Variable | Type | Default | Description | Example |
 |----------|------|---------|-------------|---------|
-| `NABA_LLM_API_KEY` | string | _(none)_ | API key for the primary LLM provider. Required for any operation that routes to an LLM (orchestrate, daemon, web). | `sk-ant-api03-...` |
+| `NABA_LLM_API_KEY` | string | _(none)_ | API key for the primary LLM provider. Required for any operation that routes to an LLM (`ask`, `start`). | `sk-ant-api03-...` |
 
 ## LLM & Routing
 
 | Variable | Type | Default | Description | Example |
 |----------|------|---------|-------------|---------|
 | `NABA_LLM_PROVIDER` | string | `anthropic` | Primary LLM provider. Options: `anthropic`, `openai`, `gemini`. | `openai` |
+| `NABA_CHEAP_LLM_PROVIDER` | string | _(same as primary)_ | Provider for cheap model (Tier 3). | `anthropic` |
+| `NABA_CHEAP_LLM_MODEL` | string | _(provider default)_ | Cheap model name for Tier 3 routing. | `claude-haiku-4-5` |
+| `NABA_EXPENSIVE_LLM_MODEL` | string | _(provider default)_ | Expensive model name for Tier 4 routing. | `claude-opus-4-6` |
 | `NABA_DAILY_BUDGET_USD` | float | `10.0` | Maximum daily LLM spend in USD. The cost tracker enforces this limit. | `25.0` |
 | `NABA_PER_TASK_BUDGET_USD` | float | _(none)_ | Maximum spend per individual task in USD. | `2.0` |
-| `NABA_CACHE_SIMILARITY` | float | `0.92` | Cosine similarity threshold for semantic cache hits. Range: 0.0-1.0. Higher values require more exact matches. | `0.95` |
 
 ## Paths & Storage
 
 | Variable | Type | Default | Description | Example |
 |----------|------|---------|-------------|---------|
-| `NABA_DATA_DIR` | path | `~/.nabaos` | Root directory for all persistent data: databases, plugins, agents, profiles. | `/opt/nyaya/data` |
-| `NABA_MODEL_PATH` | path | `models/setfit-w5h2` | Directory containing the SetFit ONNX model files (`model.onnx`, tokenizer, etc.). | `/opt/nyaya/models/setfit-w5h2` |
-| `NABA_PLUGIN_DIR` | path | `$NABA_DATA_DIR/plugins` | Directory where installed plugins are stored. | `/opt/nyaya/plugins` |
+| `NABA_DATA_DIR` | path | `~/.nabaos` | Root directory for all persistent data: databases, plugins, agents, profiles. | `/opt/nabaos/data` |
+| `NABA_MODEL_PATH` | path | `models/setfit-w5h2` | Directory containing the ONNX model files (`model.onnx`, tokenizer, etc.). | `/opt/nabaos/models/setfit-w5h2` |
+| `NABA_PLUGIN_DIR` | path | `$NABA_DATA_DIR/plugins` | Directory where installed plugins are stored. | `/opt/nabaos/plugins` |
 | `NABA_SUBPROCESS_CONFIG` | path | _(none)_ | Path to a YAML file defining subprocess abilities. Loaded at startup. | `./config/subprocess.yaml` |
 
 ## Constitution
 
 | Variable | Type | Default | Description | Example |
 |----------|------|---------|-------------|---------|
-| `NABA_CONSTITUTION_PATH` | path | _(none)_ | Path to a custom constitution YAML file. If not set, the built-in default constitution is used (deny-by-default). | `./my-constitution.yaml` |
-| `NABA_CONSTITUTION_TEMPLATE` | string | _(none)_ | Named template to use instead of a file. Options: `default`, `solopreneur`, `freelancer`, `digital-marketer`, `student`, `sales`, `customer-support`, `legal`, `ecommerce`, `hr`, `finance`, `healthcare`, `engineering`, `media`, `government`, `ngo`, `logistics`, `research`, `consulting`, `creative`, `agriculture`. | `solopreneur` |
+| `NABA_CONSTITUTION_PATH` | path | _(none)_ | Path to a custom constitution YAML file. If not set, the built-in default constitution is used (`default_enforcement: allow`). | `./my-constitution.yaml` |
+| `NABA_CONSTITUTION_TEMPLATE` | string | _(none)_ | Named template to use instead of a file. Options: `default`, `content-creator`, `dev-assistant`, `full-autonomy`, `home-assistant`, `hr-assistant`, `research-assistant`, `trading`. | `trading` |
 
-## Telegram Bot
+## Telegram
 
 | Variable | Type | Default | Description | Example |
 |----------|------|---------|-------------|---------|
-| `NABA_TELEGRAM_BOT_TOKEN` | string | _(none)_ | Telegram Bot API token. Required to start the Telegram bot or daemon with Telegram enabled. | `7123456789:AAF...` |
+| `NABA_TELEGRAM_BOT_TOKEN` | string | _(none)_ | Telegram Bot API token. Required to start the Telegram bot. | `7123456789:AAF...` |
 | `NABA_SECURITY_BOT_TOKEN` | string | _(none)_ | Separate Telegram bot token for security alerts. | `7987654321:AAG...` |
 | `NABA_ALERT_CHAT_ID` | string | _(none)_ | Telegram chat ID where security alerts are sent. | `-1001234567890` |
-| `NABA_ALLOWED_CHAT_IDS` | string | _(none)_ | Comma-separated list of Telegram chat IDs allowed to interact with the bot. If not set, all chats are allowed. | `12345678,87654321` |
+| `NABA_ALLOWED_CHAT_IDS` | string | _(none)_ | Comma-separated list of Telegram chat IDs allowed to interact with the bot. If not set, messages from unknown chat IDs are silently ignored. | `12345678,87654321` |
 
 ## Two-Factor Authentication
 
 | Variable | Type | Default | Description | Example |
 |----------|------|---------|-------------|---------|
 | `NABA_TELEGRAM_2FA` | string | _(none)_ | 2FA method for Telegram bot. Options: `totp`, `password`. | `totp` |
-| `NABA_TOTP_SECRET` | string | _(none)_ | Base32-encoded TOTP secret. Generated by `nyaya telegram-setup-2fa totp`. | `JBSWY3DPEHPK3PXP` |
-| `NABA_2FA_PASSWORD_HASH` | string | _(none)_ | Argon2 hash of the 2FA password. Generated by `nyaya telegram-setup-2fa password`. | `$argon2id$v=19$m=19456...` |
+| `NABA_TOTP_SECRET` | string | _(none)_ | Base32-encoded TOTP secret. Generated by `nabaos config security 2fa totp`. | `JBSWY3DPEHPK3PXP` |
+| `NABA_2FA_PASSWORD_HASH` | string | _(none)_ | Argon2 hash of the 2FA password. Generated by `nabaos config security 2fa password`. | `$argon2id$v=19$m=19456...` |
+
+## Discord
+
+| Variable | Type | Default | Description | Example |
+|----------|------|---------|-------------|---------|
+| `NABA_DISCORD_BOT_TOKEN` | string | _(none)_ | Discord bot token from the Developer Portal. Enables outbound-only Discord integration. | `MTIzNDU2Nzg5MDEy.GAbcDE...` |
+
+## Slack
+
+| Variable | Type | Default | Description | Example |
+|----------|------|---------|-------------|---------|
+| `NABA_SLACK_BOT_TOKEN` | string | _(none)_ | Slack bot token. | `xoxb-...` |
+| `NABA_SLACK_CHANNEL` | string | _(none)_ | Default Slack channel for notifications. | `#alerts` |
+
+## WhatsApp
+
+| Variable | Type | Default | Description | Example |
+|----------|------|---------|-------------|---------|
+| `NABA_WHATSAPP_TOKEN` | string | _(none)_ | WhatsApp Business API token. | `EAAx...` |
+
+## Email
+
+| Variable | Type | Default | Description | Example |
+|----------|------|---------|-------------|---------|
+| `NABA_EMAIL_SMTP_HOST` | string | _(none)_ | SMTP server host for outbound email. | `smtp.gmail.com` |
+| `NABA_EMAIL_SMTP_PORT` | integer | `587` | SMTP server port. | `465` |
+| `NABA_EMAIL_USERNAME` | string | _(none)_ | SMTP username. | `agent@example.com` |
+| `NABA_EMAIL_PASSWORD` | string | _(none)_ | SMTP password. | `app-password` |
 
 ## Web Dashboard
 
 | Variable | Type | Default | Description | Example |
 |----------|------|---------|-------------|---------|
-| `NABA_WEB_PASSWORD` | string | _(none)_ | Password for web dashboard authentication. If not set, the web dashboard runs without authentication. In daemon mode, the web dashboard is only started if this variable is set. | `my-secure-password` |
-| `NABA_WEB_BIND` | string | `127.0.0.1:8919` | Bind address for the web dashboard server. | `0.0.0.0:8080` |
+| `NABA_WEB_PASSWORD` | string | _(none)_ | Password for web dashboard authentication. If not set, the web dashboard is disabled. | `my-secure-password` |
+| `NABA_WEB_BIND` | string | `127.0.0.1:8919` | Bind address for the web dashboard server. | `0.0.0.0:9000` |
 | `NABA_WEB_SESSION_TTL` | integer | `86400` | Web session time-to-live in seconds (default: 24 hours). | `3600` |
 
 ## Vault
@@ -66,12 +96,35 @@ optional variable.
 |----------|------|---------|-------------|---------|
 | `NABA_VAULT_PASSPHRASE` | string | _(none)_ | Passphrase for the encrypted secret vault. If not set, the CLI prompts interactively. | `my-vault-passphrase` |
 
+## Media & Voice
+
+| Variable | Type | Default | Description | Example |
+|----------|------|---------|-------------|---------|
+| `NABA_VOICE_MODE` | string | _(none)_ | Enable voice input mode. | `whisper` |
+| `NABA_MEDIA_DIR` | path | `$NABA_DATA_DIR/media` | Directory for media file storage. | `/opt/nabaos/media` |
+
+## Security
+
+| Variable | Type | Default | Description | Example |
+|----------|------|---------|-------------|---------|
+| `NABA_CONTAINER_POOL_SIZE` | integer | `3` | Number of pre-warmed containers. | `5` |
+| `NABA_ENCRYPTION_KEY_FILE` | path | _(none)_ | Path to LUKS key file. | `/etc/nabaos/key` |
+
+## Integrations
+
+| Variable | Type | Default | Description | Example |
+|----------|------|---------|-------------|---------|
+| `NABA_GOOGLE_CLIENT_ID` | string | _(none)_ | Google OAuth client ID. | `123456.apps.googleusercontent.com` |
+| `NABA_GOOGLE_CLIENT_SECRET` | string | _(none)_ | Google OAuth client secret. | `GOCSPX-...` |
+| `NABA_NOTION_TOKEN` | string | _(none)_ | Notion integration token. | `ntn_...` |
+
 ## Logging
 
 | Variable | Type | Default | Description | Example |
 |----------|------|---------|-------------|---------|
-| `NABA_LOG_LEVEL` | string | `info` | Log level filter. Uses `tracing_subscriber::EnvFilter` syntax. Options: `error`, `warn`, `info`, `debug`, `trace`. Module-level filters are also supported. | `debug` |
-| `RUST_LOG` | string | _(none)_ | Standard Rust logging filter. `NABA_LOG_LEVEL` takes precedence if both are set. | `nyaya_agent=debug,tower_http=info` |
+| `RUST_LOG` | string | `info` | Standard Rust logging filter. Uses `tracing_subscriber::EnvFilter` syntax. Supports module-level filters. | `nabaos=debug,tower_http=info` |
+
+---
 
 ## Precedence
 
@@ -84,17 +137,17 @@ The smallest viable configuration for local classification (no LLM calls):
 
 ```bash
 # No env vars needed -- defaults are sufficient
-nyaya classify "check my email"
+nabaos admin classify "check my email"
 ```
 
 For the full pipeline with LLM routing:
 
 ```bash
 export NABA_LLM_API_KEY="sk-ant-api03-..."
-nyaya orchestrate "summarize today's news"
+nabaos ask "summarize today's news"
 ```
 
-For production daemon mode:
+For production server mode:
 
 ```bash
 export NABA_LLM_API_KEY="sk-ant-api03-..."
@@ -103,5 +156,5 @@ export NABA_WEB_PASSWORD="secure-dashboard-pw"
 export NABA_VAULT_PASSPHRASE="vault-pw"
 export NABA_CONSTITUTION_PATH="./constitution.yaml"
 export NABA_DAILY_BUDGET_USD="15.0"
-nyaya daemon
+nabaos start
 ```

@@ -5,7 +5,7 @@
 > - The W5H2 framework and how it simplifies intent classification to Action + Target
 > - All 11 actions and 30 targets with descriptions and examples
 > - How classification maps to constitution rule matching
-> - How the SetFit ONNX model works
+> - How the two-model system works (BERT for Tier 1, SetFit for Tier 2)
 > - How fingerprinting provides fast exact-match before ML classification
 
 ---
@@ -121,7 +121,7 @@ target (e.g., "email")   →   trigger_targets: ["email"]
 ```
 User query: "Forward this email to the marketing team"
 
-1. BERT classifies: action=send, target=email
+1. BERT classifies: action=send, target=email (confidence 0.94)
 
 2. Constitution rule evaluation:
    Rule "confirm_send_actions":
@@ -150,93 +150,90 @@ This means the W5H2 classification serves double duty:
 
 ---
 
-## SetFit ONNX Model
+## Two-Model Classification System
 
-### What is SetFit?
+NabaOS uses two separate ML models for intent classification, running as Tier 1 and Tier 2 of the pipeline:
 
-SetFit (Sentence Transformer Fine-Tuning) is a few-shot learning framework that produces high-accuracy text classifiers from small amounts of training data. Unlike traditional fine-tuning that requires thousands of examples per class, SetFit can achieve strong performance with as few as 8 examples per class.
+### Tier 1: BERT Classifier (8 classes)
 
-### How the model is trained
-
-The NabaOS W5H2 classifier is trained on the 54 intent classes defined in `W5H2_CLASSES`:
+The BERT classifier is a fine-tuned BERT-base-uncased model (~110M parameters) exported to ONNX format. It handles the 8 most common intent classes with high accuracy:
 
 ```
-Training data per class: 8-16 example queries
-Total classes: 54 (subset of 11 actions x 30 targets)
-Model architecture: Sentence transformer (all-MiniLM-L6-v2 base)
-Export format: ONNX (for fast inference without Python)
-Model size: ~23MB
+Trained classes:
+  add_shopping, check_calendar, check_email, check_price,
+  check_weather, control_lights, send_email, set_reminder
 ```
 
-Example training data for the `check_email` class:
+| Metric | Score |
+|---|---|
+| Accuracy (8-class) | 97.3% |
+| Pass-through rate (>0.85 confidence) | 97.9% |
+| Accuracy at >0.85 confidence | 98.2% |
+| Inference latency | 5-10ms |
+| Max sequence length | 128 tokens |
 
-```
-"Check my email"
-"Do I have any new messages?"
-"Show me my inbox"
-"Any emails from Alice?"
-"What's in my email?"
-"Read my latest emails"
-"Open my mail"
-"Check for new email notifications"
-```
+**Cascade threshold:** If BERT's confidence is below **0.85**, the query cascades to the SetFit classifier at Tier 2.
 
-### Inference pipeline
+### Tier 2: SetFit Classifier (54 classes)
+
+The SetFit classifier uses an all-MiniLM-L6-v2 sentence transformer backbone (~22M parameters) with a logistic regression classification head. It covers all 54 W5H2 intent classes:
+
+| Metric | Score |
+|---|---|
+| Embedding dimension | 384 |
+| Inference | Two-step: ONNX embedding → logistic regression |
+| Max sequence length | 128 tokens |
+| Classification head | Logistic regression (weights from sklearn) |
+
+**Inference pipeline:**
 
 ```
 Query text
     |
     v
-Tokenizer (WordPiece)
+Tokenizer
     |
     v
 Sentence Transformer (ONNX)
     |
     v
-Embedding vector (384 dimensions)
+384-dim normalized embedding
     |
     v
-Classification head
+Logistic regression head (embedding @ weights^T + bias)
     |
     v
 Predicted class + confidence score
     |
     v
 Parse into (Action, Target) pair
-
-Example:
-  Input:  "Can you check if I got any new emails?"
-  Output: check_email (confidence: 0.96)
-  Parsed: Action::Check, Target::Email
 ```
 
-### Accuracy
+### `bert` Feature Gate
 
-Based on validation benchmarks:
+Both models are gated behind the `bert` compile-time feature flag. When built without `--features bert`:
 
-| Metric | Score |
-|---|---|
-| Top-1 accuracy | 92-95% |
-| Top-3 accuracy | 98%+ |
-| Average confidence (correct) | 0.94 |
-| Average confidence (incorrect) | 0.61 |
+- Tiers 1 and 2 are skipped
+- All queries are classified as `unknown_unknown`
+- Queries fall through directly to the semantic cache (Tier 2.5) and LLM tiers
+- Intent routing for agents degrades (all queries match the default handler)
 
-The confidence gap between correct and incorrect predictions makes it possible to set a threshold (default: 0.70) below which the system falls back to LLM-based classification at Tier 3.
+This is useful for minimal deployments where local classification is not needed.
 
 ### Why ONNX?
 
-The model is exported to ONNX format for several reasons:
+Both models are exported to ONNX format for several reasons:
 
 - **No Python dependency:** The Rust runtime uses the `ort` crate (ONNX Runtime bindings) for inference. No Python interpreter needed.
 - **Fast inference:** ONNX Runtime is optimized for inference with hardware acceleration support.
-- **Small footprint:** The 23MB model fits comfortably on any machine.
+- **Small footprint:** Both models fit comfortably on any machine.
 - **Deterministic:** Same input always produces same output, unlike LLM-based classification.
 
 ---
 
 ## Fingerprinting: Fast Exact-Match Before ML
 
-Before the BERT/SetFit classifier runs, the fingerprint cache performs an exact-match lookup. This is the fastest possible classification path.
+Before the BERT/SetFit classifiers run, the fingerprint cache performs an exact-match lookup. This is the fastest possible classification path.
 
 ### How fingerprinting works
 
@@ -271,7 +268,7 @@ Fingerprinting is most effective for:
 | Match type | Exact text match | Action-target class match |
 | Latency | <1ms | ~10ms |
 | Handles variations | No | Yes |
-| Requires ML | No | Yes (Tier 1 classification) |
+| Requires ML | No | Yes (Tier 1-2 classification) |
 | Hit rate | 20-40% (habitual users) | 60-80% (after learning) |
 | Combined hit rate | 80-95% of all queries |
 
@@ -281,7 +278,7 @@ The two caches are complementary. Fingerprinting handles the easy cases instantl
 
 Fingerprint entries are created automatically:
 
-1. A query goes through the full pipeline (Tiers 1-3)
+1. A query goes through the full pipeline (Tiers 1-4)
 2. If the response is successful and the query resolves to a cacheable plan
 3. The normalized query hash is stored with its classification result
 4. Next time the exact same query arrives, it resolves at Tier 0

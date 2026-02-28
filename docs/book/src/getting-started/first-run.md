@@ -5,15 +5,15 @@
 > - How to run the interactive setup wizard
 > - What each wizard step configures
 > - How to send your first classification query
-> - How to start the daemon and access the web dashboard
+> - How to start the server and access the web dashboard
 
 ## Step 1: Run the Setup Wizard
 
 The setup wizard scans your hardware, suggests which modules to enable, and
-writes a profile to `~/.nabaos/profile.toml`.
+writes a profile to your data directory.
 
 ```bash
-nyaya setup
+nabaos setup
 ```
 
 **Expected output:**
@@ -51,25 +51,24 @@ The wizard does four things:
    `telegram` (if a bot token is present). Disables resource-heavy modules like
    `voice` and `browser` if your hardware is constrained.
 
-3. **Writes the profile** -- saves the module configuration to
-   `~/.nabaos/profile.toml`. You can edit this file later by hand or
-   re-run `nyaya setup`.
+3. **Writes the profile** -- saves the module configuration. You can edit this
+   file later by hand or re-run `nabaos setup`.
 
-4. **Downloads models** -- if the SetFit ONNX model files are not already
-   present, they are fetched on first use (~25 MB).
+4. **Downloads models** -- if the ONNX model files are not already
+   present, they are fetched on first use.
 
 If you want to skip prompts and accept the suggested profile automatically:
 
 ```bash
-nyaya setup --non-interactive
+nabaos setup --non-interactive
 ```
 
 ---
 
 ## Step 2: Set Your LLM Provider
 
-NabaOS needs at least one LLM API key for Tier 4 (cheap LLM) and Tier 5
-(deep agent) requests. Cached requests (Tiers 1-3) never call an LLM.
+NabaOS needs at least one LLM API key for Tier 3 (cheap LLM) and Tier 4
+(deep agent) requests. Cached requests (Tiers 0-2.5) never call an LLM.
 
 Export your API key:
 
@@ -90,10 +89,10 @@ terminal sessions.
 
 ## Step 3: Quick Test -- Classify a Query
 
-Run the classifier to verify that the SetFit ONNX model is loaded and working:
+Run the classifier to verify that the ONNX model is loaded and working:
 
 ```bash
-nyaya classify "check my email"
+nabaos admin classify "check my email"
 ```
 
 **Expected output:**
@@ -113,25 +112,25 @@ in under 5 ms, entirely on your local machine with no API call.
 Try a few more:
 
 ```bash
-nyaya classify "summarize this PDF"
-nyaya classify "what is the weather in Tokyo"
-nyaya classify "schedule a meeting with Alice tomorrow"
+nabaos admin classify "summarize this PDF"
+nabaos admin classify "what is the weather in Tokyo"
+nabaos admin classify "schedule a meeting with Alice tomorrow"
 ```
 
 ---
 
 ## Step 4: Run the Full Pipeline
 
-The `query` command runs a request through the complete five-tier pipeline:
+The `ask` command runs a request through the complete pipeline:
 
 ```bash
-nyaya query "check my email"
+nabaos ask "check my email"
 ```
 
-**Expected output (first run -- Tier 2 hit):**
+**Expected output (first run -- classification hit):**
 
 ```text
-=== Tier 2: SetFit ONNX Classification ===
+=== Tier 1: BERT Classification ===
 Intent:     check|email
 Confidence: 94.2%
 Latency:    4.7ms
@@ -148,13 +147,13 @@ No cached execution plan for 'check|email'. Would route to LLM.
 Run the same query again to see the fingerprint cache in action:
 
 ```bash
-nyaya query "check my email"
+nabaos ask "check my email"
 ```
 
-**Expected output (second run -- Tier 1 hit):**
+**Expected output (second run -- Tier 0 hit):**
 
 ```text
-=== Tier 1: Fingerprint Cache HIT ===
+=== Tier 0: Fingerprint Cache HIT ===
 Intent:     check|email
 Confidence: 94.2%
 Latency:    0.031ms
@@ -165,10 +164,10 @@ a fingerprint hash on the first run. No model inference, no API call.
 
 ---
 
-## Step 5: Start the Daemon
+## Step 5: Start the Server
 
-The daemon runs the scheduler loop, the Telegram bot (if configured), and the
-web dashboard (if configured) as background services.
+The `start` command runs the scheduler loop, the Telegram bot (if configured),
+and the web dashboard (if configured) as background services.
 
 Set a password for the web dashboard:
 
@@ -176,18 +175,18 @@ Set a password for the web dashboard:
 export NABA_WEB_PASSWORD=your-secure-password
 ```
 
-Start the daemon:
+Start the server:
 
 ```bash
-nyaya daemon
+nabaos start
 ```
 
 **Expected output:**
 
 ```text
-Starting NabaOS daemon...
-[daemon] NABA_TELEGRAM_BOT_TOKEN not set -- Telegram bot disabled.
-[daemon] Starting web dashboard on http://127.0.0.1:8919...
+Starting NabaOS...
+[start] NABA_TELEGRAM_BOT_TOKEN not set -- Telegram bot disabled.
+[start] Starting web dashboard on http://127.0.0.1:8919...
 ```
 
 ---
@@ -216,5 +215,5 @@ Log in with the password you set in `NABA_WEB_PASSWORD`. The dashboard shows:
 | Install and run a pre-built agent | [Your First Agent](your-first-agent.md) |
 | Configure LLM providers and budgets | [Configuration](configuration.md) |
 | Set up Telegram or Discord | [Telegram Setup](../guides/telegram-setup.md) |
-| Understand the five-tier pipeline | [Five-Tier Pipeline](../core-concepts/five-tier-pipeline.md) |
+| Understand the five-tier pipeline | [Five-Tier Pipeline](../concepts/five-tier-pipeline.md) |
 | Write your own agent | [Building Agents](../guides/building-agents.md) |

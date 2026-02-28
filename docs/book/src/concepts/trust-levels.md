@@ -190,48 +190,6 @@ Even if `trading.execute` has been run 1,000 times with 100% success, it remains
 
 ---
 
-## Manually Setting Trust Levels
-
-In most cases, trust levels are managed automatically by the trust tracking system. However, administrators can override trust levels using the CLI:
-
-### Promote a chain to a higher trust level
-
-```bash
-# Promote a chain to Level 2 (Autonomous)
-# This bypasses the 50-run and 95% success requirements
-nabaos trust set morning_briefing autonomous
-
-# Promote to Level 1 (Graduated)
-nabaos trust set morning_briefing graduated
-```
-
-**Warning:** Manual promotion skips the statistical verification. Use this only for chains you have thoroughly tested outside the production system.
-
-### Demote a chain to a lower trust level
-
-```bash
-# Reset a chain to Level 0 (Supervised)
-nabaos trust set morning_briefing supervised
-
-# Reset all chains to Level 0
-nabaos trust reset --all
-```
-
-### View current trust levels
-
-```bash
-# Show trust status for all chains
-nabaos trust status
-
-# Output:
-# Chain              Level              Steps (graduated/total)
-# morning_briefing   Level 1 (Graduated) 3/4
-# daily_portfolio    Level 2 (Autonomous) 3/3
-# trade_executor     Level 0 (Supervised) 0/2 [PINNED: trading.execute]
-```
-
----
-
 ## Trust Revocation
 
 Trust can be revoked (downgraded) when the system detects problems:
@@ -249,16 +207,9 @@ Trust can be revoked (downgraded) when the system detects problems:
 When an anomaly is detected:
 
 1. The chain's trust level is immediately set to Level 0 (Supervised)
-2. A security alert is sent to the security bot Telegram channel
+2. A security alert is sent to the configured alert channel
 3. The anomaly is logged with full context for investigation
 4. The chain remains at Level 0 until an administrator reviews and manually clears the anomaly flag
-
-### Manual revocation
-
-```bash
-# Revoke trust for a specific chain due to observed issues
-nabaos trust revoke morning_briefing --reason "Unexpected email forwarding behavior"
-```
 
 ### Recovery after revocation
 

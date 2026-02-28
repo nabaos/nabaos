@@ -6,8 +6,7 @@
 > - The full YAML structure with annotated examples
 > - How each enforcement type works: allow, block, confirm, warn
 > - How trigger matching works with actions, targets, and keywords
-> - How Ed25519 signing protects constitutions from tampering
-> - The 21 built-in constitution templates
+> - The 8 built-in constitution templates
 > - Where constitution checks happen in the pipeline
 
 ---
@@ -23,13 +22,12 @@ Key differences from system prompts:
 | Enforced by | LLM (can be overridden) | Rust code (cannot be bypassed) |
 | Format | Free-form text | Structured YAML |
 | Modifiable at runtime | Often yes | Never (read-only mount) |
-| Signed | No | Ed25519 signature |
 | Checked when | After LLM generates output | Before any LLM call |
 
-The constitution is mounted read-only into the runtime container. The agent cannot write to its own constitution. Modification requires the local CLI tool with Ed25519 signing:
+The constitution is loaded at startup and treated as read-only. The agent cannot write to its own constitution. Modification requires editing the YAML file and restarting.
 
 ```bash
-nabaos constitution edit
+nabaos config rules show
 ```
 
 ---
@@ -45,21 +43,19 @@ name: "my-trading-bot"
 # Semantic version
 version: "1.0.0"
 
-# Human-readable description of this constitution's purpose
+# Human-readable description of this constitution's purpose (optional)
 description: "Trading assistant — market monitoring, portfolio analysis, trade execution"
 
 # Default enforcement for intents that don't match any rule.
-# IMPORTANT: This should almost always be "block" (deny-by-default).
-# Using "allow" or "warn" here means ANY unmatched intent is permitted,
-# which defeats the purpose of the constitution.
-default_enforcement: block
+# The shipped default.yaml uses "allow". The code default (when no
+# constitution is loaded) is "block".
+default_enforcement: allow
 
 # Ordered list of rules. Rules are evaluated top-to-bottom;
 # the FIRST matching rule wins.
 rules:
   # Rule 1: Allow read-only price checks
   - name: allow_price_checks
-    description: "Allow checking stock/crypto prices"
     trigger_actions:
       - check          # Matches the "check" W5H2 action
     trigger_targets:
@@ -70,7 +66,6 @@ rules:
 
   # Rule 2: Require confirmation for trade execution
   - name: confirm_trades
-    description: "Require user approval before executing any trade"
     trigger_actions:
       - send           # "send" covers trade execution
       - control        # "control" covers portfolio adjustments
@@ -83,7 +78,6 @@ rules:
 
   # Rule 3: Block access to personal data
   - name: block_personal_data
-    description: "Trading bot cannot access personal communications"
     trigger_actions:
       - "*"            # Wildcard — matches ANY action
     trigger_targets:
@@ -96,7 +90,6 @@ rules:
 
   # Rule 4: Block queries containing destructive keywords
   - name: block_destructive_keywords
-    description: "Block queries with dangerous keywords regardless of intent"
     trigger_actions: []
     trigger_targets: []
     trigger_keywords:
@@ -109,7 +102,6 @@ rules:
 
   # Rule 5: Allow standard analysis operations
   - name: allow_analysis
-    description: "Allow market analysis and research"
     trigger_actions:
       - analyze
       - search
@@ -118,7 +110,16 @@ rules:
     trigger_keywords: []
     enforcement: allow
     reason: "Analysis operations are the core function of this bot"
+
+# Additional optional fields:
+# channel_permissions:   Per-channel access control
+# browser_stealth:       Browser automation stealth settings
+# swarm_config:          Multi-agent swarm configuration
+# ollama_config:         Local Ollama model configuration
+# captcha_solver:        Captcha handling configuration
 ```
+
+> **Note:** The `description` field on individual rules is optional.
 
 ---
 
@@ -181,8 +182,6 @@ The intent is permitted but a warning is logged. The user sees a notice that the
 ```
 
 **Use for:** Actions you want to audit but not block, operations in a testing phase, low-risk but notable actions.
-
-**Important security note:** The default enforcement for unmatched intents is `block` (deny-by-default). If you set `default_enforcement: warn` or `default_enforcement: allow`, any intent that does not match a rule will be permitted. This is almost always a mistake.
 
 ---
 
@@ -248,83 +247,35 @@ If no rule matches, the `default_enforcement` is applied.
 
 ---
 
-## Ed25519 Signing
-
-Constitutions are signed with Ed25519 to prevent tampering. The signing workflow:
-
-```
-1. User edits constitution YAML on their local machine
-2. CLI computes Ed25519 signature of the file contents
-3. Signature is stored alongside the constitution
-4. At load time, the runtime verifies the signature
-5. If the signature is invalid, the constitution is rejected
-   and the agent refuses to start
-```
-
-**Generate a signing key:**
-
-```bash
-nabaos constitution keygen
-# Writes keypair to ~/.nabaos/constitution.key
-```
-
-**Sign a constitution:**
-
-```bash
-nabaos constitution sign config/constitutions/trading.yaml
-# Appends signature to the file or writes a .sig sidecar
-```
-
-**Verify a constitution:**
-
-```bash
-nabaos constitution verify config/constitutions/trading.yaml
-# Output: Constitution signature valid: trading v1.0.0
-```
-
-The signing key is stored on the user's machine and never transmitted to the agent runtime. This ensures that even if the agent runtime is compromised, the constitution cannot be modified.
-
----
-
 ## Built-in Templates
 
-NabaOS ships with 21 constitution templates covering common use cases. Each template follows deny-by-default policy and includes sensible rules for its domain.
+NabaOS ships with 8 constitution templates covering common use cases:
 
-| Template name | Description | Key rules |
-|---|---|---|
-| `default` | General-purpose safety defaults | Block destructive keywords, confirm sends/deletes, allow reads |
-| `solopreneur` | Business planning, drafting, research | Allow business ops, confirm sends/deletes |
-| `freelancer` | Invoicing, client comms, time tracking | Allow freelance ops, confirm sends/deletes |
-| `digital-marketer` | Analytics, content creation, SEO | Allow marketing, block financial access |
-| `student` | Research, study aids, assignments | Allow learning ops, block financial access |
-| `sales` | Lead management, outreach, pipeline | Allow sales ops, confirm outreach sends |
-| `customer-support` | Ticket triage, KB search, response drafting | Allow support ops, block delete/control |
-| `legal` | Contract analysis, case research, drafting | Allow legal ops, block delete/control |
-| `ecommerce` | Inventory, orders, product listings | Allow e-commerce ops, confirm sends/deletes |
-| `hr` | Recruitment, onboarding, engagement | Allow HR ops, block financial access |
-| `finance` | Accounting, tax, audit, budgeting | Allow finance + trading ops, confirm sends |
-| `healthcare` | Clinical summaries, triage, drug interactions | Allow healthcare ops, block delete/control |
-| `engineering` | Inspections, maintenance, project tracking | Allow engineering ops, confirm sends/deletes |
-| `media` | Journalism, PR, content production | Allow media ops, block financial access |
-| `government` | Policy analysis, regulatory, compliance | Allow government ops, block destructive actions |
-| `ngo` | Grant writing, donor reports, monitoring | Allow NGO ops, confirm sends/deletes |
-| `logistics` | Shipment tracking, route optimization | Allow logistics ops, confirm sends/deletes |
-| `research` | Literature review, data analysis, papers | Allow research ops, block financial + destructive |
-| `consulting` | Competitive analysis, due diligence | Allow consulting ops, confirm sends/deletes |
-| `creative` | Design, trends, spec sheets, content | Allow creative ops, block financial access |
-| `agriculture` | Crop monitoring, market prices, weather | Allow agriculture + trading, confirm sends/deletes |
+| Template name | Description |
+|---|---|
+| `default` | General-purpose safety defaults — block destructive keywords, confirm sends, allow reads |
+| `content-creator` | Content creation workflows |
+| `dev-assistant` | Developer assistant (code/git/CI domain) |
+| `full-autonomy` | Minimal restrictions for advanced users |
+| `home-assistant` | Smart home (IoT/calendar domain) |
+| `hr-assistant` | Human resources workflows |
+| `research-assistant` | Research: papers, data analysis, experiments |
+| `trading` | Financial markets monitoring and trading |
 
 **Using a template:**
 
 ```bash
-# Initialize with a template
-nabaos init --constitution solopreneur
+# List available templates
+nabaos config rules templates
 
-# Or switch templates later
-nabaos constitution use legal
+# Generate a constitution file from a template
+nabaos config rules use-template trading --output constitution.yaml
+
+# View the active constitution
+nabaos config rules show
 ```
 
-Templates can be customized after initialization. The template provides a starting point; you add or modify rules for your specific needs.
+Templates can be customized after generation. The template provides a starting point; you add or modify rules for your specific needs.
 
 ---
 
@@ -352,17 +303,17 @@ Tier 0: Fingerprint cache
 
 ### Check 2: Intent check (after classification)
 
-After Tier 1 classifies the intent into an action-target pair, the constitution enforcer checks all action-trigger and target-trigger rules against the classified intent.
+After Tiers 1-2 classify the intent into an action-target pair, the constitution enforcer checks all action-trigger and target-trigger rules against the classified intent.
 
 ```
     ...
-Tier 1: BERT classifies intent
+Tier 1-2: BERT/SetFit classifies intent
     |
     v
 Constitution intent check   <--- CHECK 2
     |
     v
-Tier 2: Intent cache lookup
+Tier 2.5: Semantic cache lookup
     ...
 ```
 

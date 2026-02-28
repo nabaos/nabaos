@@ -3,7 +3,7 @@
 > **What you'll learn**
 >
 > - How to create a custom NabaOS agent from scratch
-> - The structure of `manifest.yaml` and chain files
+> - The structure of manifest and chain files
 > - How to declare permissions and triggers
 > - How to package, install, test, and publish your agent
 
@@ -14,12 +14,13 @@
 - NabaOS installed and on your `PATH` (`nabaos --version` prints a version)
 - A working data directory (default `~/.nabaos`, or set via `NABA_DATA_DIR`)
 - At least one LLM provider configured (`NABA_LLM_API_KEY` set)
+- ONNX models available (set via `NABA_MODEL_PATH`)
 
 ---
 
 ## Step 1: Create the agent directory
 
-Every agent lives in its own directory with at minimum a `manifest.yaml` file:
+Every agent lives in its own directory with at minimum a manifest file:
 
 ```bash
 mkdir -p ~/my-agents/stock-watcher
@@ -132,42 +133,7 @@ Every step in the chain references an ability that must be listed in your manife
 
 See the [Writing Chains](./writing-chains.md) guide for the full Chain DSL reference.
 
-## Step 4: Add a constitution (optional but recommended)
-
-A constitution constrains what your agent is allowed to do. Create `constitution.yaml`:
-
-```yaml
-name: stock-watcher-constitution
-description: Constitution for stock-watcher agent
-rules:
-  - name: scope
-    enforcement: block
-    description: Only operate within finance scope
-    trigger_actions:
-      - execute
-      - query
-    trigger_targets:
-      - stock-watcher
-  - name: no-unauthorized-access
-    enforcement: block
-    description: Never access data outside finance scope
-    trigger_keywords:
-      - unauthorized
-      - private
-      - secret
-  - name: permission-boundary
-    enforcement: block
-    description: "Only use granted permissions: trading.get_price, notify.user, flow.branch, llm.query"
-    trigger_actions:
-      - use_permission
-    trigger_targets:
-      - trading.get_price
-      - notify.user
-      - flow.branch
-      - llm.query
-```
-
-## Step 5: Verify your directory structure
+## Step 4: Verify your directory structure
 
 Your agent directory should look like this:
 
@@ -179,12 +145,12 @@ stock-watcher/
     price_alert.yaml
 ```
 
-## Step 6: Package the agent
+## Step 5: Package the agent
 
 Package your agent directory into a `.nap` (NabaOS Agent Package) file:
 
 ```bash
-nabaos agent package ~/my-agents/stock-watcher --output stock-watcher.nap
+nabaos config agent package ~/my-agents/stock-watcher --output stock-watcher.nap
 ```
 
 Expected output:
@@ -192,17 +158,14 @@ Expected output:
 ```
 Packaging agent from ~/my-agents/stock-watcher...
   manifest.yaml ............ OK
-  constitution.yaml ........ OK
   chains/price_alert.yaml .. OK
 Agent packaged: stock-watcher.nap (2.1 KB)
 ```
 
-A `.nap` file is a tar.gz archive containing the manifest, chains, and constitution.
-
-## Step 7: Install the agent
+## Step 6: Install the agent
 
 ```bash
-nabaos agent install stock-watcher.nap
+nabaos config agent install stock-watcher.nap
 ```
 
 Expected output:
@@ -211,86 +174,52 @@ Expected output:
 Installing agent: stock-watcher v1.0.0
   Validating manifest ......... OK
   Checking permissions ........ OK (4 abilities)
-  Loading constitution ........ OK (3 rules)
   Registering chains .......... OK (1 chain)
 Agent installed: stock-watcher
 ```
 
-## Step 8: Verify the installation
+## Step 7: Verify the installation
 
 List installed agents:
 
 ```bash
-nabaos agent list
-```
-
-Expected output:
-
-```
-Installed agents:
-  stock-watcher  v1.0.0  [stopped]  "Monitor stock prices and alert on threshold crossings"
+nabaos config agent list
 ```
 
 Check the agent's permissions:
 
 ```bash
-nabaos agent permissions stock-watcher
+nabaos config agent permissions stock-watcher
 ```
 
-Expected output:
-
-```
-Agent: stock-watcher
-Permissions:
-  - trading.get_price
-  - notify.user
-  - flow.branch
-  - llm.query
-```
-
-## Step 9: Start the agent
+## Step 8: Start the agent
 
 ```bash
-nabaos agent start stock-watcher
+nabaos config agent start stock-watcher
 ```
 
-Expected output:
+## Step 9: Test the agent
 
-```
-Starting agent: stock-watcher
-  Loading chains .............. OK
-  Scheduling price_alert ...... every 15m
-Agent started: stock-watcher
-```
-
-## Step 10: Test the agent
-
-You can test your agent's chains directly using the `query` command:
+You can test your agent's chains directly using the `ask` command:
 
 ```bash
-nabaos query "check NVDA price"
+nabaos ask "check NVDA price"
 ```
 
-Or run the full orchestrator pipeline:
-
-```bash
-nabaos orchestrate "is NVDA above 800?"
-```
-
-## Step 11: Stop or manage the agent
+## Step 10: Stop or manage the agent
 
 ```bash
 # Stop a running agent
-nabaos agent stop stock-watcher
+nabaos config agent stop stock-watcher
 
 # Disable (prevents starting)
-nabaos agent disable stock-watcher
+nabaos config agent disable stock-watcher
 
 # Re-enable
-nabaos agent enable stock-watcher
+nabaos config agent enable stock-watcher
 
 # Uninstall completely
-nabaos agent uninstall stock-watcher
+nabaos config agent uninstall stock-watcher
 ```
 
 ## Complete working example

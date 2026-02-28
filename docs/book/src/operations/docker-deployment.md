@@ -5,7 +5,7 @@
 > - How to run NabaOS in Docker with a single command
 > - How to configure `docker-compose.yml` for persistent, production-ready deployments
 > - How to set up volumes, environment variables, and health checks
-> - How to run a multi-container setup with the web dashboard
+> - How to run with the web dashboard
 > - Where cloud deployment is headed (and what works today)
 
 ---
@@ -22,8 +22,8 @@ docker run -d \
   -e NABA_LLM_API_KEY="$NABA_LLM_API_KEY" \
   -e NABA_TELEGRAM_BOT_TOKEN="$NABA_TELEGRAM_BOT_TOKEN" \
   -e NABA_DAILY_BUDGET_USD=10.0 \
-  -v nyaya-data:/data \
-  -v nyaya-models:/models \
+  -v nabaos-data:/data \
+  -v nabaos-models:/models \
   ghcr.io/nabaos/nabaos:latest
 ```
 
@@ -31,13 +31,6 @@ Verify the container is running:
 
 ```bash
 docker ps --filter name=nabaos
-```
-
-Expected output:
-
-```
-CONTAINER ID   IMAGE                                    STATUS         PORTS   NAMES
-a1b2c3d4e5f6   ghcr.io/nabaos/nabaos:latest   Up 3 seconds           nabaos
 ```
 
 Check the logs to confirm startup:
@@ -52,7 +45,7 @@ Expected output:
 2026-02-24T10:00:01Z  INFO  NabaOS starting...
 2026-02-24T10:00:01Z  INFO  Loading configuration from /data/config
 2026-02-24T10:00:02Z  INFO  Security layer initialized
-2026-02-24T10:00:02Z  INFO  Daemon listening
+2026-02-24T10:00:02Z  INFO  Ready.
 ```
 
 ---
@@ -72,54 +65,49 @@ services:
 
     environment:
       # --- LLM Provider ---
-      # Which provider to use: anthropic, openai, gemini, local
       - NABA_LLM_PROVIDER=${NABA_LLM_PROVIDER:-anthropic}
 
       # --- API Key ---
-      # Your LLM provider's API key (required)
       - NABA_LLM_API_KEY=${NABA_LLM_API_KEY}
 
       # --- Telegram ---
-      # Bot token for the Telegram messaging interface (optional)
       - NABA_TELEGRAM_BOT_TOKEN=${NABA_TELEGRAM_BOT_TOKEN}
 
+      # --- Web Dashboard ---
+      - NABA_WEB_PASSWORD=${NABA_WEB_PASSWORD}
+
       # --- Data paths ---
-      # Inside the container, data lives at /data and models at /models.
-      # These are mapped to named Docker volumes below.
       - NABA_DATA_DIR=/data
       - NABA_MODEL_PATH=/models
 
       # --- Cost control ---
-      # Maximum daily spend on LLM API calls (USD). Default: $10.
       - NABA_DAILY_BUDGET_USD=${NABA_DAILY_BUDGET_USD:-10.0}
+
+      # --- Logging ---
+      - RUST_LOG=${RUST_LOG:-info}
 
     volumes:
       # Persistent data: agents, plugins, catalog, cache DBs, config, logs
-      - nyaya-data:/data
+      - nabaos-data:/data
       # ML models: ONNX files for BERT classifier, embeddings
-      - nyaya-models:/models
+      - nabaos-models:/models
+
+    # Expose the web dashboard port
+    ports:
+      - "8919:8919"
 
     # Restart automatically unless you explicitly stop the container
     restart: unless-stopped
 
 volumes:
-  nyaya-data:
-  nyaya-models:
+  nabaos-data:
+  nabaos-models:
 ```
 
 Start the stack:
 
 ```bash
 docker compose up -d
-```
-
-Expected output:
-
-```
-[+] Running 2/2
- ✔ Volume "nabaos_nyaya-data"    Created
- ✔ Volume "nabaos_nyaya-models"  Created
- ✔ Container nabaos              Started
 ```
 
 Stop the stack:
@@ -136,8 +124,8 @@ The container uses two volumes for persistent storage:
 
 | Volume | Container path | Contents |
 |--------|----------------|----------|
-| `nyaya-data` | `/data` | Agents, plugins, catalog, SQLite databases (`nyaya.db`, `vault.db`), constitution files, logs |
-| `nyaya-models` | `/models` | ONNX model files (`bert-security.onnx`, `gpt2-nyaya.onnx`, embedding models) |
+| `nabaos-data` | `/data` | Agents, plugins, catalog, SQLite databases (`nyaya.db`, `vault.db`, `cache.db`, `cost.db`), constitution files, logs |
+| `nabaos-models` | `/models` | ONNX model files (BERT, SetFit, embedding models) |
 
 ### Bind mounts (alternative)
 
@@ -149,24 +137,6 @@ If you prefer host-directory bind mounts instead of named volumes, replace the v
       - ./models:/models
 ```
 
-Verify volume contents:
-
-```bash
-docker exec nabaos ls /data
-```
-
-Expected output:
-
-```
-agents
-catalog
-config
-logs
-nyaya.db
-plugins
-vault.db
-```
-
 ---
 
 ## Environment Variables
@@ -175,11 +145,12 @@ Pass these to the container via `-e` flags or the `environment:` block in Compos
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NABA_LLM_PROVIDER` | No | `anthropic` | LLM provider: `anthropic`, `openai`, `gemini`, `local` |
+| `NABA_LLM_PROVIDER` | No | `anthropic` | LLM provider: `anthropic`, `openai`, `gemini` |
 | `NABA_LLM_API_KEY` | **Yes** | -- | API key for your chosen LLM provider |
 | `NABA_TELEGRAM_BOT_TOKEN` | No | -- | Telegram bot token for messaging interface |
+| `NABA_WEB_PASSWORD` | No | -- | Password for the web dashboard |
 | `NABA_DAILY_BUDGET_USD` | No | `10.0` | Daily spending cap for LLM API calls (USD) |
-| `NABA_LOG_LEVEL` | No | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
+| `RUST_LOG` | No | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `NABA_DATA_DIR` | No | `/data` | Data directory inside the container |
 | `NABA_MODEL_PATH` | No | `/models` | Model directory inside the container |
 | `NABA_SECURITY_BOT_TOKEN` | No | -- | Separate Telegram bot for security alerts |
@@ -193,8 +164,9 @@ Create a `.env` file next to your `docker-compose.yml`:
 NABA_LLM_PROVIDER=anthropic
 NABA_LLM_API_KEY=sk-ant-api03-xxxxx
 NABA_TELEGRAM_BOT_TOKEN=123456:ABC-DEF
+NABA_WEB_PASSWORD=secure-dashboard-pw
 NABA_DAILY_BUDGET_USD=10.0
-NABA_LOG_LEVEL=info
+RUST_LOG=info
 ```
 
 Docker Compose reads `.env` automatically. Do not commit this file to version control.
@@ -210,7 +182,7 @@ services:
   nabaos:
     # ... (other configuration) ...
     healthcheck:
-      test: ["CMD", "nabaos", "cache", "stats"]
+      test: ["CMD", "nabaos", "admin", "cache", "stats"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -223,71 +195,11 @@ Check health status:
 docker inspect --format='{{.State.Health.Status}}' nabaos
 ```
 
-Expected output:
-
-```
-healthy
-```
-
-If you are running the web dashboard (see below), you can also check the HTTP endpoint:
+If you are running the web dashboard, you can also check the HTTP endpoint:
 
 ```bash
-docker compose exec nabaos curl -sf http://localhost:3000/api/health || echo "unhealthy"
+docker compose exec nabaos curl -sf http://localhost:8919/api/health || echo "unhealthy"
 ```
-
----
-
-## Multi-Container Setup: Agent + Web Dashboard
-
-Run the agent alongside the built-in web dashboard for a browser-based management interface:
-
-```yaml
-version: '3.8'
-
-services:
-  nabaos:
-    image: ghcr.io/nabaos/nabaos:latest
-    environment:
-      - NABA_LLM_PROVIDER=${NABA_LLM_PROVIDER:-anthropic}
-      - NABA_LLM_API_KEY=${NABA_LLM_API_KEY}
-      - NABA_TELEGRAM_BOT_TOKEN=${NABA_TELEGRAM_BOT_TOKEN}
-      - NABA_DATA_DIR=/data
-      - NABA_MODEL_PATH=/models
-      - NABA_DAILY_BUDGET_USD=${NABA_DAILY_BUDGET_USD:-10.0}
-    volumes:
-      - nyaya-data:/data
-      - nyaya-models:/models
-    restart: unless-stopped
-
-  nyaya-web:
-    image: ghcr.io/nabaos/nabaos:latest
-    command: ["web", "--bind", "0.0.0.0:3000"]
-    environment:
-      - NABA_LLM_PROVIDER=${NABA_LLM_PROVIDER:-anthropic}
-      - NABA_LLM_API_KEY=${NABA_LLM_API_KEY}
-      - NABA_DATA_DIR=/data
-      - NABA_MODEL_PATH=/models
-    volumes:
-      - nyaya-data:/data
-      - nyaya-models:/models
-    ports:
-      - "3000:3000"
-    depends_on:
-      - nabaos
-    restart: unless-stopped
-
-volumes:
-  nyaya-data:
-  nyaya-models:
-```
-
-Start both services:
-
-```bash
-docker compose up -d
-```
-
-Open the dashboard at `http://localhost:3000`.
 
 ---
 
@@ -295,7 +207,7 @@ Open the dashboard at `http://localhost:3000`.
 
 The Docker image follows security best practices:
 
-- **Non-root user**: The container runs as the `nyaya` user, not root.
+- **Non-root user**: The container runs as a non-root user.
 - **Minimal base image**: `debian:bookworm-slim` with only `ca-certificates` installed.
 - **Multi-stage build**: The Rust toolchain is not present in the final image.
 - **Read-only filesystem** (optional): Add `read_only: true` and a tmpfs for `/tmp`:
@@ -322,12 +234,12 @@ In the meantime, the standard Docker image works on any platform that runs conta
 ```bash
 # Tag and push the image to Google Artifact Registry
 docker tag ghcr.io/nabaos/nabaos:latest \
-  us-docker.pkg.dev/YOUR_PROJECT/nyaya/nabaos:latest
-docker push us-docker.pkg.dev/YOUR_PROJECT/nyaya/nabaos:latest
+  us-docker.pkg.dev/YOUR_PROJECT/nabaos/nabaos:latest
+docker push us-docker.pkg.dev/YOUR_PROJECT/nabaos/nabaos:latest
 
 # Deploy
 gcloud run deploy nabaos \
-  --image us-docker.pkg.dev/YOUR_PROJECT/nyaya/nabaos:latest \
+  --image us-docker.pkg.dev/YOUR_PROJECT/nabaos/nabaos:latest \
   --set-env-vars "NABA_LLM_PROVIDER=anthropic,NABA_LLM_API_KEY=$NABA_LLM_API_KEY" \
   --memory 1Gi \
   --cpu 1 \
@@ -346,22 +258,6 @@ docker push YOUR_ACCOUNT.dkr.ecr.REGION.amazonaws.com/nabaos:latest
 
 # Create task definition and service via the AWS Console or CLI
 # Mount an EFS volume at /data for persistence
-```
-
-### Azure Container Apps
-
-```bash
-# Push to Azure Container Registry
-az acr login --name yourregistry
-docker tag ghcr.io/nabaos/nabaos:latest yourregistry.azurecr.io/nabaos:latest
-docker push yourregistry.azurecr.io/nabaos:latest
-
-# Deploy as a container app
-az containerapp create \
-  --name nabaos \
-  --resource-group YOUR_RG \
-  --image yourregistry.azurecr.io/nabaos:latest \
-  --env-vars "NABA_LLM_PROVIDER=anthropic" "NABA_LLM_API_KEY=$NABA_LLM_API_KEY"
 ```
 
 All cloud platforms require you to handle persistent storage for `/data` separately, since the agent stores SQLite databases and configuration there.

@@ -46,42 +46,6 @@ The scanner detects the following credential types, listed in scan order:
 | 15 | `telegram_bot_token` | Telegram bot API token | 8-10 digit ID + `:` + 35-char secret |
 | 16 | `huggingface_token` | HuggingFace API token | `hf_` + 34+ chars |
 
-### Pattern details
-
-**Cloud provider keys** (patterns 1-3): These have distinctive prefixes that
-make false positives rare. AWS access keys always start with `AKIA`, and GCP
-keys always start with `AIza`.
-
-**AI provider keys** (patterns 4-5): OpenAI keys start with `sk-` and Anthropic
-keys start with `sk-ant-`. The scanner requires at least 20 characters after the
-prefix to avoid matching short strings.
-
-**Code hosting tokens** (patterns 6-8): GitHub PATs use `ghp_` (personal) and
-`gho_` (OAuth) prefixes with exactly 36 trailing characters. GitLab uses
-`glpat-` with 20+ characters.
-
-**Payment keys** (patterns 9-10): Stripe keys use `sk_test_`/`sk_live_` and
-`rk_test_`/`rk_live_` prefixes, requiring 24+ trailing characters.
-
-**Private keys** (patterns 11-12): Pattern 11 detects PEM headers
-(`-----BEGIN RSA PRIVATE KEY-----`). Pattern 12 catches key material without
-headers -- base64-encoded bodies starting with `MII` followed by 60+ characters
-of base64 content.
-
-**Generic secrets** (pattern 13): Matches `password`, `passwd`, `secret`,
-`token`, `api_key`, `apikey`, `api_secret`, and `auth_token` followed by `=` or
-`:` and a value of 8-200 characters. The 200-character cap prevents ReDoS from
-backtracking on long non-matching inputs.
-
-**Connection strings** (pattern 14): Detects `mongodb://`, `postgres://`,
-`mysql://`, and `redis://` URIs that typically contain embedded credentials.
-
-**Messaging tokens** (pattern 15): Telegram bot tokens follow a specific format:
-8-10 digit bot ID, colon, then a 35-character alphanumeric secret.
-
-**ML platform tokens** (pattern 16): HuggingFace tokens start with `hf_`
-followed by 34+ alphanumeric characters.
-
 ---
 
 ## 4 PII Patterns
@@ -101,10 +65,10 @@ exposure.
 
 ## How to Test
 
-Use the `security-scan` command to test the scanner against any input:
+Use the `nabaos admin scan` command to test the scanner against any input:
 
 ```bash
-nyaya security-scan "my AWS key is AKIAIOSFODNN7EXAMPLE and email is alice@example.com"
+nabaos admin scan "my AWS key is AKIAIOSFODNN7EXAMPLE and email is alice@example.com"
 ```
 
 **Expected output:**
@@ -128,49 +92,49 @@ Here are test commands for every credential category:
 
 ```bash
 # AWS access key
-nyaya security-scan "AKIAIOSFODNN7EXAMPLE"
+nabaos admin scan "AKIAIOSFODNN7EXAMPLE"
 
 # OpenAI key
-nyaya security-scan "sk-abc123def456ghi789jkl012mno345"
+nabaos admin scan "sk-abc123def456ghi789jkl012mno345"
 
 # Anthropic key
-nyaya security-scan "sk-ant-api03-abcdefghijklmnopqrst"
+nabaos admin scan "sk-ant-api03-abcdefghijklmnopqrst"
 
 # GitHub PAT
-nyaya security-scan "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+nabaos admin scan "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
 
 # GitLab PAT
-nyaya security-scan "glpat-xxxxxxxxxxxxxxxxxxxx"
+nabaos admin scan "glpat-xxxxxxxxxxxxxxxxxxxx"
 
 # Stripe key
-nyaya security-scan "sk_live_abcdefghijklmnopqrstuvwx"
+nabaos admin scan "sk_live_abcdefghijklmnopqrstuvwx"
 
 # Private key header
-nyaya security-scan "-----BEGIN RSA PRIVATE KEY-----"
+nabaos admin scan "-----BEGIN RSA PRIVATE KEY-----"
 
 # Generic secret
-nyaya security-scan 'password = "MyS3cretP@ssw0rd!"'
+nabaos admin scan 'password = "MyS3cretP@ssw0rd!"'
 
 # Connection string
-nyaya security-scan "postgres://user:pass@localhost:5432/mydb"
+nabaos admin scan "postgres://user:pass@localhost:5432/mydb"
 
 # Telegram bot token
-nyaya security-scan "1234567890:ABCDefghIJKLmnopQRSTuvwxYZ123456789"
+nabaos admin scan "1234567890:ABCDefghIJKLmnopQRSTuvwxYZ123456789"
 
 # HuggingFace token
-nyaya security-scan "hf_abcdefghijklmnopqrstuvwxyz12345678"
+nabaos admin scan "hf_abcdefghijklmnopqrstuvwxyz12345678"
 
 # SSN
-nyaya security-scan "SSN is 123-45-6789"
+nabaos admin scan "SSN is 123-45-6789"
 
 # Credit card
-nyaya security-scan "Card: 4111111111111111"
+nabaos admin scan "Card: 4111111111111111"
 
 # Email
-nyaya security-scan "Contact alice@example.com"
+nabaos admin scan "Contact alice@example.com"
 
 # Phone
-nyaya security-scan "Call (555) 123-4567"
+nabaos admin scan "Call (555) 123-4567"
 ```
 
 ---
@@ -207,20 +171,6 @@ PII is replaced with:
 [PII_REDACTED:pattern_id]
 ```
 
-**Example:**
-
-Input:
-
-```text
-Key is AKIAIOSFODNN7EXAMPLE and SSN is 123-45-6789
-```
-
-Output:
-
-```text
-Key is [REDACTED:aws_access_key] and SSN is [PII_REDACTED:us_ssn]
-```
-
 ### Where redaction runs
 
 | Location | When | Why |
@@ -229,40 +179,6 @@ Key is [REDACTED:aws_access_key] and SSN is [PII_REDACTED:us_ssn]
 | **LLM output** | After every LLM response | Catch secrets the model may have memorized or hallucinated |
 | **Chain step output** | After each tool call returns | Catch secrets in API responses |
 | **Log pipeline** | Before any text is written to logs | Ensure secrets never appear in log files |
-
----
-
-## Quick Check API
-
-For hot-path performance, the scanner provides a `contains_credentials` function
-that returns a boolean without building the full match list. This is used for
-the fast pre-check before running a complete scan:
-
-```text
-contains_credentials("normal text")          → false  (< 0.1ms)
-contains_credentials("ghp_ABCDEF...")        → true   (< 0.1ms)
-```
-
-The full `redact_all` function, which builds match objects and performs string
-replacement, completes in under 1ms for typical input lengths.
-
----
-
-## Scan Summary (Safe to Log)
-
-The `scan_summary` function returns a `ScanSummary` that contains only
-metadata -- never the actual secret values:
-
-```rust
-ScanSummary {
-    credential_count: 1,
-    pii_count: 1,
-    types_found: ["aws_access_key", "email"],
-}
-```
-
-This summary is safe to include in log files, security alerts, and anomaly
-detector records.
 
 ---
 
@@ -277,9 +193,7 @@ perfectly.
 **Why cap generic_secret at 200 characters?** Without a length cap, the
 `[^\s'"]{8,200}` quantifier could backtrack exponentially on long non-matching
 strings, causing a regex denial-of-service (ReDoS). The 200-character cap bounds
-worst-case execution time. This is verified by a dedicated test
-(`test_generic_secret_no_redos`) that runs the scanner against a 10,000-character
-input and asserts completion in under 2 seconds.
+worst-case execution time.
 
 **Why are byte offsets `pub(crate)`?** Exposing match positions in a public API
 would allow an attacker to infer secret length and location from redaction

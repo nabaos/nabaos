@@ -10,10 +10,12 @@
 
 | Requirement | Minimum |
 |-------------|---------|
-| OS | 64-bit Linux (x86_64, aarch64) or macOS (Apple Silicon, Intel) |
-| RAM | 512 MB free (the SetFit ONNX model uses ~80 MB at runtime) |
+| OS | 64-bit Linux (x86_64) or macOS (Apple Silicon) |
+| RAM | 512 MB free (the ONNX models use ~80 MB at runtime) |
 | Disk | 200 MB (binary + models + SQLite databases) |
 | Network | Outbound HTTPS for LLM API calls (not needed for cached requests) |
+
+> **Note:** Only two release targets are currently provided: `linux-amd64` and `darwin-arm64`. Other platforms must build from source.
 
 Optional:
 - **Docker** -- required only if you want container-isolated task execution or the Docker install method.
@@ -24,34 +26,34 @@ Optional:
 ## Method 1: One-Line Installer (Recommended)
 
 The install script detects your OS and architecture, downloads the correct
-pre-built binary, and places it in `~/.nabaos/bin`.
+pre-built binary, and places it in `~/.local/bin`.
 
 ```bash
-curl -fsSL https://get.nyaya.dev/install.sh | sh
+bash <(curl -fsSL https://raw.githubusercontent.com/nabaos/nabaos/main/scripts/install.sh)
 ```
 
 **What it does:**
 
-1. Detects your platform (`linux-x86_64`, `linux-aarch64`, `darwin-x86_64`, `darwin-aarch64`).
+1. Detects your platform (`linux-amd64`, `darwin-arm64`).
 2. Downloads the latest release binary from GitHub Releases.
-3. Downloads the SetFit ONNX model files (~25 MB).
-4. Installs to `~/.nabaos/bin/nyaya`.
-5. Adds `~/.nabaos/bin` to your `PATH` (appends to `~/.bashrc` or `~/.zshrc`).
+3. Downloads the default constitution template.
+4. Installs to `~/.local/bin/nabaos`.
+5. Adds `~/.local/bin` to your `PATH` (appends to `~/.bashrc` or `~/.zshrc`).
 
 **Expected output:**
 
 ```text
-Detecting platform... linux-x86_64
-Downloading nyaya v0.1.0...
+Detecting platform... linux-amd64
+Downloading nabaos v0.1.0...
   [####################################] 100%
-Downloading SetFit ONNX model...
+Downloading default constitution...
   [####################################] 100%
-Installing to ~/.nabaos/bin/nyaya
-Adding ~/.nabaos/bin to PATH in ~/.bashrc
+Installing to ~/.local/bin/nabaos
+Adding ~/.local/bin to PATH in ~/.bashrc
 
 Installation complete! Run:
   source ~/.bashrc
-  nyaya --version
+  nabaos --version
 ```
 
 After the script finishes, open a new terminal or run `source ~/.bashrc`
@@ -61,21 +63,32 @@ After the script finishes, open a new terminal or run `source ~/.bashrc`
 
 ## Method 2: Cargo Install
 
-If you already have a Rust toolchain (1.75+):
+If you already have a Rust toolchain (1.80+):
 
 ```bash
-cargo install nabaos
+cargo install --git https://github.com/nabaos/nabaos.git
 ```
 
-This compiles from source on crates.io and places the `nyaya` binary in
-`~/.cargo/bin/`. The ONNX model files are downloaded automatically on first run.
+This compiles from source and places the `nabaos` binary in
+`~/.cargo/bin/`. The ONNX model files are downloaded automatically on first run
+via `nabaos setup`.
+
+To include the BERT classifier (Tier 1), enable the `bert` feature gate:
+
+```bash
+cargo install --git https://github.com/nabaos/nabaos.git --features bert
+```
+
+> **Note:** The `bert` feature is optional. Without it, Tiers 1-2 degrade
+> gracefully to `unknown_unknown` classification and queries fall through to
+> the LLM tiers.
 
 **Expected output:**
 
 ```text
   Compiling nabaos v0.1.0
     ...
-  Installing ~/.cargo/bin/nyaya
+  Installing ~/.cargo/bin/nabaos
    Installed package `nabaos v0.1.0`
 ```
 
@@ -90,21 +103,21 @@ docker run -d \
   --name nabaos \
   -e NABA_LLM_PROVIDER=anthropic \
   -e NABA_LLM_API_KEY=sk-ant-your-key-here \
-  -v nyaya-data:/data \
+  -v nabaos-data:/data \
   -p 8919:8919 \
   ghcr.io/nabaos/nabaos:latest \
-  daemon
+  start
 ```
 
-This starts the daemon, which runs the scheduler loop and (if configured) the
+This starts the server, which runs the scheduler loop and (if configured) the
 Telegram bot and web dashboard. The web dashboard is available at
 `http://localhost:8919`.
 
 To run CLI commands against the container:
 
 ```bash
-docker exec nabaos nyaya classify "check my email"
-docker exec nabaos nyaya cache stats
+docker exec nabaos nabaos admin classify "check my email"
+docker exec nabaos nabaos admin cache stats
 ```
 
 ---
@@ -117,17 +130,17 @@ cd nabaos
 cargo build --release
 ```
 
-The binary is at `target/release/nyaya`. Copy it to a directory on your PATH
+To include the BERT classifier:
+
+```bash
+cargo build --release --features bert
+```
+
+The binary is at `target/release/nabaos`. Copy it to a directory on your PATH
 or run it directly:
 
 ```bash
-./target/release/nyaya --version
-```
-
-To also download the ONNX model files:
-
-```bash
-./scripts/download-models.sh
+./target/release/nabaos --version
 ```
 
 ---
@@ -137,13 +150,13 @@ To also download the ONNX model files:
 Regardless of which method you used, verify that NabaOS is working:
 
 ```bash
-nyaya --version
+nabaos --version
 ```
 
 **Expected output:**
 
 ```text
-nyaya 0.1.0
+nabaos 0.1.0
 ```
 
 If you see a version number, the installation succeeded. Next, run the setup
@@ -153,7 +166,7 @@ wizard to configure your LLM provider and constitution.
 
 ## Troubleshooting
 
-### `command not found: nyaya`
+### `command not found: nabaos`
 
 The binary is not on your PATH. Either:
 
@@ -161,27 +174,25 @@ The binary is not on your PATH. Either:
 - Run `source ~/.bashrc` or `source ~/.zshrc`.
 - Manually add the install directory to PATH:
   ```bash
-  export PATH="$HOME/.nabaos/bin:$PATH"
+  export PATH="$HOME/.local/bin:$PATH"
   ```
 
 ### `error: Model directory not found`
 
-The SetFit ONNX model files have not been downloaded yet. Run:
+The ONNX model files have not been downloaded yet. Run:
 
 ```bash
-# If installed via the one-line installer or cargo install:
-nyaya setup
-
-# If building from source:
-./scripts/download-models.sh
+nabaos setup
 ```
+
+The setup wizard will download the required models.
 
 ### Permission denied on Linux
 
 The binary may not have the execute bit set. Fix it:
 
 ```bash
-chmod +x ~/.nabaos/bin/nyaya
+chmod +x ~/.local/bin/nabaos
 ```
 
 ### macOS Gatekeeper blocks the binary
@@ -190,7 +201,7 @@ On macOS, the first run may trigger a "developer cannot be verified" warning.
 Allow it in System Settings > Privacy & Security, or run:
 
 ```bash
-xattr -d com.apple.quarantine ~/.nabaos/bin/nyaya
+xattr -d com.apple.quarantine ~/.local/bin/nabaos
 ```
 
 ### Docker: port 8919 already in use
@@ -199,7 +210,7 @@ Another service is using port 8919. Either stop that service or map to a
 different port:
 
 ```bash
-docker run -d -p 9090:8919 ... ghcr.io/nabaos/nabaos:latest daemon
+docker run -d -p 9090:8919 ... ghcr.io/nabaos/nabaos:latest start
 ```
 
 ---

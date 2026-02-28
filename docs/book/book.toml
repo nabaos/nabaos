@@ -1,7 +1,7 @@
 [book]
-title = "Nyaya Agent OS"
+title = "NabaOS"
 description = "The self-hosted, privacy-first agent operating system"
-authors = ["Nyaya Contributors"]
+authors = ["NabaOS Contributors"]
 language = "en"
 src = "src"
 

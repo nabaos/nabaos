@@ -7,7 +7,7 @@
 > - How agent permissions and manifests work
 > - How to uninstall an agent you no longer need
 
-NabaOS ships with a catalog of 130 pre-built agents that cover common
+NabaOS ships with a catalog of pre-built agents that cover common
 workflows: email triage, calendar management, news monitoring, document
 generation, and more. In this guide you will install one, run it, and look at
 its internals.
@@ -19,7 +19,7 @@ its internals.
 List every available agent:
 
 ```bash
-nyaya catalog list
+nabaos config persona catalog list
 ```
 
 **Expected output:**
@@ -34,11 +34,7 @@ expense-tracker           finance         1.0.0      Extract amounts from receip
 news-monitor              research        1.0.0      Track topics across RSS feeds and summarize
 code-reviewer             development     1.0.0      Review pull requests for style and bugs
 ...
-
-130 agents available.
 ```
-
-The output shows the agent name, its category, version, and a short description.
 
 ---
 
@@ -47,7 +43,7 @@ The output shows the agent name, its category, version, and a short description.
 Narrow down the list with a keyword search:
 
 ```bash
-nyaya catalog search "email"
+nabaos config persona catalog search "email"
 ```
 
 **Expected output:**
@@ -58,8 +54,6 @@ NAME                      CATEGORY        VERSION    DESCRIPTION
 email-triage              communication   1.0.0      Classify and prioritize incoming email
 email-drafter             communication   1.0.0      Draft replies based on context and tone
 email-digest              productivity    1.0.0      Daily digest of unread email by priority
-
-3 agents found.
 ```
 
 ---
@@ -69,7 +63,7 @@ email-digest              productivity    1.0.0      Daily digest of unread emai
 Before installing, view the full details of an agent:
 
 ```bash
-nyaya catalog info morning-briefing
+nabaos config persona catalog info morning-briefing
 ```
 
 **Expected output:**
@@ -78,10 +72,9 @@ nyaya catalog info morning-briefing
 Name:        morning-briefing
 Version:     1.0.0
 Category:    productivity
-Author:      nyaya-contrib
+Author:      nabaos-contrib
 Description: Daily summary of calendar, email, and news
 Permissions: net:https, read:calendar, read:email
-Path:        /home/you/.nabaos/catalog/morning-briefing
 ```
 
 The **Permissions** field is important. This agent requests:
@@ -98,10 +91,10 @@ at runtime.
 
 ## Install an Agent
 
-Install the agent from the catalog:
+Install the agent package:
 
 ```bash
-nabaos agent install ~/.nabaos/catalog/morning-briefing/morning-briefing.nap
+nabaos config agent install morning-briefing.nap
 ```
 
 **Expected output:**
@@ -114,13 +107,13 @@ The `.nap` file (NabaOS Agent Package) is a signed archive containing the agent'
 WASM module, manifest, and assets. The install command:
 
 1. Verifies the package signature.
-2. Extracts the WASM module and manifest to `~/.nabaos/agents/morning-briefing/`.
+2. Extracts the WASM module and manifest.
 3. Registers the agent in the local database.
 
 Verify the agent is installed:
 
 ```bash
-nabaos agent list
+nabaos config agent list
 ```
 
 **Expected output:**
@@ -135,11 +128,11 @@ morning-briefing     1.0.0      stopped
 
 ## Examine the Manifest
 
-Every agent has a `manifest.yaml` that declares its identity, permissions, and
+Every agent has a manifest that declares its identity, permissions, and
 resource limits. You can view the permissions that were granted:
 
 ```bash
-nabaos agent permissions morning-briefing
+nabaos config agent permissions morning-briefing
 ```
 
 **Expected output (before first run):**
@@ -155,7 +148,7 @@ or deny it.
 View full agent details:
 
 ```bash
-nabaos agent info morning-briefing
+nabaos config agent info morning-briefing
 ```
 
 **Expected output:**
@@ -164,7 +157,6 @@ nabaos agent info morning-briefing
 Name:         morning-briefing
 Version:      1.0.0
 State:        stopped
-Data dir:     /home/you/.nabaos/agents/morning-briefing
 Installed at: 2026-02-24T10:30:00Z
 Updated at:   2026-02-24T10:30:00Z
 ```
@@ -174,7 +166,7 @@ Updated at:   2026-02-24T10:30:00Z
 ## Start the Agent
 
 ```bash
-nabaos agent start morning-briefing
+nabaos config agent start morning-briefing
 ```
 
 **Expected output:**
@@ -183,17 +175,17 @@ nabaos agent start morning-briefing
 Agent 'morning-briefing' started.
 ```
 
-The agent's state changes from `stopped` to `running`. When the daemon is active,
+The agent's state changes from `stopped` to `running`. When the server is active,
 running agents are executed on their configured schedule (for `morning-briefing`,
 that is typically once per day in the morning).
 
-To manually trigger a one-off execution, use the `run` command with the agent's
+To manually trigger a one-off execution, use the `admin run` command with the agent's
 WASM module:
 
 ```bash
-nyaya run \
-  ~/.nabaos/agents/morning-briefing/agent.wasm \
-  --manifest ~/.nabaos/agents/morning-briefing/manifest.yaml
+nabaos admin run \
+  agents/morning-briefing/agent.wasm \
+  --manifest agents/morning-briefing/manifest.json
 ```
 
 **Expected output:**
@@ -219,12 +211,14 @@ The agent runs inside a WASM sandbox with a fuel limit (preventing infinite
 loops) and a memory cap. It can only access the capabilities declared in its
 manifest.
 
+> **Note:** The `--manifest` flag accepts a JSON file, not YAML.
+
 ---
 
 ## Stop the Agent
 
 ```bash
-nabaos agent stop morning-briefing
+nabaos config agent stop morning-briefing
 ```
 
 **Expected output:**
@@ -240,7 +234,7 @@ Agent 'morning-briefing' stopped.
 When you no longer need an agent:
 
 ```bash
-nabaos agent uninstall morning-briefing
+nabaos config agent uninstall morning-briefing
 ```
 
 **Expected output:**
@@ -249,13 +243,13 @@ nabaos agent uninstall morning-briefing
 Agent 'morning-briefing' uninstalled.
 ```
 
-This removes the agent's WASM module, manifest, and local data from
-`~/.nabaos/agents/morning-briefing/` and deletes its database entry.
+This removes the agent's WASM module, manifest, and local data and deletes
+its database entry.
 
 Verify it is gone:
 
 ```bash
-nabaos agent list
+nabaos config agent list
 ```
 
 **Expected output:**
@@ -273,4 +267,4 @@ No agents installed.
 | Configure LLM providers and budgets | [Configuration](configuration.md) |
 | Build your own agent from scratch | [Building Agents](../guides/building-agents.md) |
 | Write chain workflows for agents | [Writing Chains](../guides/writing-chains.md) |
-| Understand agent permissions in depth | [Agent Packages](../core-concepts/agent-packages.md) |
+| Understand agent permissions in depth | [Agent Packages](../concepts/agent-packages.md) |

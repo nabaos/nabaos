@@ -82,7 +82,7 @@ and underscores. Path traversal characters are rejected.
 ```yaml
 name: psd_reader
 version: 1.0.0
-author: nyaya-community
+author: nabaos-community
 license: MIT
 trust_level: VERIFIED
 
@@ -120,7 +120,7 @@ security:
 
 Subprocess abilities wrap existing CLI tools (ffmpeg, tesseract, imagemagick,
 etc.) as NabaOS abilities. They are defined in a YAML config file and
-registered with `nyaya plugin register-subprocess`.
+registered with `nabaos admin plugin register-subprocess`.
 
 ### Subprocess Config Schema
 
@@ -199,7 +199,7 @@ media.transcode:
 Register with:
 
 ```bash
-nyaya plugin register-subprocess ./subprocess-abilities.yaml
+nabaos admin plugin register-subprocess ./subprocess-abilities.yaml
 ```
 
 ### Timeout Enforcement
@@ -268,7 +268,7 @@ protections:
 Install a plugin from its manifest:
 
 ```bash
-nyaya plugin install ./my-plugin/manifest.yaml
+nabaos admin plugin install ./my-plugin/manifest.yaml
 ```
 
 This copies the manifest and any associated shared library
@@ -278,13 +278,13 @@ This copies the manifest and any associated shared library
 List installed plugins:
 
 ```bash
-nyaya plugin list
+nabaos admin plugin list
 ```
 
 Remove a plugin:
 
 ```bash
-nyaya plugin remove psd_reader
+nabaos admin plugin remove psd_reader
 ```
 
 Plugin names are validated against path traversal attacks. Names containing

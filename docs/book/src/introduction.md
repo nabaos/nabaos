@@ -18,27 +18,32 @@ Request
   |
   v
 +---------------------+   < 0.1 ms   Cost: $0.00
-| Tier 1: Fingerprint |-- HIT ------> Done (exact-match hash)
+| Tier 0: Fingerprint |-- HIT ------> Done (exact-match hash)
 +---------------------+
   | MISS
   v
-+---------------------+   < 5 ms     Cost: $0.00
-| Tier 2: SetFit ONNX |-- HIT ------> Done (local W5H2 classifier)
++---------------------+   5-10 ms    Cost: $0.00
+| Tier 1: BERT ONNX   |-- classify --> W5H2 intent (8 classes)
 +---------------------+
-  | MISS
+  |
+  v
++---------------------+   < 10 ms    Cost: $0.00
+| Tier 2: SetFit ONNX |-- classify --> W5H2 intent (54 classes)
++---------------------+
+  |
   v
 +---------------------+   < 20 ms    Cost: $0.00
-| Tier 3: Intent Cache|-- HIT ------> Done (cached execution plan)
+| Tier 2.5: Sem Cache |-- HIT ------> Done (cached execution plan)
 +---------------------+
   | MISS
   v
 +---------------------+   ~ 1 s      Cost: ~$0.005
-| Tier 4: Cheap LLM   |-- solved ---> Done + cache for next time
+| Tier 3: Cheap LLM   |-- solved ---> Done + cache for next time
 +---------------------+
   | too complex
   v
 +---------------------+   5-120 s    Cost: $0.50-5.00
-| Tier 5: Deep Agent   |-- solved ---> Done + decompose into cache
+| Tier 4: Deep Agent   |-- solved ---> Done + decompose into cache
 | (Manus/Claude/GPT)  |
 +---------------------+
 ```
@@ -49,7 +54,7 @@ Request
   Manus, DeepSeek, or a local model -- whichever is cheapest and best for the job.
   No single-vendor lock-in.
 
-- **Constitutional governance.** Every agent operates under an Ed25519-signed YAML
+- **Constitutional governance.** Every agent operates under a YAML
   constitution that defines allowed domains, spending limits, and hard boundaries.
   The agent cannot modify its own constitution.
 
@@ -57,7 +62,7 @@ Request
   requests never leave your machine. Credentials and PII are scanned and redacted
   before any external API call.
 
-- **106 plugins, 130 pre-built agents.** Browse the catalog, install an agent with
+- **Agent catalog.** Browse the catalog, install an agent with
   one command, and start it. Agents run in sandboxed WASM modules with
   permission-gated access to your data.
 
@@ -78,5 +83,5 @@ Request
 ## What's Next
 
 Head to [Installation](getting-started/installation.md) to get NabaOS running in
-under five minutes, or read about the [Architecture](core-concepts/architecture.md)
+under five minutes, or read about the [Architecture](concepts/architecture.md)
 if you want to understand the system before you install it.

@@ -20,10 +20,10 @@ typical user making ~100 queries per day:
 | Month 1 (cache learning) | $15-25 |
 | Month 2+ (steady state) | $8-15 |
 
-The cost drops over time because the five-tier caching pipeline resolves an
+The cost drops over time because the six-tier caching pipeline resolves an
 increasing percentage of queries locally. In steady state, roughly 90% of
-queries hit Tiers 0-2 (fingerprint, SetFit classifier, intent cache), which
-cost $0.00 and never leave your machine.
+queries hit Tiers 0-2 (fingerprint, BERT classifier, SetFit intent
+classification), which cost $0.00 and never leave your machine.
 
 ### What drives the cost?
 
@@ -32,27 +32,26 @@ cost $0.00 and never leave your machine.
 - **Tier 4 (Deep Agent):** ~2% of queries at $0.50-5.00 each. These are complex
   multi-step tasks delegated to Manus, Claude computer-use, or OpenAI agents.
 
-Cached queries (Tiers 0-2) are free. The system gets cheaper every month as
+Cached queries (Tiers 0-2.5) are free. The system gets cheaper every month as
 more query patterns are cached.
 
 ### Can I set spending limits?
 
-Yes. The constitution's `[deep_agent]` section defines per-task, daily, and
+Yes. The constitution's `deep_agent` section defines per-task, daily, and
 monthly spending caps:
 
 ```yaml
-[deep_agent]
-max_per_task_usd = 5.00
-max_daily_usd = 20.00
-max_monthly_usd = 200.00
-approval_threshold_usd = 2.00   # Tasks above this require confirmation
+deep_agent:
+  max_per_task_usd: 5.00
+  max_daily_usd: 20.00
+  max_monthly_usd: 200.00
+  approval_threshold_usd: 2.00   # Tasks above this require confirmation
 ```
 
 You can also view spending in real time:
 
 ```bash
-nyaya cost today
-nyaya cost month
+nabaos status
 ```
 
 ---
@@ -61,10 +60,10 @@ nyaya cost month
 
 ### Is my data private?
 
-Yes. NabaOS is self-hosted. Your data stays on your machine unless a
-query explicitly requires an external API call (Tiers 3-4). Specifics:
+Yes. NabaOS is self-hosted. Your data stays on your machine unless a query
+explicitly requires an external API call (Tiers 3-4). Specifics:
 
-- **Tiers 0-2 (90% of queries):** Processed entirely locally. No data leaves
+- **Tiers 0-2.5 (90% of queries):** Processed entirely locally. No data leaves
   your machine. No network call is made.
 - **Tier 3 (Cheap LLM):** The query text is sent to your configured LLM
   provider (Anthropic, OpenAI, etc.). Credential scanning redacts any secrets
@@ -74,7 +73,7 @@ query explicitly requires an external API call (Tiers 3-4). Specifics:
   these calls.
 
 There is no telemetry, no analytics, and no phone-home behavior. NabaOS never
-sends data to NabaOS's developers or any third party.
+sends data to its developers or any third party.
 
 ### Where is my data stored?
 
@@ -84,11 +83,10 @@ All data is stored locally in `~/.nabaos/` (or the path set by
 ```text
 ~/.nabaos/
   cache.db          SQLite database for fingerprint and intent caches
-  profiles.db       Behavioral profiles for anomaly detection
   cost.db           LLM cost tracking history
+  profiles.db       Behavioral profiles for anomaly detection
   models/           ONNX model files for local classification
   constitution.yaml Active constitution
-  profile.toml      Module and hardware configuration
 ```
 
 ### Can I export my data?
@@ -96,11 +94,7 @@ All data is stored locally in `~/.nabaos/` (or the path set by
 Yes:
 
 ```bash
-# Export cache entries
-nyaya cache export --format json > cache_export.json
-
-# Export cost history
-nyaya cost export --format csv > cost_history.csv
+nabaos export
 ```
 
 ---
@@ -122,8 +116,8 @@ Set the provider and model:
 ```bash
 export NABA_LLM_PROVIDER=anthropic
 export NABA_LLM_API_KEY=sk-ant-api03-...
-export NABA_CHEAP_LLM_MODEL=claude-haiku-4-5
-export NABA_EXPENSIVE_LLM_MODEL=claude-opus-4-6
+export NABA_CHEAP_MODEL=claude-haiku-4-5
+export NABA_EXPENSIVE_MODEL=claude-opus-4-6
 ```
 
 ### How do I add a new LLM provider?
@@ -135,19 +129,20 @@ NabaOS at it:
 export NABA_LLM_PROVIDER=openai
 export NABA_LLM_API_KEY=not-needed
 export NABA_LLM_BASE_URL=http://localhost:11434/v1   # Ollama example
-export NABA_CHEAP_LLM_MODEL=llama3.2
+export NABA_CHEAP_MODEL=llama3.2
 ```
 
 For providers with a proprietary API, you would need to implement the provider
-trait in `src/llm_router/providers.rs`. See the existing Anthropic and OpenAI
+trait in `src/llm_router/provider.rs`. See the existing Anthropic and OpenAI
 implementations as reference.
 
 ### Can I run completely offline?
 
 Partially. When all LLM providers are unavailable:
 
-- **Tiers 0-2 work fully offline.** Fingerprint cache, SetFit ONNX
-  classification, and intent cache all run locally with no network dependency.
+- **Tiers 0-2.5 work fully offline.** Fingerprint cache, BERT classifier,
+  SetFit intent classification, and semantic cache all run locally with no
+  network dependency.
 - **Tier 3-4 fail gracefully.** Novel queries that miss the cache will return
   a "no LLM provider available" error instead of hanging.
 
@@ -170,13 +165,13 @@ Not natively. NabaOS is a Linux/macOS application. On Windows, use one of:
 # WSL2
 wsl --install
 # Then inside WSL2:
-curl -fsSL https://get.nyaya.dev/install.sh | sh
+bash <(curl -fsSL https://raw.githubusercontent.com/nabaos/nabaos/main/scripts/install.sh)
 ```
 
 ### What about macOS?
 
-Fully supported on both Apple Silicon (aarch64) and Intel (x86_64). The
-one-line installer detects your architecture automatically.
+Fully supported on Apple Silicon (aarch64). The one-line installer detects
+your architecture automatically.
 
 ### What are the minimum system requirements?
 
@@ -216,31 +211,31 @@ calls multiple tools in sequence.
 
 ### Why is classification slow on first run?
 
-The first classification after startup takes 200-500ms because the SetFit ONNX
-model must be loaded into memory (~80 MB). Subsequent classifications run in
-under 5ms because the model stays loaded.
+The first classification after startup takes 200-500ms because the ONNX
+models must be loaded into memory. Subsequent classifications run in
+under 5ms because the models stay loaded.
 
 ```text
-First run:   nyaya classify "test" → 4.7ms (but 350ms total including model load)
-Second run:  nyaya classify "test" → 0.031ms (fingerprint cache hit)
-Third query: nyaya classify "new query" → 4.2ms (model already loaded)
+First run:   nabaos admin classify "test" → 4.7ms (but 350ms total including model load)
+Second run:  nabaos admin classify "test" → 0.031ms (fingerprint cache hit)
+Third query: nabaos admin classify "new query" → 4.2ms (model already loaded)
 ```
 
-If you run NabaOS as a daemon (`nyaya daemon`), the model is loaded once at
-startup and stays in memory. There is no slow first-query penalty.
+If you run NabaOS as a service (`nabaos start`), the models are loaded once at
+startup and stay in memory. There is no slow first-query penalty.
 
 ### Why is my query hitting Tier 4 instead of the cache?
 
 A query hits Tier 4 (deep agent) only when:
 
-1. It missed Tiers 0-2 (no fingerprint match, no classification match, no
-   intent cache hit), AND
+1. It missed Tiers 0-2.5 (no fingerprint match, no classification match, no
+   intent cache hit, no semantic cache hit), AND
 2. The Tier 3 cheap LLM determined it was too complex to handle.
 
 Check which tier resolved your query:
 
 ```bash
-nyaya query "your query" --verbose
+RUST_LOG=debug nabaos ask "your query here"
 ```
 
 Common reasons for cache misses:
@@ -248,7 +243,7 @@ Common reasons for cache misses:
 - **New phrasing:** The query wording is different enough from cached entries.
   The cache will learn this phrasing after the first resolution.
 - **Low similarity:** The semantic similarity to cached entries is below the
-  threshold (default 0.92). The system is conservative by design.
+  threshold. The system is conservative by design.
 - **Cache cold start:** During the first week, the cache has few entries.
   Hit rates improve as patterns accumulate.
 
@@ -261,11 +256,11 @@ Common reasons for cache misses:
 ```bash
 # Nuclear option: delete all data and start fresh
 rm -rf ~/.nabaos/
-nyaya setup
+nabaos setup
 ```
 
 This deletes:
-- All cached queries (fingerprint, intent, WASM modules)
+- All cached queries (fingerprint, intent, semantic cache)
 - Behavioral profiles (anomaly detection baselines)
 - Cost history
 - Constitution (will be recreated by setup wizard)
@@ -275,10 +270,10 @@ This deletes:
 
 ```bash
 # If installed via the one-line installer
-curl -fsSL https://get.nyaya.dev/install.sh | sh
+bash <(curl -fsSL https://raw.githubusercontent.com/nabaos/nabaos/main/scripts/install.sh)
 
 # If installed via Cargo
-cargo install nabaos --force
+cargo install --git https://github.com/nabaos/nabaos.git --force
 
 # If using Docker
 docker pull ghcr.io/nabaos/nabaos:latest
@@ -295,8 +290,8 @@ docker restart nabaos
 |---|---|---|---|
 | **Language** | Python | Python | Rust |
 | **Hosting** | Library (you host) | Library (you host) | Standalone runtime (you host) |
-| **Caching** | Optional, basic | None built-in | 5-tier semantic cache (core feature) |
-| **Security** | None built-in | None built-in | 6-module security layer, constitution |
+| **Caching** | Optional, basic | None built-in | 6-tier semantic cache (core feature) |
+| **Security** | None built-in | None built-in | Multi-module security layer, constitution |
 | **Cost model** | Every call hits LLM | Every call hits LLM | 90% cached after learning period |
 | **Multi-backend** | Yes (many) | Yes (OpenAI focus) | Yes (route to cheapest/best) |
 | **Agent isolation** | None | None | Per-agent constitution, permission manifest |
@@ -337,7 +332,7 @@ plugins, and security research.
 
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
-Email security reports to: `security@nyaya.dev`
+Email security reports to: `security@nabaos.dev`
 
 Include:
 - Description of the vulnerability
@@ -345,9 +340,7 @@ Include:
 - Impact assessment
 - Suggested fix (if you have one)
 
-We follow a 90-day responsible disclosure policy. Security issues are treated
-as highest priority. The project has completed 3 security audit rounds and
-maintains 487 tests covering all security modules.
+We follow a 90-day responsible disclosure policy.
 
 ---
 
@@ -355,17 +348,12 @@ maintains 487 tests covering all security modules.
 
 ### What does "NabaOS" mean?
 
-NabaOS is one of the six classical Indian schools of philosophy, focused on
-logic, epistemology, and critical analysis. The NabaOS school developed a
-rigorous framework for evaluating knowledge claims and determining truth
-through systematic reasoning.
-
-In the context of this project, the name reflects the system's approach to
-evaluating and routing queries through structured analysis -- classifying
-intent, checking trust boundaries, and making evidence-based routing decisions
-rather than blindly forwarding everything to an LLM.
+NabaOS is an AI agent operating system. The name reflects the project's
+philosophy of structured, evidence-based decision-making -- classifying intent,
+checking trust boundaries, and making routing decisions rather than blindly
+forwarding everything to an LLM.
 
 ### What license is NabaOS under?
 
-NabaOS is open source. Check the `LICENSE` file in the repository root
-for the specific license terms.
+NabaOS is open source. Check the `LICENSE` file in the repository root for the
+specific license terms.

@@ -46,7 +46,7 @@ source ~/.bashrc
 Or re-run the setup wizard, which will prompt for the key:
 
 ```bash
-nyaya setup
+nabaos setup
 ```
 
 **Docs:** [First Run > Step 2](../getting-started/first-run.md#step-2-set-your-llm-provider)
@@ -55,7 +55,7 @@ nyaya setup
 
 #### "NABA_TELEGRAM_BOT_TOKEN not set" / "TELEGRAM" related errors
 
-**Symptom:** The daemon starts but reports that Telegram is disabled, or
+**Symptom:** The service starts but reports that Telegram is disabled, or
 Telegram messages are not received.
 
 **Cause:** The Telegram bot token is not set, or the token is invalid.
@@ -86,13 +86,13 @@ the path in the configuration does not point to a valid file.
 
 ```bash
 # Check constitution syntax
-nyaya constitution check
+nabaos config rules check
+
+# View the active constitution
+nabaos config rules show
 
 # Reset to a default constitution template
-nyaya constitution reset --template general
-
-# Edit the constitution (opens in $EDITOR)
-nyaya constitution edit
+nabaos config rules use-template default
 ```
 
 **Docs:** [Constitution Customization](../guides/constitution-customization.md)
@@ -103,24 +103,25 @@ nyaya constitution edit
 
 #### "Model directory not found" / "ONNX model file not found"
 
-**Symptom:** Classification commands (`nyaya classify`, `nyaya query`) fail
-with a model loading error on first run.
+**Symptom:** Classification commands (`nabaos admin classify`) fail with a model
+loading error on first run.
 
-**Cause:** The SetFit ONNX model files have not been downloaded. They are not
-bundled with the binary to keep the download small.
+**Cause:** The ONNX model files have not been downloaded. They are not bundled
+with the binary to keep the download small.
 
 **Fix:**
 
 ```bash
 # Download models via setup
-nyaya setup
-
-# Or download directly
-./scripts/download-models.sh
+nabaos setup
 
 # Or specify a custom model path
-export NABA_MODEL_DIR=/path/to/your/models
+export NABA_MODEL_PATH=/path/to/your/models
 ```
+
+> **Note:** If the binary was built without the `bert` feature gate, Tiers 1-2
+> are disabled and classification degrades to `unknown_unknown`. This is not an
+> error -- it means the BERT and SetFit models are simply not available.
 
 ---
 
@@ -136,7 +137,7 @@ or the ONNX Runtime version is incompatible.
 ```bash
 # Delete and re-download
 rm -rf ~/.nabaos/models/
-nyaya setup
+nabaos setup
 
 # Verify the model files
 ls -la ~/.nabaos/models/
@@ -159,17 +160,10 @@ for a different version of the classifier.
 ```bash
 # Re-download models (force)
 rm -rf ~/.nabaos/models/
-./scripts/download-models.sh
+nabaos setup
 
 # Verify with a test classification
-nyaya classify "test query"
-```
-
-If the error persists after re-downloading, check the model compatibility:
-
-```bash
-# Print model metadata
-nyaya model info
+nabaos admin classify "test query"
 ```
 
 ---
@@ -178,8 +172,8 @@ nyaya model info
 
 #### "Cache database corrupted" / "SQLite error: database disk image is malformed"
 
-**Symptom:** Queries that should hit the cache return errors. The `cache stats`
-command fails.
+**Symptom:** Queries that should hit the cache return errors. The
+`admin cache stats` command fails.
 
 **Cause:** The SQLite database file for the fingerprint or intent cache was
 corrupted, typically by a crash during a write operation or disk full condition.
@@ -188,11 +182,10 @@ corrupted, typically by a crash during a write operation or disk full condition.
 
 ```bash
 # Check cache health
-nyaya cache stats
+nabaos admin cache stats
 
-# If corrupted, delete and rebuild
+# If corrupted, delete the database and let it rebuild
 rm ~/.nabaos/cache.db
-nyaya cache rebuild
 
 # The cache will repopulate as queries come in.
 # Tier 0 (fingerprint) rebuilds on first repeat query.
@@ -211,13 +204,10 @@ nyaya cache rebuild
 
 ```bash
 # View cache stats
-nyaya cache stats
+nabaos admin cache stats
 
-# Evict stale entries (removes entries not accessed in 30+ days)
-nyaya cache evict --older-than 30d
-
-# Or increase the cache limit in profile.toml
-# max_cache_entries = 100000
+# Delete the cache database and let it rebuild from scratch
+rm ~/.nabaos/cache.db
 ```
 
 ---
@@ -234,15 +224,12 @@ created, or the encrypted vault file is corrupted.
 **Fix:**
 
 ```bash
-# Try unlocking with the correct passphrase
-nyaya vault unlock
+# Re-store secrets with the correct passphrase
+nabaos config vault store NABA_LLM_API_KEY
 
-# If you forgot the passphrase, reset the vault
-# WARNING: This deletes all stored secrets. You will need to re-enter them.
-nyaya vault reset
-
-# Re-add your secrets
-nyaya vault set NABA_LLM_API_KEY sk-ant-api03-your-key-here
+# If you forgot the passphrase, delete the vault and re-create
+rm ~/.nabaos/vault.enc
+nabaos config vault store NABA_LLM_API_KEY
 ```
 
 ---
@@ -251,12 +238,13 @@ nyaya vault set NABA_LLM_API_KEY sk-ant-api03-your-key-here
 
 **Symptom:** The agent reports a missing vault file on first run.
 
-**Cause:** The vault has not been initialized yet.
+**Cause:** The vault has not been initialized yet. It is created automatically
+when you store the first secret.
 
 **Fix:**
 
 ```bash
-nyaya vault init
+nabaos config vault store NABA_LLM_API_KEY
 ```
 
 ---
@@ -275,13 +263,10 @@ constitution. This is working as designed.
 
 ```bash
 # View the active constitution rules
-nyaya constitution show
+nabaos config rules show
 
 # Check which rule matched
-nyaya constitution check "your query here"
-
-# Edit the constitution to modify the rule
-nyaya constitution edit
+nabaos config rules check "your query here"
 ```
 
 Common reasons for unexpected blocks:
@@ -291,7 +276,7 @@ Common reasons for unexpected blocks:
   Use more specific keywords or switch to action+target triggers.
 
 - **Out-of-domain block:** The query is outside the agent's declared domain.
-  Check `[domain].allowed_domains` in the constitution.
+  Check `allowed_domains` in the constitution.
 
 **Docs:** [Constitution Schema](../reference/constitution-schema.md),
 [Constitution Customization](../guides/constitution-customization.md)
@@ -311,16 +296,16 @@ the SQLite database. SQLite allows only one writer at a time.
 
 ```bash
 # Check for other NabaOS processes
-ps aux | grep nyaya
+ps aux | grep nabaos
 
 # Stop duplicate instances
-nyaya daemon stop
+sudo systemctl stop nabaos   # if using systemd
 
 # If a process crashed and left a lock file
 rm ~/.nabaos/*.db-wal ~/.nabaos/*.db-shm
 
 # Restart
-nyaya daemon
+nabaos start
 ```
 
 ---
@@ -389,9 +374,6 @@ df -h ~/.nabaos/
 # Clean up old logs
 rm ~/.nabaos/logs/*.log.old
 
-# Evict old cache entries
-nyaya cache evict --older-than 7d
-
 # Move the data directory to a larger partition
 export NABA_DATA_DIR=/mnt/larger-disk/nabaos
 ```
@@ -418,7 +400,7 @@ jq . < ~/.nabaos/config.json
 
 # If the error is from an API response, enable debug logging to see
 # the raw response:
-NABA_LOG_LEVEL=debug nyaya query "test"
+RUST_LOG=debug nabaos ask "test"
 ```
 
 ---
@@ -444,7 +426,7 @@ python3 -c "import yaml; yaml.safe_load(open('constitution.yaml'))"
 # - Unquoted strings with special characters (use quotes: "value: with colon")
 
 # Re-generate from template if stuck
-nyaya constitution reset --template general
+nabaos config rules use-template default
 ```
 
 ---
@@ -461,13 +443,10 @@ version, corrupted, or exceeded its fuel (execution step) budget.
 **Fix:**
 
 ```bash
-# List cached WASM modules
-nyaya cache list --type wasm
+# Delete the cache database to clear cached WASM modules
+rm ~/.nabaos/cache.db
 
-# Remove the problematic module
-nyaya cache invalidate <module-id>
-
-# The next identical query will regenerate the module from scratch
+# The next identical query will regenerate the module from scratch.
 
 # If fuel exhaustion is the issue, the module may contain an infinite loop.
 # Check the chain definition for unbounded recursion.
@@ -482,26 +461,23 @@ nyaya cache invalidate <module-id>
 **Symptom:** An agent's chain step fails because it tried to call an ability
 not listed in its manifest.
 
-**Cause:** The agent's `manifest.yaml` does not declare the required permission,
-or the constitution blocks the permission.
+**Cause:** The agent's manifest does not declare the required permission, or
+the constitution blocks the permission.
 
 **Fix:**
 
 ```bash
 # Check what permissions the agent has
-nabaos agent permissions <agent-name>
+nabaos config agent permissions <agent-name>
 
-# Check what permissions the chain requires
-nyaya chain inspect <chain-id>
-
-# Add the missing permission to manifest.yaml:
+# Add the missing permission to the agent's manifest:
 # permissions:
 #   - existing.permission
 #   - missing.permission     # <-- add this
 
 # Re-package and re-install the agent
-nabaos agent package ~/my-agents/<agent-name> --output agent.nap
-nabaos agent install agent.nap
+nabaos config agent package ~/my-agents/<agent-name> --output agent.nap
+nabaos config agent install agent.nap
 ```
 
 ---
@@ -510,23 +486,20 @@ nabaos agent install agent.nap
 
 **Symptom:** The permission is declared in the manifest but still denied.
 
-**Cause:** The constitution's `[boundaries]` section blocks this permission
-even when declared.
+**Cause:** The constitution's boundaries section blocks this permission even
+when declared.
 
 **Fix:**
 
 ```bash
 # Check constitution boundaries
-nyaya constitution show
+nabaos config rules show
 
 # Look for:
-# [boundaries]
-# approved_tools = ["tool.a", "tool.b"]
+# boundaries:
+#   approved_tools: ["tool.a", "tool.b"]
 #
 # If your tool is not in approved_tools, it will be denied.
-
-# Edit the constitution to allow the tool
-nyaya constitution edit
 ```
 
 **Docs:** [Constitution Schema](../reference/constitution-schema.md)
@@ -538,17 +511,17 @@ nyaya constitution edit
 | Error variant | Common cause | Quick fix |
 |---|---|---|
 | `Config` | Missing env var | `export NABA_LLM_API_KEY=...` |
-| `ModelLoad` | Models not downloaded | `nyaya setup` |
-| `Inference` | Corrupt model file | Delete `~/.nabaos/models/` and re-download |
-| `Cache` | Corrupt SQLite | `rm ~/.nabaos/cache.db && nyaya cache rebuild` |
-| `Vault` | Wrong passphrase | `nyaya vault reset` (destroys stored secrets) |
-| `ConstitutionViolation` | Rule too broad | `nyaya constitution edit` |
+| `ModelLoad` | Models not downloaded | `nabaos setup` |
+| `Inference` | Corrupt model file | Delete `~/.nabaos/models/` and re-run `nabaos setup` |
+| `Cache` | Corrupt SQLite | `rm ~/.nabaos/cache.db` |
+| `Vault` | Wrong passphrase | Delete `~/.nabaos/vault.enc` and re-store secrets |
+| `ConstitutionViolation` | Rule too broad | `nabaos config rules show` to inspect rules |
 | `Database` | SQLite locked | Stop duplicate processes, remove WAL files |
 | `Io` | File permissions | `chmod -R u+rw ~/.nabaos/` |
 | `Json` | Syntax error | Validate with `python3 -m json.tool` |
 | `Yaml` | Indentation error | Check for tabs vs spaces |
-| `Wasm` | Module incompatible | `nyaya cache invalidate <id>` |
-| `PermissionDenied` | Missing manifest permission | Add to `permissions:` in `manifest.yaml` |
+| `Wasm` | Module incompatible | `rm ~/.nabaos/cache.db` |
+| `PermissionDenied` | Missing manifest permission | Add to `permissions` in manifest |
 
 ---
 
@@ -559,7 +532,7 @@ If none of the fixes above resolve your issue:
 1. **Enable debug logging** to get detailed output:
 
    ```bash
-   NABA_LOG_LEVEL=debug nyaya query "test"
+   RUST_LOG=debug nabaos ask "test"
    ```
 
    See [Debug Mode](debug-mode.md) for how to read the output.
@@ -573,6 +546,6 @@ If none of the fixes above resolve your issue:
 3. **Open a new issue** with the [bug report template](https://github.com/nabaos/nabaos/issues/new?template=bug_report.md). Include:
    - The full error message
    - Your OS and architecture (`uname -a`)
-   - NabaOS version (`nyaya --version`)
+   - NabaOS version (`nabaos --version`)
    - Steps to reproduce
    - Debug log output (with secrets redacted)

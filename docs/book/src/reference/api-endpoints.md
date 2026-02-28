@@ -4,8 +4,8 @@ The NabaOS web dashboard exposes a REST API on the configured bind address
 (default: `127.0.0.1:8919`). Start the server with:
 
 ```bash
-nyaya web                          # default: 127.0.0.1:8919
-nyaya web --bind 0.0.0.0:8080     # custom bind address
+nabaos start --web-only                        # default: 127.0.0.1:8919
+nabaos start --web-only --bind 0.0.0.0:9000   # custom bind address
 ```
 
 ## Authentication
@@ -18,8 +18,7 @@ header:
 Authorization: Bearer <token>
 ```
 
-If `NABA_WEB_PASSWORD` is not set, authentication is disabled and all
-requests are allowed.
+If `NABA_WEB_PASSWORD` is not set, the web dashboard is disabled.
 
 Sessions expire after 24 hours by default (configurable via
 `NABA_WEB_SESSION_TTL`).
@@ -390,7 +389,6 @@ curl http://localhost:8919/api/constitution \
   "rules": [
     {
       "name": "block_destructive_keywords",
-      "description": "Block queries containing destructive keywords",
       "enforcement": "Block",
       "trigger_actions": [],
       "trigger_targets": [],
@@ -399,7 +397,6 @@ curl http://localhost:8919/api/constitution \
     },
     {
       "name": "allow_check_actions",
-      "description": "Allow all read-only check actions",
       "enforcement": "Allow",
       "trigger_actions": ["check"],
       "trigger_targets": [],
@@ -410,16 +407,31 @@ curl http://localhost:8919/api/constitution \
   "templates": [
     {
       "name": "default",
-      "description": "Default safety constitution with common-sense boundaries",
+      "description": "General-purpose safety defaults",
       "rules_count": 6
     },
     {
-      "name": "solopreneur",
-      "description": "Solopreneur assistant \u2014 business planning, drafting, research",
+      "name": "trading",
+      "description": "Financial markets monitoring and trading",
       "rules_count": 3
     }
   ]
 }
+```
+
+---
+
+### `POST /api/constitution/check`
+
+Check a query against the active constitution.
+
+**Request:**
+
+```bash
+curl -X POST http://localhost:8919/api/constitution/check \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "delete all files"}'
 ```
 
 ---
@@ -442,6 +454,28 @@ curl -X POST http://localhost:8919/api/auth/confirm/abc123-token
 ```json
 {
   "confirmed": true
+}
+```
+
+---
+
+## Health
+
+### `GET /api/health`
+
+Health check endpoint. No authentication required.
+
+**Request:**
+
+```bash
+curl http://localhost:8919/api/health
+```
+
+**Response (200):**
+
+```json
+{
+  "status": "ok"
 }
 ```
 

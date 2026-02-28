@@ -1,9 +1,10 @@
 # Constitution Schema
 
 The constitution is a set of YAML rules that gate agent actions before any
-LLM or tool execution. It implements a deny-by-default security model:
-unmatched intents are blocked unless the `default_enforcement` is explicitly
-set to a permissive level.
+LLM or tool execution.
+
+The shipped `default.yaml` uses `default_enforcement: allow`. When no
+constitution is loaded, the code default is `block` (deny-by-default).
 
 ## YAML Schema
 
@@ -27,6 +28,13 @@ rules:
       - string
 
     reason: string              # Why this rule exists (optional)
+
+# Additional fields (optional)
+channel_permissions: object     # Per-channel permission overrides
+browser_stealth: object         # Browser stealth configuration
+swarm_config: object            # Swarm execution configuration
+ollama_config: object           # Local Ollama model configuration
+captcha_solver: object          # Captcha solving configuration
 ```
 
 ## Enforcement Levels
@@ -35,7 +43,7 @@ rules:
 |-------|----------|---------|
 | `block` | Silently block the action. No LLM call, no tool execution. | No |
 | `warn` | Allow the action but log a warning. | Yes |
-| `confirm` | Require user confirmation before proceeding. In non-interactive contexts (chain execution, daemon), this blocks the action. | No |
+| `confirm` | Require user confirmation before proceeding. In non-interactive contexts (chain execution, server), this blocks the action. | No |
 | `allow` | Allow unconditionally. | Yes |
 
 ## Rule Matching
@@ -86,48 +94,30 @@ The built-in default constitution (`name: default`) ships with these rules:
 | `confirm_send_actions` | confirm | Action: send |
 | `warn_control_actions` | warn | Action: control |
 | `allow_check_actions` | allow | Action: check |
-| `confirm_delete_actions` | confirm | Action: delete |
-| `allow_search_actions` | allow | Actions: search, query, list, get, flow, schedule, notify, nlp, data, storage, trading, browser, calendar, memory, docs, channel, files, create, analyze, generate |
+| `allow_add_actions` | allow | Action: add |
+| `allow_set_reminders` | allow | Action: set; Target: reminder |
 
-Default enforcement for unmatched intents: **block**.
+Default enforcement for unmatched intents: **allow** (in the shipped `default.yaml`).
 
 ## Templates
 
-NabaOS ships 21 constitution templates for different use cases. Each template
-is deny-by-default (`default_enforcement: block`).
+NabaOS ships 8 constitution templates for different use cases:
 
 | Template | Description |
 |----------|-------------|
-| `default` | Default safety constitution with common-sense boundaries |
-| `solopreneur` | Business planning, drafting, research |
-| `freelancer` | Invoicing, client comms, time tracking |
-| `digital-marketer` | Analytics, content creation, SEO |
-| `student` | Research, study aids, assignment help |
-| `sales` | Lead management, outreach, pipeline tracking |
-| `customer-support` | Ticket triage, KB search, response drafting |
-| `legal` | Contract analysis, case research, document drafting |
-| `ecommerce` | Inventory, orders, product listings, analytics |
-| `hr` | Recruitment, onboarding, employee engagement |
-| `finance` | Accounting, tax, audit, budgeting |
-| `healthcare` | Clinical summaries, triage, drug interactions |
-| `engineering` | Inspections, maintenance, project tracking |
-| `media` | Journalism, PR, content production |
-| `government` | Policy analysis, regulatory monitoring, compliance |
-| `ngo` | Grant writing, donor reports, program monitoring |
-| `logistics` | Shipment tracking, route optimization, customs |
-| `research` | Literature review, data analysis, paper summaries |
-| `consulting` | Competitive analysis, due diligence, strategy |
-| `creative` | Design, trends, spec sheets, content |
-| `agriculture` | Crop monitoring, market prices, weather |
-
-Templates that restrict financial access (student, digital-marketer, hr,
-media, research, creative) block all actions (`"*"`) targeting `price`,
-`portfolio`, or `invoice`.
+| `default` | General-purpose safety defaults |
+| `content-creator` | Content creation workflows |
+| `dev-assistant` | Developer assistant (code/git/CI domain) |
+| `full-autonomy` | Minimal restrictions for advanced users |
+| `home-assistant` | Smart home (IoT/calendar domain) |
+| `hr-assistant` | Human resources workflows |
+| `research-assistant` | Research: papers, data analysis, experiments |
+| `trading` | Financial markets monitoring and trading |
 
 Generate a template with:
 
 ```bash
-nyaya constitution use-template solopreneur -o my-constitution.yaml
+nabaos config rules use-template trading -o my-constitution.yaml
 ```
 
 ## Complete Example
@@ -192,12 +182,6 @@ rules:
     reason: Trading bot has no delete, control, or send permissions
 ```
 
-## Signing
-
-Constitution files can be signed with an Ed25519 signature in the agent
-manifest's `signature` field. The constitution is mounted read-only in
-production deployments -- the agent cannot modify its own constitution.
-
 ## Loading
 
 The constitution is loaded from one of three sources, in priority order:
@@ -208,3 +192,6 @@ The constitution is loaded from one of three sources, in priority order:
    selects a built-in template by name.
 3. **Default**: If neither is set, the built-in default constitution
    is used.
+
+The constitution is immutable at runtime -- the agent cannot modify its
+own constitution.

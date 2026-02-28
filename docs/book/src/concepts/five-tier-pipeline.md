@@ -1,19 +1,18 @@
-# The 5-Tier Pipeline
+# The Pipeline
 
 > **What you'll learn**
 >
-> - How each of the 5 tiers works: Fingerprint, BERT Classifier, SetFit + Intent Cache, Cheap LLM, and Deep Agent
+> - How each tier works: Fingerprint, BERT Classifier, SetFit + Intent Cache, Semantic Cache, Cheap LLM, and Deep Agent
 > - The latency and cost characteristics of each tier
 > - How queries escalate from cheap/fast tiers to expensive/powerful ones
 > - The math behind cache-driven cost savings
 > - How entries graduate between tiers over time
-> - How to configure the cache similarity threshold
 
 ---
 
 ## Overview
 
-The 5-tier pipeline is the core routing mechanism of NabaOS. Every query enters at Tier 0 and escalates upward only if the current tier cannot handle it. The goal is to resolve as many queries as possible at the cheapest, fastest tier.
+The pipeline is the core routing mechanism of NabaOS. Every query enters at Tier 0 and escalates upward only if the current tier cannot handle it. The goal is to resolve as many queries as possible at the cheapest, fastest tier.
 
 ```
 Query arrives
@@ -28,15 +27,22 @@ Query arrives
          v
 +------------------+
 | Tier 1           |  5-10ms, $0.00
-| BERT Classifier  |-----> Classify intent (action + target)
-| (66M ONNX)       |
-+--------+---------+
+| BERT Classifier  |-----> Classify intent (8 classes)
+| (~110M, ONNX)    |       Confidence >= 0.85? Use result
++--------+---------+       Otherwise cascade to Tier 2
          |
          v
 +------------------+
 | Tier 2           |  ~10ms, $0.00
-| SetFit + Intent  |-----> HIT? --> Execute cached plan
-| Cache (ONNX)     |
+| SetFit + Intent  |-----> Classify intent (54 classes)
+| Cache (~22M,ONNX)|       HIT? --> Execute cached plan
++--------+---------+
+         | MISS
+         v
++------------------+
+| Tier 2.5         |  ~20ms, $0.00
+| Semantic Cache   |-----> Embedding similarity search
+| (cosine match)   |       HIT? --> Execute cached plan
 +--------+---------+
          | MISS
          v
@@ -53,6 +59,8 @@ Query arrives
 | (multi-backend)  |       (decomposes result for caching)
 +------------------+
 ```
+
+> **`bert` feature gate:** Tiers 1 and 2 require the `bert` feature to be enabled at build time. Without it, queries are classified as `unknown_unknown` and fall through directly to the cache and LLM tiers.
 
 ---
 
@@ -87,13 +95,20 @@ Fingerprint caching is intentionally conservative. It only matches on exact (nor
 
 ## Tier 1: BERT Classifier
 
-**What it does:** Classifies the query into a W5H2 intent (action + target pair) using a 66M-parameter BERT model running locally via ONNX Runtime.
+**What it does:** Classifies the query into one of 8 common W5H2 intent classes using a BERT-base-uncased model (~110M parameters) running locally via ONNX Runtime.
 
-**When it activates:** Every query that misses Tier 0 passes through Tier 1. This tier does not return a response -- it produces a classification that Tier 2 uses.
+**When it activates:** Every query that misses Tier 0 passes through Tier 1. If confidence is >= 0.85, the classification is used directly. Otherwise, the query cascades to Tier 2 for finer-grained classification.
 
 **Latency:** 5-10ms (local ONNX inference)
 
 **Cost:** $0.00 (runs entirely on-device)
+
+**The 8 BERT classes:**
+
+```
+add_shopping, check_calendar, check_email, check_price,
+check_weather, control_lights, send_email, set_reminder
+```
 
 **Example:**
 
@@ -102,20 +117,15 @@ Input:  "Can you check if I have any new emails?"
 Output: Action=check, Target=email, Confidence=0.96
 ```
 
-The BERT classifier maps natural language queries into the W5H2 intent space (11 actions x 30 targets). This classification serves two purposes:
-
-1. **Constitution enforcement** -- the classified intent is checked against constitution rules before any further processing
-2. **Intent cache lookup** -- the action-target pair becomes the cache key for Tier 2
-
-The classifier runs a SetFit ONNX model that was trained on the 54 W5H2 classes defined in the system. At 66M parameters, it fits comfortably in memory on any modern machine and runs in single-digit milliseconds.
+**Confidence threshold:** The cascade threshold is **0.85**. Queries classified with confidence below 0.85 are passed to the SetFit classifier at Tier 2 for more precise classification across all 54 classes.
 
 ---
 
 ## Tier 2: SetFit + Intent Cache
 
-**What it does:** Uses the W5H2 classification from Tier 1 to look up a cached execution plan. If the intent class (e.g., `check_email`) has been seen before and a plan was cached, it executes the plan directly without any LLM call.
+**What it does:** Classifies the query into one of 54 W5H2 intent classes using a SetFit model (all-MiniLM-L6-v2 backbone, ~22M parameters) running locally via ONNX Runtime. Then looks up a cached execution plan for the classified intent.
 
-**When it activates:** After Tier 1 classifies the intent, Tier 2 checks the intent cache. It activates (returns a hit) when a cached plan exists for the classified action-target pair.
+**When it activates:** After Tier 1 classifies the intent (or if Tier 1's confidence is below 0.85), Tier 2 performs finer-grained classification across all 54 classes, then checks the intent cache.
 
 **Latency:** ~10ms (cache lookup + parameter extraction)
 
@@ -156,11 +166,25 @@ Parameters enclosed in `{{...}}` are extracted from the current query by a light
 
 ---
 
+## Tier 2.5: Semantic Cache
+
+**What it does:** Performs embedding-based similarity search against previously cached execution plans. This catches queries that are semantically similar but don't match any of the 54 W5H2 intent classes exactly.
+
+**When it activates:** After Tier 2 classification and intent cache lookup miss.
+
+**Latency:** ~20ms (embedding computation + cosine similarity search)
+
+**Cost:** $0.00 (no external calls)
+
+**Example:** A novel phrasing like "pull up my messages" that doesn't strongly match any trained class might still find a cached plan via semantic similarity to previous "check email" queries.
+
+---
+
 ## Tier 3: Cheap LLM
 
 **What it does:** Sends the query to an inexpensive LLM (Claude Haiku, GPT-4o-mini, or DeepSeek) for resolution. The LLM also receives a metacognition prompt that asks it to evaluate whether the solution should be cached.
 
-**When it activates:** When both the fingerprint cache (Tier 0) and intent cache (Tier 2) miss.
+**When it activates:** When all cache tiers (0, 2, 2.5) miss.
 
 **Latency:** 100-500ms (API round-trip)
 
@@ -194,7 +218,7 @@ This is a novel query -- the wording is unique and the intent (analyze + price) 
 }
 ```
 
-This cached plan means the next time someone asks "Why did AAPL drop?" or "Explain the Tesla rally," it hits the intent cache at Tier 2 instead of calling the LLM again.
+This cached plan means the next time someone asks "Why did AAPL drop?" or "Explain the Tesla rally," it hits the cache instead of calling the LLM again.
 
 ---
 
@@ -234,9 +258,9 @@ Custom tasks      User-defined          Configurable
 
 Before dispatching to a deep agent, the system checks:
 
-1. Is this task type allowed by the constitution's `[deep_agent]` section?
+1. Is this task type allowed by the constitution?
 2. Is the estimated cost within per-task, daily, and monthly spending limits?
-3. Does the cost exceed the approval threshold? If so, prompt the user for confirmation via Telegram inline keyboard.
+3. Does the cost exceed the approval threshold? If so, prompt the user for confirmation.
 
 **Result decomposition:**
 
@@ -249,13 +273,13 @@ After a deep agent completes a task, the result decomposer analyzes the executio
 Here is the cost model for a steady-state system (after the initial learning period):
 
 ```
-Tier distribution      Cost per query     Weighted cost
-──────────────────     ──────────────     ─────────────
-90% Tier 0-2 (cache)   $0.00              $0.000
- 8% Tier 3 (cheap LLM) $0.005             $0.0004
- 2% Tier 4 (deep agent) $2.00             $0.040
-                                          ──────
-                        Average per query: $0.04
+Tier distribution        Cost per query     Weighted cost
+──────────────────       ──────────────     ─────────────
+90% Tier 0-2.5 (cache)   $0.00              $0.000
+ 8% Tier 3 (cheap LLM)   $0.005             $0.0004
+ 2% Tier 4 (deep agent)  $2.00              $0.040
+                                            ──────
+                          Average per query: $0.04
 ```
 
 Without the caching pipeline, every query would hit at least Tier 3:
@@ -287,74 +311,19 @@ Cache entries are not static. They improve and graduate over time through a feed
 
 When a Tier 3 (cheap LLM) response includes a positive metacognition assessment (`"cacheable": true`), the solution is compiled into a parameterized plan and stored in the intent cache. Future queries matching the same intent class resolve at Tier 2 instead of Tier 3.
 
-### Tier 2 similarity threshold relaxation
-
-New cache entries start with a strict similarity threshold of 0.95. After 5 successful uses, the threshold relaxes to 0.92, allowing more query variations to hit the cache.
-
-```
-Cache entry lifecycle:
-
-  Created          5 hits           Low success
-  threshold=0.95 → threshold=0.92 → threshold=0.95 (tightened)
-                                     or disabled if <60% success
-```
-
 ### Tier 4 result decomposition
 
-When a deep agent completes a complex task, the result decomposer breaks the execution trace into subtasks. Each subtask that appears reusable becomes a new Tier 2 cache entry. This is how a single $3 deep agent call can prevent dozens of future expensive calls.
+When a deep agent completes a complex task, the result decomposer breaks the execution trace into subtasks. Each subtask that appears reusable becomes a new cache entry. This is how a single $3 deep agent call can prevent dozens of future expensive calls.
 
 ### Cache entry retirement
 
-If a cache entry's success rate drops below 0.80, its similarity threshold tightens back to 0.95. If success rate drops below 0.60, the entry is disabled and flagged for re-evaluation by the expensive LLM on the next matching query.
+If a cache entry's success rate drops below 0.80, its similarity threshold tightens. If success rate drops below 0.60, the entry is disabled and flagged for re-evaluation by the LLM on the next matching query.
 
 ---
 
-## Configuration
-
-### NABA_CACHE_SIMILARITY
-
-The `NABA_CACHE_SIMILARITY` environment variable controls the cosine similarity threshold for semantic cache matching. This determines how closely a new query must match an existing cache entry to be considered a hit.
-
-```bash
-# Default: 0.92 (recommended for most users)
-export NABA_CACHE_SIMILARITY=0.92
-
-# Conservative: fewer false cache hits, more LLM calls
-export NABA_CACHE_SIMILARITY=0.95
-
-# Aggressive: more cache hits, higher risk of mismatches
-export NABA_CACHE_SIMILARITY=0.88
-```
-
-**Guidelines:**
-
-- **0.95** -- Use during the first week while the cache is learning. Prevents bad cache entries from forming.
-- **0.92** -- Default for steady state. Good balance between hit rate and accuracy.
-- **0.88** -- Only for domains with highly repetitive queries (e.g., a trading bot that always asks similar price-check questions).
-
-### Other pipeline settings
-
-```bash
-# Hours before anomaly detection kicks in (learning period)
-export NABA_LEARNING_HOURS=24
-
-# LLM provider for Tier 3
-export NABA_CHEAP_LLM_PROVIDER=anthropic
-export NABA_CHEAP_LLM_MODEL=claude-haiku-4-5
-
-# Expensive model for metacognition evaluation
-export NABA_EXPENSIVE_LLM_MODEL=claude-opus-4-6
-```
-
-### CLI cache management
+## CLI Cache Management
 
 ```bash
 # View cache statistics
-nabaos cache stats
-
-# List all cached entries
-nabaos cache list
-
-# Invalidate a specific cache entry
-nabaos cache invalidate <entry-id>
+nabaos admin cache stats
 ```

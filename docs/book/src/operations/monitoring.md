@@ -2,9 +2,9 @@
 
 > **What you'll learn**
 >
-> - How to configure log levels with `NABA_LOG_LEVEL`
-> - How to monitor LLM spending with `nabaos costs`
-> - How to check cache hit rates with `nabaos cache stats`
+> - How to configure log levels with `RUST_LOG`
+> - How to monitor LLM spending with `nabaos status`
+> - How to check cache hit rates with `nabaos admin cache stats`
 > - How to set up security alerts via Telegram
 > - How anomaly detection works and what triggers alerts
 > - How to use the health check endpoint
@@ -13,7 +13,7 @@
 
 ## Log Levels
 
-NabaOS uses `tracing-subscriber` for structured logging. Control verbosity with the `NABA_LOG_LEVEL` environment variable:
+NabaOS uses `tracing-subscriber` for structured logging. Control verbosity with the `RUST_LOG` environment variable:
 
 | Level | What it shows |
 |-------|---------------|
@@ -26,22 +26,26 @@ NabaOS uses `tracing-subscriber` for structured logging. Control verbosity with 
 
 ```bash
 # Via environment variable
-export NABA_LOG_LEVEL=debug
-nabaos daemon
+export RUST_LOG=debug
+nabaos start
 ```
-
-> **Note**: The underlying `tracing-subscriber` crate also respects `RUST_LOG`. If both are set, `RUST_LOG` takes precedence. For most users, `NABA_LOG_LEVEL` is the recommended variable.
 
 Or in your `.env` / systemd environment file:
 
 ```
-NABA_LOG_LEVEL=debug
+RUST_LOG=debug
 ```
 
 Or in Docker:
 
 ```bash
-docker run -e NABA_LOG_LEVEL=debug ghcr.io/nabaos/nabaos:latest
+docker run -e RUST_LOG=debug ghcr.io/nabaos/nabaos:latest
+```
+
+`RUST_LOG` supports module-level filters for fine-grained control:
+
+```bash
+export RUST_LOG="nabaos=debug,tower_http=info"
 ```
 
 ### Example log output at each level
@@ -51,7 +55,7 @@ docker run -e NABA_LOG_LEVEL=debug ghcr.io/nabaos/nabaos:latest
 ```
 2026-02-24T10:00:01Z  INFO  NabaOS starting...
 2026-02-24T10:00:02Z  INFO  Security layer initialized
-2026-02-24T10:00:02Z  INFO  Daemon listening
+2026-02-24T10:00:02Z  INFO  Ready.
 2026-02-24T10:05:11Z  INFO  Cache hit: check_email (fingerprint match)
 2026-02-24T10:05:11Z  INFO  Request completed in 12ms
 ```
@@ -86,7 +90,7 @@ docker run -e NABA_LOG_LEVEL=debug ghcr.io/nabaos/nabaos:latest
 Track how much you are spending on LLM API calls:
 
 ```bash
-nabaos costs
+nabaos status
 ```
 
 Expected output:
@@ -127,21 +131,8 @@ Expected output:
 If the web dashboard is running, query costs via the API:
 
 ```bash
-curl -s http://localhost:3000/api/costs | python3 -m json.tool
-```
-
-Expected output:
-
-```json
-{
-    "total_spent_usd": 4.73,
-    "total_saved_usd": 38.12,
-    "savings_percent": 88.9,
-    "total_llm_calls": 347,
-    "total_cache_hits": 2841,
-    "total_input_tokens": 1245600,
-    "total_output_tokens": 423100
-}
+curl -s http://localhost:8919/api/costs \
+  -H "Authorization: Bearer <token>" | python3 -m json.tool
 ```
 
 ---
@@ -151,7 +142,7 @@ Expected output:
 Monitor the cache tiers individually:
 
 ```bash
-nabaos cache stats
+nabaos admin cache stats
 ```
 
 Expected output:
@@ -159,7 +150,7 @@ Expected output:
 ```
 === Cache Statistics ===
 
-Fingerprint Cache (Tier 1):
+Fingerprint Cache (Tier 0):
   Entries: 142
   Hits:    1,203
 
@@ -173,7 +164,7 @@ Intent Cache (Tier 2):
 
 | Cache tier | Description |
 |------------|-------------|
-| **Fingerprint Cache (Tier 1)** | Exact-match lookup by query hash. Sub-millisecond. Zero cost. |
+| **Fingerprint Cache (Tier 0)** | Exact-match lookup by query hash. Sub-millisecond. Zero cost. |
 | **Intent Cache (Tier 2)** | Semantic similarity match using embeddings. Handles paraphrased queries. |
 | **Enabled vs. total entries** | Entries with low success rates are automatically disabled (not deleted). |
 
@@ -188,19 +179,12 @@ NabaOS can send real-time security alerts to a dedicated Telegram bot. This keep
 ### Setup
 
 1. Create a second Telegram bot via [@BotFather](https://t.me/BotFather) for security alerts.
-2. Get the chat ID where alerts should go (send a message to the bot, then check `https://api.telegram.org/bot<TOKEN>/getUpdates`).
+2. Get the chat ID where alerts should go.
 3. Set the environment variables:
 
 ```bash
 export NABA_SECURITY_BOT_TOKEN="987654:XYZ-security-bot-token"
 export NABA_ALERT_CHAT_ID="123456789"
-```
-
-Or in `/etc/nabaos/env`:
-
-```
-NABA_SECURITY_BOT_TOKEN=987654:XYZ-security-bot-token
-NABA_ALERT_CHAT_ID=123456789
 ```
 
 ### What triggers alerts
@@ -213,25 +197,11 @@ NABA_ALERT_CHAT_ID=123456789
 | **Anomaly detected** | Behavioral deviation exceeds the anomaly threshold |
 | **Budget exceeded** | Daily LLM spending exceeds `NABA_DAILY_BUDGET_USD` |
 
-### Example alert message
-
-```
-[SECURITY ALERT] Credential Detected
-
-Type:      API key pattern
-Source:     Telegram / user:42
-Timestamp: 2026-02-24T10:30:15Z
-Action:    Blocked — credential stripped before processing
-
-The query contained what appears to be an AWS access key.
-The credential was NOT forwarded to any LLM provider.
-```
-
 ---
 
 ## Anomaly Detection
 
-The agent builds a behavioral profile of normal usage patterns during a learning period (default: 24 hours, configurable via `NABA_LEARNING_HOURS`). After the learning period, deviations trigger alerts.
+The agent builds a behavioral profile of normal usage patterns during a learning period (default: 24 hours). After the learning period, deviations trigger alerts.
 
 Anomaly detection monitors:
 
@@ -252,53 +222,25 @@ When the anomaly score crosses the threshold (default: 0.80), the agent:
 
 ## Health Check Endpoint
 
-When the web dashboard is running (`nabaos web`), a health endpoint is available:
+When the web dashboard is running, a health endpoint is available:
 
 ```bash
-curl -s http://localhost:3000/api/health
+curl -s http://localhost:8919/api/health
 ```
 
 Expected response (HTTP 200):
 
 ```json
 {
-    "status": "ok",
-    "version": "0.1.0"
+    "status": "ok"
 }
 ```
 
 Use this endpoint for:
 
-- **Docker health checks**: `test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]`
+- **Docker health checks**: `test: ["CMD", "curl", "-sf", "http://localhost:8919/api/health"]`
 - **Load balancer probes**: Point your ALB/Cloud Run health check at `/api/health`
 - **Uptime monitoring**: Ping from an external service (UptimeRobot, Pingdom, etc.)
-
-### Dashboard endpoint
-
-For richer status information, use the dashboard API:
-
-```bash
-curl -s http://localhost:3000/api/dashboard | python3 -m json.tool
-```
-
-Expected response:
-
-```json
-{
-    "total_chains": 5,
-    "total_scheduled_jobs": 2,
-    "total_abilities": 12,
-    "costs": {
-        "total_spent_usd": 4.73,
-        "total_saved_usd": 38.12,
-        "savings_percent": 88.9,
-        "total_llm_calls": 347,
-        "total_cache_hits": 2841,
-        "total_input_tokens": 1245600,
-        "total_output_tokens": 423100
-    }
-}
-```
 
 ---
 
@@ -306,9 +248,9 @@ Expected response:
 
 | Command | What it shows |
 |---------|---------------|
-| `nabaos costs` | LLM spending, cache savings, token usage |
-| `nabaos cache stats` | Cache entries and hit counts per tier |
+| `nabaos status` | LLM spending, cache savings, token usage |
+| `nabaos admin cache stats` | Cache entries and hit counts per tier |
 | `journalctl -u nabaos -f` | Live log stream (systemd) |
 | `docker logs -f nabaos` | Live log stream (Docker) |
-| `curl localhost:3000/api/health` | Health check (web dashboard) |
-| `curl localhost:3000/api/dashboard` | Full status with costs (web dashboard) |
+| `curl localhost:8919/api/health` | Health check (web dashboard) |
+| `curl localhost:8919/api/dashboard` | Full status with costs (web dashboard) |

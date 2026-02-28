@@ -1,10 +1,10 @@
 # CLI Commands
 
-NabaOS ships as a single binary called `nyaya`. All commands share two
+NabaOS ships as a single binary called `nabaos`. All commands share two
 global options:
 
 ```
-nyaya [OPTIONS] <COMMAND>
+nabaos [OPTIONS] <COMMAND>
 
 Options:
   --data-dir <PATH>   Data directory  [env: NABA_DATA_DIR] [default: ~/.nabaos]
@@ -15,40 +15,91 @@ Options:
 
 ---
 
-## Classification & Query
+## Top-Level Commands
 
-### `classify`
+| Command | Description |
+|---------|-------------|
+| [`setup`](#setup) | Interactive setup wizard |
+| [`start`](#start) | Start the server (Telegram, Discord, web dashboard, scheduler) |
+| [`ask`](#ask) | Run a query through the full pipeline |
+| [`status`](#status) | Show cost tracking and system status |
+| [`config`](#config) | Configuration subcommands |
+| [`admin`](#admin) | Administration and diagnostics |
+| [`memory`](#memory) | View and manage agent memory |
+| [`research`](#research) | Run a research query |
+| [`init`](#init) | Initialize a new project directory |
+| [`export`](#export) | Export and hardware analysis |
+| [`pea`](#pea) | PEA (Persistent Execution Agent) management |
+| [`watcher`](#watcher) | File watcher (requires `--features watcher`) |
+| [`check`](#check) | Health check |
 
-Classify a query into a W5H2 intent using the local SetFit ONNX model.
+---
+
+## setup
+
+Interactive setup wizard: scans hardware, suggests a module profile
+(core, web, voice, browser, telegram, latex, mobile, oauth), and saves
+the configuration.
 
 ```
-nyaya classify <QUERY>
+nabaos setup [--non-interactive] [--interactive] [--download-models]
 ```
 
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `QUERY`  | yes      | The text to classify |
+| Flag                  | Description |
+|-----------------------|-------------|
+| `--non-interactive`   | Skip prompts, accept the suggested profile |
+| `--interactive`       | Force interactive mode |
+| `--download-models`   | Download ONNX models during setup |
 
 **Example:**
 
 ```bash
-nyaya classify "check my email for messages from Alice"
-# Query:      check my email for messages from Alice
-# Intent:     check|email
-# Action:     check
-# Target:     email
-# Confidence: 94.2%
-# Latency:    3.1ms
+nabaos setup
+# Scanning hardware...
+# Detected: 8 cores, 16GB RAM, no GPU
+# Suggested profile: core, web, telegram
+# Accept? [Y/n]
 ```
 
-### `query`
+---
 
-Full query pipeline: fingerprint cache -> SetFit classification -> constitution
-check -> intent cache lookup. This is the standard entry point for processing
-user queries outside the orchestrator.
+## start
+
+Start the server. Runs scheduled jobs, and optionally starts the Telegram
+bot, Discord bot, and web dashboard based on environment variables.
 
 ```
-nyaya query <QUERY>
+nabaos start [--telegram-only] [--web-only] [--bind <ADDR>]
+```
+
+| Flag               | Description |
+|--------------------|-------------|
+| `--telegram-only`  | Start only the Telegram bot |
+| `--web-only`       | Start only the web dashboard |
+| `--bind <ADDR>`    | Bind address for web dashboard [default: `127.0.0.1:8919`] |
+
+**Example:**
+
+```bash
+nabaos start
+# [start] Starting Telegram bot...
+# [start] Bot username: @my_nabaos_bot
+# [start] Starting Discord bot...
+# [start] Starting web dashboard on http://127.0.0.1:8919...
+# [start] Scheduler running (3 scheduled jobs)
+# [start] Ready.
+```
+
+---
+
+## ask
+
+Run a query through the full pipeline: fingerprint cache, BERT
+classification, SetFit intent classification, constitution check,
+semantic cache, LLM routing, and response generation.
+
+```
+nabaos ask <QUERY>
 ```
 
 | Argument | Required | Description |
@@ -58,262 +109,144 @@ nyaya query <QUERY>
 **Example:**
 
 ```bash
-nyaya query "what is the price of NVDA"
-# === Tier 1: Fingerprint Cache HIT ===
-# Intent:     check|price
-# Confidence: 95.0%
-# Latency:    0.042ms
-```
-
-### `orchestrate`
-
-Run a query through the full two-speed orchestrator pipeline, including LLM
-routing, NabaOS block parsing, security scanning, and training signal
-generation.
-
-```
-nyaya orchestrate <QUERY>
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `QUERY`  | yes      | The query to process |
-
-**Example:**
-
-```bash
-nyaya orchestrate "summarize the top 3 news stories today"
-```
-
-### `security-scan`
-
-Scan text for credential leaks, PII, and prompt injection patterns. Does not
-route to any LLM -- runs entirely locally.
-
-```
-nyaya security-scan <TEXT>
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `TEXT`   | yes      | Text to scan |
-
-**Example:**
-
-```bash
-nyaya security-scan "my api key is sk-ant-abc123 and my SSN is 123-45-6789"
-# === Security Scan ===
-# Credentials: 1 found
-# PII:         1 found
-# Types:       ["api_key", "ssn"]
-# === Redacted Output ===
-# my api key is [REDACTED:api_key] and my SSN is [REDACTED:ssn]
+nabaos ask "what is the price of NVDA"
 ```
 
 ---
 
-## Cache & Cost
+## status
 
-### `cache stats`
-
-Display hit/miss statistics for the fingerprint cache (tier 1) and intent
-cache (tier 2).
+Show cost tracking summary: total spend, cache savings, token usage.
+Displays both all-time and last-24-hour figures.
 
 ```
-nyaya cache stats
+nabaos status [--abilities] [--full] [QUERY]
 ```
 
-**Example:**
-
-```bash
-nyaya cache stats
-# === Cache Statistics ===
-# Fingerprint Cache (Tier 1):
-#   Entries: 142
-#   Hits:    1038
-# Intent Cache (Tier 2):
-#   Total entries:   27
-#   Enabled entries: 25
-#   Total hits:      314
-```
-
-### `costs`
-
-Show cost tracking summary: total spend, cache savings, token usage. Displays
-both all-time and last-24-hour figures.
-
-```
-nyaya costs
-```
+| Flag           | Description |
+|----------------|-------------|
+| `--abilities`  | List all available abilities |
+| `--full`       | Show full details |
+| `QUERY`        | Optional query to show status for |
 
 ---
 
-## Secret Vault
+## config
 
-### `secret store`
+Configuration subcommands are organized into subgroups:
 
-Store a secret in the encrypted vault. The secret value is read from stdin.
-Optionally bind the secret to specific intents so it can only be accessed
-during matching operations.
+### config persona
+
+Manage agent personas and the catalog.
 
 ```
-nyaya secret store <NAME> [--bind <INTENTS>]
+nabaos config persona list
+nabaos config persona info <NAME>
+nabaos config persona catalog list
+nabaos config persona catalog search <QUERY>
+nabaos config persona catalog info <NAME>
+nabaos config persona catalog install <NAME>
 ```
-
-| Argument       | Required | Description |
-|----------------|----------|-------------|
-| `NAME`         | yes      | Secret name (key) |
-| `--bind`       | no       | Pipe-separated intent binding, e.g. `"check_infra\|monitor_infra"` |
-
-Requires `NABA_VAULT_PASSPHRASE` or prompts interactively.
 
 **Example:**
 
 ```bash
-echo "xoxb-my-slack-token" | nyaya secret store SLACK_TOKEN --bind "notify|channel"
+nabaos config persona catalog list
+# Available personas:
+#   research-assistant    Research and analysis workflows
+#   dev-assistant         Developer productivity assistant
+#   home-assistant        Smart home management
+#   ...
 ```
 
-### `secret list`
+### config rules
 
-List all stored secret names with their intent bindings and creation
-timestamps.
-
-```
-nyaya secret list
-```
-
----
-
-## Constitution
-
-### `constitution check`
-
-Check a query against the active constitution. The query is first classified
-into a W5H2 intent, then matched against constitution rules.
+Manage constitution rules.
 
 ```
-nyaya constitution check <QUERY>
+nabaos config rules check <QUERY>
+nabaos config rules show
+nabaos config rules templates
+nabaos config rules use-template <NAME> [--output <PATH>]
 ```
 
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `QUERY`  | yes      | The query to check |
+| Subcommand     | Description |
+|----------------|-------------|
+| `check`        | Check a query against the active constitution |
+| `show`         | Display the active constitution and all rules |
+| `templates`    | List the 8 built-in constitution templates |
+| `use-template` | Generate a YAML file from a named template |
+
+Templates: `default`, `content-creator`, `dev-assistant`, `full-autonomy`,
+`home-assistant`, `hr-assistant`, `research-assistant`, `trading`.
 
 **Example:**
 
 ```bash
-nyaya constitution check "delete all my emails"
-# Query:       delete all my emails
-# Intent:      delete|email
+nabaos config rules check "delete all files"
+# Query:       delete all files
+# Intent:      delete|file
 # Enforcement: Block
-# Allowed:     BLOCKED
 # Matched:     block_destructive_keywords
-# Reason:      Destructive operations require explicit confirmation
 ```
 
-### `constitution show`
+### config workflow
 
-Display the active constitution: its name and all rules with their
-enforcement levels, triggers, and reasons.
-
-```
-nyaya constitution show
-```
-
-### `constitution templates`
-
-List all 21 built-in constitution templates.
+Manage workflows.
 
 ```
-nyaya constitution templates
+nabaos config workflow list
+nabaos config workflow start <NAME>
+nabaos config workflow status <ID>
+nabaos config workflow cancel <ID>
+nabaos config workflow tui
+nabaos config workflow visualize <NAME>
+nabaos config workflow suggest
+nabaos config workflow create <NAME>
+nabaos config workflow templates
 ```
 
-Available templates: `default`, `solopreneur`, `freelancer`,
-`digital-marketer`, `student`, `sales`, `customer-support`, `legal`,
-`ecommerce`, `hr`, `finance`, `healthcare`, `engineering`, `media`,
-`government`, `ngo`, `logistics`, `research`, `consulting`, `creative`,
-`agriculture`.
+### config resource
 
-### `constitution use-template`
-
-Generate a constitution YAML file from a named template. Outputs to stdout
-by default, or to a file with `--output`.
+Manage external resources.
 
 ```
-nyaya constitution use-template <NAME> [--output <PATH>]
+nabaos config resource list
+nabaos config resource status
+nabaos config resource leases
+nabaos config resource discover
+nabaos config resource auto-add
 ```
 
-| Argument     | Required | Description |
-|--------------|----------|-------------|
-| `NAME`       | yes      | Template name |
-| `-o, --output` | no    | Output file path (default: stdout) |
+### config style
 
-**Example:**
-
-```bash
-nyaya constitution use-template solopreneur -o my-constitution.yaml
-```
-
----
-
-## Plugin Management
-
-### `plugin install`
-
-Install a plugin from a manifest YAML file. Copies the manifest and any
-associated shared library into the plugin directory.
+Manage response styles.
 
 ```
-nyaya plugin install <MANIFEST>
+nabaos config style list
+nabaos config style set <KEY> <VALUE>
+nabaos config style clear
+nabaos config style show
 ```
 
-| Argument   | Required | Description |
-|------------|----------|-------------|
-| `MANIFEST` | yes      | Path to the plugin `manifest.yaml` |
+### config skill
 
-### `plugin list`
-
-List all installed plugins with their names, sources, trust levels, and
-descriptions.
+Manage skills.
 
 ```
-nyaya plugin list
+nabaos config skill forge
+nabaos config skill list
 ```
 
-### `plugin remove`
+### config schedule
 
-Remove an installed plugin by name.
-
-```
-nyaya plugin remove <NAME>
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `NAME`   | yes      | Plugin name to remove |
-
-### `plugin register-subprocess`
-
-Register one or more subprocess abilities from a YAML configuration file.
+Manage scheduled jobs.
 
 ```
-nyaya plugin register-subprocess <CONFIG>
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `CONFIG` | yes      | Path to subprocess abilities YAML |
-
----
-
-## Scheduling
-
-### `schedule add`
-
-Schedule a chain to run at a recurring interval.
-
-```
-nyaya schedule add <CHAIN_ID> <INTERVAL>
+nabaos config schedule add <CHAIN_ID> <INTERVAL>
+nabaos config schedule list
+nabaos config schedule run-due
+nabaos config schedule disable <JOB_ID>
 ```
 
 | Argument    | Required | Description |
@@ -324,321 +257,333 @@ nyaya schedule add <CHAIN_ID> <INTERVAL>
 **Example:**
 
 ```bash
-nyaya schedule add check_email 10m
+nabaos config schedule add check_email 10m
 # Scheduled 'check_email' every 10m (job: a1b2c3d4...)
 ```
 
-### `schedule list`
+### config vault
 
-List all scheduled jobs showing chain ID, interval, run count, and enabled
-status.
-
-```
-nyaya schedule list
-```
-
-### `schedule run-due`
-
-Immediately process all jobs that are due for execution.
+Manage the encrypted secret vault.
 
 ```
-nyaya schedule run-due
+echo "secret-value" | nabaos config vault store <NAME> [--bind <INTENTS>]
+nabaos config vault list
 ```
 
-### `schedule disable`
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `NAME`   | yes      | Secret name (key) |
+| `--bind` | no       | Pipe-separated intent binding, e.g. `"check\|analyze"` |
 
-Disable a scheduled job by its job ID.
-
-```
-nyaya schedule disable <JOB_ID>
-```
-
----
-
-## Abilities
-
-### `abilities`
-
-List all available abilities (built-in, plugin, subprocess, and cloud)
-with their source and description.
-
-```
-nyaya abilities
-```
-
----
-
-## WASM Sandbox
-
-### `run`
-
-Execute a WASM agent module inside the sandboxed runtime. Requires both a
-`.wasm` file and an agent manifest JSON.
-
-```
-nyaya run <WASM> --manifest <MANIFEST>
-```
-
-| Argument       | Required | Description |
-|----------------|----------|-------------|
-| `WASM`         | yes      | Path to the `.wasm` module |
-| `--manifest`   | yes      | Path to the agent manifest JSON |
+Requires `NABA_VAULT_PASSPHRASE` or prompts interactively.
 
 **Example:**
 
 ```bash
-nyaya run agents/weather.wasm --manifest agents/weather.json
+echo "xoxb-my-slack-token" | nabaos config vault store SLACK_TOKEN --bind "notify|channel"
 ```
 
----
+### config security
 
-## Services
-
-### `telegram`
-
-Start the Telegram bot. Requires `NABA_TELEGRAM_BOT_TOKEN`.
+Configure security settings.
 
 ```
-nyaya telegram
-```
-
-### `telegram-setup-2fa`
-
-Set up two-factor authentication for the Telegram bot. Supports TOTP
-(authenticator app) or password methods.
-
-```
-nyaya telegram-setup-2fa <METHOD>
+nabaos config security 2fa <METHOD>
 ```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `METHOD` | yes      | `totp` or `password` |
 
-### `web`
+### config agent
 
-Start the web dashboard server with REST API.
-
-```
-nyaya web [--bind <ADDR>]
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `--bind` | no       | Bind address [default: `127.0.0.1:8919`] |
-
-### `daemon`
-
-Run as a background daemon: processes scheduled jobs every 60 seconds,
-optionally starts the Telegram bot (if `NABA_TELEGRAM_BOT_TOKEN` is set)
-and web dashboard (if `NABA_WEB_PASSWORD` is set) in background threads.
+Manage installed agents.
 
 ```
-nyaya daemon
+nabaos config agent install <PACKAGE>
+nabaos config agent list
+nabaos config agent info <NAME>
+nabaos config agent start <NAME>
+nabaos config agent stop <NAME>
+nabaos config agent disable <NAME>
+nabaos config agent enable <NAME>
+nabaos config agent uninstall <NAME>
+nabaos config agent permissions <NAME>
+nabaos config agent package <SOURCE> -o <OUTPUT>
 ```
+
+| Subcommand    | Description |
+|---------------|-------------|
+| `install`     | Install an agent from a `.nap` package file |
+| `list`        | List all installed agents with name, version, and state |
+| `info`        | Show detailed information about an installed agent |
+| `start/stop`  | Change the lifecycle state of an agent |
+| `disable/enable` | Disable or enable an agent |
+| `uninstall`   | Uninstall an agent and remove its data |
+| `permissions` | Show all permissions granted to an agent |
+| `package`     | Package a source directory into a `.nap` file |
 
 ---
 
-## Setup & Deployment
+## admin
 
-### `setup`
+Administration and diagnostic subcommands.
 
-Interactive setup wizard: scans hardware, suggests a module profile
-(core, web, voice, browser, telegram, latex, mobile, oauth), and saves
-the configuration.
+### admin classify
 
-```
-nyaya setup [--non-interactive]
-```
-
-| Flag                | Description |
-|---------------------|-------------|
-| `--non-interactive` | Skip prompts, accept the suggested profile |
-
-### `deploy`
-
-Generate a Docker Compose file from the current module profile.
+Classify a query into a W5H2 intent using the local models.
 
 ```
-nyaya deploy [-o <PATH>]
+nabaos admin classify <QUERY>
 ```
-
-| Argument      | Required | Description |
-|---------------|----------|-------------|
-| `-o, --output` | no      | Output path [default: `docker-compose.yml`] |
-
----
-
-## LaTeX
-
-### `latex templates`
-
-List available LaTeX document templates.
-
-```
-nyaya latex templates
-```
-
-Templates: `invoice`, `research_paper`, `report`, `letter`.
-
-### `latex generate`
-
-Generate a document from a template. Reads JSON data from stdin, writes a
-`.tex` file, and attempts PDF compilation if a LaTeX backend is available.
-
-```
-nyaya latex generate <TEMPLATE> -o <OUTPUT>
-```
-
-| Argument      | Required | Description |
-|---------------|----------|-------------|
-| `TEMPLATE`    | yes      | Template name |
-| `-o, --output` | yes     | Output PDF path |
 
 **Example:**
 
 ```bash
-echo '{"company":"Acme","items":[...]}' | nyaya latex generate invoice -o invoice.pdf
+nabaos admin classify "check my email for messages from Alice"
+# Query:      check my email for messages from Alice
+# Intent:     check|email
+# Action:     check
+# Target:     email
+# Confidence: 94.2%
+# Latency:    3.1ms
+```
+
+### admin cache
+
+View cache statistics.
+
+```
+nabaos admin cache stats
+```
+
+**Example:**
+
+```bash
+nabaos admin cache stats
+# === Cache Statistics ===
+# Fingerprint Cache (Tier 0):
+#   Entries: 142
+#   Hits:    1038
+# Intent Cache (Tier 2):
+#   Total entries:   27
+#   Enabled entries: 25
+#   Total hits:      314
+```
+
+### admin scan
+
+Scan text for credential leaks, PII, and prompt injection patterns. Runs
+entirely locally.
+
+```
+nabaos admin scan <TEXT>
+```
+
+**Example:**
+
+```bash
+nabaos admin scan "my api key is sk-ant-abc123 and my SSN is 123-45-6789"
+# === Security Scan ===
+# Credentials: 1 found
+# PII:         1 found
+# Types:       ["api_key", "ssn"]
+# === Redacted Output ===
+# my api key is [REDACTED:api_key] and my SSN is [REDACTED:ssn]
+```
+
+### admin plugin
+
+Manage plugins.
+
+```
+nabaos admin plugin install <MANIFEST>
+nabaos admin plugin list
+nabaos admin plugin remove <NAME>
+nabaos admin plugin register-subprocess <CONFIG>
+```
+
+| Subcommand             | Description |
+|------------------------|-------------|
+| `install`              | Install a plugin from a manifest file |
+| `list`                 | List installed plugins with trust levels |
+| `remove`               | Remove an installed plugin by name |
+| `register-subprocess`  | Register subprocess abilities from a YAML config |
+
+### admin run
+
+Execute a WASM agent module inside the sandboxed runtime.
+
+```
+nabaos admin run <WASM> --manifest <MANIFEST>
+```
+
+| Argument     | Required | Description |
+|--------------|----------|-------------|
+| `WASM`       | yes      | Path to the `.wasm` module |
+| `--manifest` | yes      | Path to the agent manifest JSON |
+
+**Example:**
+
+```bash
+nabaos admin run agents/weather.wasm --manifest agents/weather.json
+```
+
+### admin retrain
+
+Export training data from the training queue for SetFit fine-tuning.
+
+```
+nabaos admin retrain
+```
+
+### admin deploy
+
+Generate a Docker Compose file from the current module profile.
+
+```
+nabaos admin deploy [--output <PATH>]
+```
+
+| Argument       | Required | Description |
+|----------------|----------|-------------|
+| `-o, --output` | no       | Output path [default: `docker-compose.yml`] |
+
+### admin latex
+
+LaTeX document generation.
+
+```
+nabaos admin latex templates
+nabaos admin latex generate <TEMPLATE> -o <OUTPUT>
+```
+
+Templates: `invoice`, `research_paper`, `report`, `letter`.
+
+**Example:**
+
+```bash
+echo '{"company":"Acme","items":[...]}' | nabaos admin latex generate invoice -o invoice.pdf
+```
+
+### admin voice
+
+Transcribe an audio file to text.
+
+```
+nabaos admin voice <FILE>
+```
+
+### admin oauth
+
+Manage OAuth connectors.
+
+```
+nabaos admin oauth status
+```
+
+### admin browser
+
+Manage browser sessions and extensions.
+
+```
+nabaos admin browser sessions
+nabaos admin browser clear-sessions
+nabaos admin browser captcha-status
+nabaos admin browser extension-status
 ```
 
 ---
 
-## Voice
+## memory
 
-### `voice`
-
-Transcribe an audio file to text. Requires voice input to be enabled via
-`nyaya setup` or the `NABA_VOICE_MODE` environment variable.
+View and manage agent memory.
 
 ```
-nyaya voice <FILE>
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `FILE`   | yes      | Path to audio file |
-
----
-
-## OAuth
-
-### `oauth status`
-
-Show the status of all OAuth connectors (gmail, calendar, slack, notion).
-
-```
-nyaya oauth status
+nabaos memory list
+nabaos memory show
+nabaos memory clear
 ```
 
 ---
 
-## Training
+## research
 
-### `retrain`
-
-Export training data from the training queue for SetFit fine-tuning. Prints
-all queued examples with their intent labels.
+Run a research query through the deep research pipeline.
 
 ```
-nyaya retrain
+nabaos research <QUERY>
 ```
 
 ---
 
-## Agent OS
+## init
 
-### `agent install`
-
-Install an agent from a `.nap` package file.
+Initialize a new NabaOS project directory with default configuration files.
 
 ```
-nabaos agent install <PACKAGE>
+nabaos init
 ```
-
-| Argument  | Required | Description |
-|-----------|----------|-------------|
-| `PACKAGE` | yes      | Path to `.nap` package file |
-
-### `agent list`
-
-List all installed agents with name, version, and state.
-
-```
-nabaos agent list
-```
-
-### `agent info`
-
-Show detailed information about an installed agent including version history.
-
-```
-nabaos agent info <NAME>
-```
-
-### `agent start` / `stop` / `disable` / `enable`
-
-Change the lifecycle state of an installed agent.
-
-```
-nabaos agent start <NAME>
-nabaos agent stop <NAME>
-nabaos agent disable <NAME>
-nabaos agent enable <NAME>
-```
-
-### `agent uninstall`
-
-Uninstall an agent and remove its data.
-
-```
-nabaos agent uninstall <NAME>
-```
-
-### `agent permissions`
-
-Show all permissions granted to an agent.
-
-```
-nabaos agent permissions <NAME>
-```
-
-### `agent package`
-
-Package a source directory (containing `manifest.yaml`) into a `.nap` file.
-
-```
-nabaos agent package <SOURCE> -o <OUTPUT>
-```
-
-| Argument      | Required | Description |
-|---------------|----------|-------------|
-| `SOURCE`      | yes      | Directory containing `manifest.yaml` |
-| `-o, --output` | yes     | Output `.nap` file path |
 
 ---
 
-## Catalog
+## export
 
-### `catalog list`
-
-List all agents available in the local catalog.
+Export and hardware analysis.
 
 ```
-nyaya catalog list
+nabaos export list
+nabaos export analyze
+nabaos export generate
+nabaos export hardware
 ```
 
-### `catalog search`
+---
 
-Search for agents by keyword.
+## pea
 
-```
-nyaya catalog search <QUERY>
-```
-
-### `catalog info`
-
-Show detailed information about a catalog entry.
+PEA (Persistent Execution Agent) management.
 
 ```
-nyaya catalog info <NAME>
+nabaos pea start <TASK>
+nabaos pea list
+nabaos pea status <ID>
+nabaos pea tasks
+nabaos pea pause <ID>
+nabaos pea resume <ID>
+nabaos pea cancel <ID>
 ```
+
+| Subcommand | Description |
+|------------|-------------|
+| `start`    | Start a new PEA with a task description |
+| `list`     | List all PEAs |
+| `status`   | Show status of a specific PEA |
+| `tasks`    | List all PEA tasks |
+| `pause`    | Pause a running PEA |
+| `resume`   | Resume a paused PEA |
+| `cancel`   | Cancel a PEA |
+
+---
+
+## watcher
+
+File watcher (requires the `watcher` feature flag at compile time).
+
+```
+nabaos watcher <SUBCOMMAND>
+```
+
+---
+
+## check
+
+Health check.
+
+```
+nabaos check [--health]
+```
+
+| Flag       | Description |
+|------------|-------------|
+| `--health` | Run a health check and exit |
