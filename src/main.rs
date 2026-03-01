@@ -3254,6 +3254,12 @@ fn cmd_setup(
                             env_lines.push(format!("NABA_WEB_ALLOWED_IPS={}", result.web_allowed_ips));
                         }
                     }
+                    if result.enable_watcher {
+                        env_lines.push("NABA_WATCHER_ENABLED=true".to_string());
+                        env_lines.push(format!("NABA_WATCHER_ALERT_THRESHOLD={}", result.watcher_alert_threshold));
+                        env_lines.push(format!("NABA_WATCHER_PAUSE_THRESHOLD={}", result.watcher_pause_threshold));
+                        env_lines.push(format!("NABA_WATCHER_ALERT_CHANNELS={}", result.watcher_alert_channels));
+                    }
                     for (provider_id, api_key) in &result.studio_api_keys {
                         env_lines.push(format!("NABA_STUDIO_KEY_{}={}", provider_id.to_uppercase(), api_key));
                     }

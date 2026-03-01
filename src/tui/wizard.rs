@@ -1,6 +1,6 @@
 //! Full-screen setup wizard — immersive TUI for first-run configuration.
 //!
-//! An 11-step interactive wizard with:
+//! A 12-step interactive wizard with:
 //! - Geometric constellation logo
 //! - Provider selection with category headers (including Chinese providers)
 //! - API key input with masked display + multi-model selection
@@ -9,6 +9,7 @@
 //! - Plugin selector (14 modules)
 //! - Studio media provider selector
 //! - PEA autonomous agent settings (budget, strategy, heartbeat)
+//! - Runtime watcher configuration (thresholds, alert channels)
 //! - Channel configuration
 //! - Agent catalog browser with multi-select + detail popup
 //! - Summary screen
@@ -189,6 +190,10 @@ pub struct WizardResult {
     pub web_access: String,
     pub web_allowed_ips: String,
     pub studio_api_keys: Vec<(String, String)>,
+    pub enable_watcher: bool,
+    pub watcher_alert_threshold: f64,
+    pub watcher_pause_threshold: f64,
+    pub watcher_alert_channels: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,6 +206,7 @@ enum Step {
     Plugins,
     Studio,
     Pea,
+    Watcher,
     Channels,
     Agents,
     Summary,
@@ -217,9 +223,10 @@ impl Step {
             Self::Plugins => 5,
             Self::Studio => 6,
             Self::Pea => 7,
-            Self::Channels => 8,
-            Self::Agents => 9,
-            Self::Summary => 10,
+            Self::Watcher => 8,
+            Self::Channels => 9,
+            Self::Agents => 10,
+            Self::Summary => 11,
         }
     }
 
@@ -234,6 +241,7 @@ impl Step {
             Self::Plugins => "Plugins",
             Self::Studio => "Studio",
             Self::Pea => "PEA",
+            Self::Watcher => "Watcher",
             Self::Agents => "Agents",
             Self::Channels => "Channels",
             Self::Summary => "Done",
@@ -244,7 +252,7 @@ impl Step {
         &[
             Step::Welcome, Step::Provider, Step::ApiKeyModel, Step::Constitution,
             Step::Persona, Step::Plugins, Step::Studio, Step::Pea,
-            Step::Channels, Step::Agents, Step::Summary,
+            Step::Watcher, Step::Channels, Step::Agents, Step::Summary,
         ]
     }
 
@@ -258,7 +266,8 @@ impl Step {
             Self::Persona => Self::Plugins,
             Self::Plugins => Self::Studio,
             Self::Studio => Self::Pea,
-            Self::Pea => Self::Channels,
+            Self::Pea => Self::Watcher,
+            Self::Watcher => Self::Channels,
             Self::Channels => Self::Agents,
             Self::Agents => Self::Summary,
             Self::Summary => Self::Summary,
@@ -275,7 +284,8 @@ impl Step {
             Self::Plugins => Self::Persona,
             Self::Studio => Self::Plugins,
             Self::Pea => Self::Studio,
-            Self::Channels => Self::Pea,
+            Self::Watcher => Self::Pea,
+            Self::Channels => Self::Watcher,
             Self::Agents => Self::Channels,
             Self::Summary => Self::Agents,
         }
@@ -408,6 +418,13 @@ struct WizardState {
     pea_budget_input: String,
     pea_heartbeat_input: String,
     pea_field: usize, // 0=strategy, 1=budget, 2=heartbeat
+
+    // Watcher settings
+    watcher_enabled: bool,
+    watcher_alert_idx: usize,    // 0=0.5, 1=0.7, 2=0.9
+    watcher_pause_idx: usize,    // 0=0.8, 1=0.9, 2=0.95
+    watcher_channel_idx: usize,  // 0=telegram, 1=web, 2=both
+    watcher_focus: usize,        // 0=toggle, 1=alert, 2=pause, 3=channel
 
     // Agents
     agent_items: Vec<AgentItem>,
@@ -721,6 +738,11 @@ impl WizardState {
             pea_budget_input: "50.00".into(),
             pea_heartbeat_input: "300".into(),
             pea_field: 0,
+            watcher_enabled: false,
+            watcher_alert_idx: 1,   // 0.7 default
+            watcher_pause_idx: 1,   // 0.9 default
+            watcher_channel_idx: 0, // telegram default
+            watcher_focus: 0,
             agent_items,
             agent_state,
             agent_search: String::new(),
@@ -906,6 +928,13 @@ impl WizardState {
             _ => self.selected_persona.clone(),
         };
         let web_access = if self.web_access == 0 { "private".to_string() } else { "public".to_string() };
+        const ALERT_THRESHOLDS: [f64; 3] = [0.5, 0.7, 0.9];
+        const PAUSE_THRESHOLDS: [f64; 3] = [0.8, 0.9, 0.95];
+        let watcher_channels = match self.watcher_channel_idx {
+            0 => "telegram",
+            1 => "web",
+            _ => "telegram,web",
+        };
         WizardResult {
             provider_id: self.selected_provider_id,
             provider_name: self.selected_provider_name.clone(),
@@ -933,6 +962,10 @@ impl WizardState {
             web_access,
             web_allowed_ips: self.web_allowed_ips,
             studio_api_keys,
+            enable_watcher: self.watcher_enabled,
+            watcher_alert_threshold: ALERT_THRESHOLDS[self.watcher_alert_idx],
+            watcher_pause_threshold: PAUSE_THRESHOLDS[self.watcher_pause_idx],
+            watcher_alert_channels: watcher_channels.to_string(),
         }
     }
 }
@@ -1155,6 +1188,7 @@ fn handle_key(state: &mut WizardState, key: crossterm::event::KeyEvent) {
         Step::Plugins => handle_plugins(state, key),
         Step::Studio => handle_studio(state, key),
         Step::Pea => handle_pea(state, key),
+        Step::Watcher => handle_watcher(state, key),
         Step::Channels => handle_channels(state, key),
         Step::Agents => handle_agents(state, key),
         Step::Summary => match key.code {
@@ -1304,6 +1338,48 @@ fn handle_pea(state: &mut WizardState, key: crossterm::event::KeyEvent) {
             match state.pea_field {
                 1 => { state.pea_budget_input.pop(); }
                 2 => { state.pea_heartbeat_input.pop(); }
+                _ => {}
+            }
+        }
+        KeyCode::Enter => {
+            state.step = Step::Watcher;
+        }
+        _ => {}
+    }
+}
+
+fn handle_watcher(state: &mut WizardState, key: crossterm::event::KeyEvent) {
+    match key.code {
+        KeyCode::Up => {
+            if state.watcher_focus > 0 {
+                state.watcher_focus -= 1;
+            }
+        }
+        KeyCode::Down => {
+            let max = if state.watcher_enabled { 3 } else { 0 };
+            if state.watcher_focus < max {
+                state.watcher_focus += 1;
+            }
+        }
+        KeyCode::Char(' ') if state.watcher_focus == 0 => {
+            state.watcher_enabled = !state.watcher_enabled;
+            if !state.watcher_enabled {
+                state.watcher_focus = 0;
+            }
+        }
+        KeyCode::Left => {
+            match state.watcher_focus {
+                1 if state.watcher_alert_idx > 0 => state.watcher_alert_idx -= 1,
+                2 if state.watcher_pause_idx > 0 => state.watcher_pause_idx -= 1,
+                3 if state.watcher_channel_idx > 0 => state.watcher_channel_idx -= 1,
+                _ => {}
+            }
+        }
+        KeyCode::Right => {
+            match state.watcher_focus {
+                1 if state.watcher_alert_idx < 2 => state.watcher_alert_idx += 1,
+                2 if state.watcher_pause_idx < 2 => state.watcher_pause_idx += 1,
+                3 if state.watcher_channel_idx < 2 => state.watcher_channel_idx += 1,
                 _ => {}
             }
         }
@@ -1666,6 +1742,7 @@ fn draw_wizard(frame: &mut ratatui::Frame, state: &WizardState) {
         Step::Plugins => draw_plugins(frame, inner, state),
         Step::Studio => draw_studio(frame, inner, state),
         Step::Pea => draw_pea(frame, inner, state),
+        Step::Watcher => draw_watcher(frame, inner, state),
         Step::Channels => draw_channels(frame, inner, state),
         Step::Agents => draw_agents(frame, inner, state),
         Step::Summary => draw_summary(frame, inner, state),
@@ -2367,6 +2444,84 @@ fn draw_agent_detail(frame: &mut ratatui::Frame, area: Rect, state: &WizardState
     frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), inner);
 }
 
+fn draw_watcher(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
+    let chunks = Layout::vertical([
+        Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
+    ]).split(area);
+    draw_step_indicator(frame, chunks[0], Step::Watcher);
+
+    let content_area = centered_rect(55, 65, chunks[2]);
+    let block = Block::default()
+        .borders(Borders::ALL).border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default().bg(BG)),
+            Span::styled("Runtime Watcher", Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
+            Span::styled(" ", Style::default().bg(BG)),
+        ])).style(Style::default().bg(BG));
+
+    let block_inner = block.inner(content_area);
+    frame.render_widget(block, content_area);
+
+    let alert_vals = ["0.5", "0.7 (default)", "0.9"];
+    let pause_vals = ["0.8", "0.9 (default)", "0.95"];
+    let channel_vals = ["Telegram", "Web", "Both"];
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(""));
+
+    // Toggle
+    let focused = state.watcher_focus == 0;
+    let marker = if focused { "\u{25b8}" } else { " " };
+    let check = if state.watcher_enabled { "\u{25c6}" } else { "\u{25c7}" };
+    let check_color = if state.watcher_enabled { GREEN } else { DIM };
+    let bg = if focused { HIGHLIGHT_BG } else { BG };
+    lines.push(Line::from(vec![
+        Span::styled(format!("  {} ", marker), Style::default().fg(ACCENT).bg(bg)),
+        Span::styled(format!("{} ", check), Style::default().fg(check_color).bg(bg)),
+        Span::styled("Enable Watcher", Style::default().fg(if focused { ACCENT } else { FG }).bg(bg).add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() })),
+    ]));
+
+    if state.watcher_enabled {
+        lines.push(Line::from(""));
+
+        let f = state.watcher_focus == 1;
+        let m = if f { "\u{25b8}" } else { " " };
+        lines.push(Line::from(vec![
+            Span::styled(format!("      {} ", m), Style::default().fg(ACCENT).bg(if f { HIGHLIGHT_BG } else { BG })),
+            Span::styled("Alert Threshold ", Style::default().fg(HEADING).bg(if f { HIGHLIGHT_BG } else { BG })),
+            Span::styled(format!("\u{25c4} {} \u{25ba}", alert_vals[state.watcher_alert_idx]), Style::default().fg(if f { ACCENT } else { FG }).bg(if f { HIGHLIGHT_BG } else { BG })),
+        ]));
+
+        let f = state.watcher_focus == 2;
+        let m = if f { "\u{25b8}" } else { " " };
+        lines.push(Line::from(vec![
+            Span::styled(format!("      {} ", m), Style::default().fg(ACCENT).bg(if f { HIGHLIGHT_BG } else { BG })),
+            Span::styled("Pause Threshold ", Style::default().fg(HEADING).bg(if f { HIGHLIGHT_BG } else { BG })),
+            Span::styled(format!("\u{25c4} {} \u{25ba}", pause_vals[state.watcher_pause_idx]), Style::default().fg(if f { ACCENT } else { FG }).bg(if f { HIGHLIGHT_BG } else { BG })),
+        ]));
+
+        let f = state.watcher_focus == 3;
+        let m = if f { "\u{25b8}" } else { " " };
+        lines.push(Line::from(vec![
+            Span::styled(format!("      {} ", m), Style::default().fg(ACCENT).bg(if f { HIGHLIGHT_BG } else { BG })),
+            Span::styled("Alert Channel   ", Style::default().fg(HEADING).bg(if f { HIGHLIGHT_BG } else { BG })),
+            Span::styled(format!("\u{25c4} {} \u{25ba}", channel_vals[state.watcher_channel_idx]), Style::default().fg(if f { ACCENT } else { FG }).bg(if f { HIGHLIGHT_BG } else { BG })),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("  Monitors anomalies, auto-pauses risky components,", Style::default().fg(DIM).bg(BG)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  and sends alerts.", Style::default().fg(DIM).bg(BG)),
+    ]));
+
+    frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), block_inner);
+    draw_hint_bar(frame, chunks[3], &[("\u{2191}\u{2193}", "navigate"), ("Space", "toggle"), ("\u{2190}\u{2192}", "change"), ("Enter", "next"), ("Esc", "back")]);
+}
+
 fn draw_channels(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     let chunks = Layout::vertical([
         Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
@@ -2690,7 +2845,8 @@ mod tests {
         assert_eq!(Step::Persona.next(), Step::Plugins);
         assert_eq!(Step::Plugins.next(), Step::Studio);
         assert_eq!(Step::Studio.next(), Step::Pea);
-        assert_eq!(Step::Pea.next(), Step::Channels);
+        assert_eq!(Step::Pea.next(), Step::Watcher);
+        assert_eq!(Step::Watcher.next(), Step::Channels);
         assert_eq!(Step::Channels.next(), Step::Agents);
         assert_eq!(Step::Agents.next(), Step::Summary);
         assert_eq!(Step::Summary.prev(), Step::Agents);
