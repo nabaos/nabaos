@@ -18,7 +18,7 @@ use nabaos::w5h2::classifier::W5H2Classifier;
 use nabaos::w5h2::fingerprint::FingerprintCache;
 
 #[derive(Parser)]
-#[command(name = "nyaya", about = "Your AI agent runtime")]
+#[command(name = "nabaos", about = "Your AI agent runtime")]
 #[command(version, propagate_version = true)]
 struct Cli {
     /// Data directory
