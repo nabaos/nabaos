@@ -36,7 +36,7 @@ pub const MAGENTA: &str = "\x1b[35m";
 pub const WHITE: &str = "\x1b[37m";
 
 /// Return the escape code only if colors are enabled, otherwise "".
-fn c(code: &str) -> &str {
+pub fn c(code: &str) -> &str {
     if color_enabled() {
         code
     } else {
