@@ -177,7 +177,6 @@ pub struct WizardResult {
     pub web_password: String,
     pub selected_agents: Vec<String>,
     pub download_webbert: bool,
-    // New fields
     pub custom_provider_name: String,
     pub custom_provider_url: String,
     pub enabled_plugins: Vec<String>,
@@ -185,6 +184,10 @@ pub struct WizardResult {
     pub pea_budget_usd: f64,
     pub pea_budget_strategy: String,
     pub pea_heartbeat_secs: u64,
+    pub web_port: String,
+    pub web_access: String,
+    pub web_allowed_ips: String,
+    pub studio_api_keys: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -324,7 +327,15 @@ struct StudioItem {
     name: String,
     description: String,
     selected: bool,
+    api_key: String,
+    needs_key: bool,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderView { Main, Custom }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PersonaEdit { None, Custom, Wikipedia }
 
 const PEA_STRATEGIES: &[(&str, &str)] = &[
     ("adaptive", "Adjusts spending based on task complexity and success rate"),
@@ -380,12 +391,22 @@ struct WizardState {
     studio_items: Vec<StudioItem>,
     studio_state: ListState,
 
-    // PEA settings (new)
+    // Custom provider
+    provider_view: ProviderView,
+    custom_provider_name: String,
+    custom_provider_url: String,
+    custom_provider_field: usize, // 0=name, 1=url
+
+    // Custom persona
+    persona_edit_mode: PersonaEdit,
+    custom_persona_text: String,
+    wikipedia_url: String,
+
+    // PEA settings
     pea_strategy_idx: usize,
     pea_budget_input: String,
     pea_heartbeat_input: String,
     pea_field: usize, // 0=strategy, 1=budget, 2=heartbeat
-    pea_editing: bool,
 
     // Agents
     agent_items: Vec<AgentItem>,
@@ -402,6 +423,14 @@ struct WizardState {
     web_password: String,
     web_editing: bool,
     download_webbert: bool,
+    web_port: String,
+    web_access: usize, // 0=private, 1=public
+    web_allowed_ips: String,
+    channel_sub_field: usize,
+
+    // Studio key editing
+    studio_editing_key: bool,
+    studio_key_idx: Option<usize>,
 
     // Animation
     start_time: Instant,
@@ -475,6 +504,10 @@ impl WizardState {
         ] {
             provider_items.push(SelectItem { id: id.to_string(), label: name.to_string(), hint: hint.to_string(), is_header: false, base_url: String::new() });
         }
+
+        // Custom provider option at bottom
+        provider_items.push(SelectItem { id: String::new(), label: "Custom".into(), hint: String::new(), is_header: true, base_url: String::new() });
+        provider_items.push(SelectItem { id: "custom".into(), label: "Custom Provider...".into(), hint: "enter name and URL".into(), is_header: false, base_url: String::new() });
 
         // Fill in base URLs from catalog
         let catalog = crate::providers::catalog::builtin_providers();
@@ -634,12 +667,12 @@ impl WizardState {
 
         // Studio — 6 media providers
         let studio_items = vec![
-            StudioItem { id: "comfyui".into(), name: "ComfyUI".into(), description: "Local image generation".into(), selected: false },
-            StudioItem { id: "fal_ai".into(), name: "fal.ai".into(), description: "Cloud image/video generation".into(), selected: false },
-            StudioItem { id: "dall_e".into(), name: "DALL-E".into(), description: "OpenAI image generation".into(), selected: false },
-            StudioItem { id: "runway".into(), name: "Runway".into(), description: "AI video generation".into(), selected: false },
-            StudioItem { id: "elevenlabs".into(), name: "ElevenLabs".into(), description: "Text-to-speech".into(), selected: false },
-            StudioItem { id: "ffmpeg".into(), name: "ffmpeg".into(), description: "Local A/V processing".into(), selected: false },
+            StudioItem { id: "comfyui".into(), name: "ComfyUI".into(), description: "Local image generation".into(), selected: false, api_key: String::new(), needs_key: false },
+            StudioItem { id: "fal_ai".into(), name: "fal.ai".into(), description: "Cloud image/video generation".into(), selected: false, api_key: String::new(), needs_key: true },
+            StudioItem { id: "dall_e".into(), name: "DALL-E".into(), description: "OpenAI image generation".into(), selected: false, api_key: String::new(), needs_key: true },
+            StudioItem { id: "runway".into(), name: "Runway".into(), description: "AI video generation".into(), selected: false, api_key: String::new(), needs_key: true },
+            StudioItem { id: "elevenlabs".into(), name: "ElevenLabs".into(), description: "Text-to-speech".into(), selected: false, api_key: String::new(), needs_key: true },
+            StudioItem { id: "ffmpeg".into(), name: "ffmpeg".into(), description: "Local A/V processing".into(), selected: false, api_key: String::new(), needs_key: false },
         ];
         let mut studio_state = ListState::default();
         studio_state.select(Some(0));
@@ -674,11 +707,17 @@ impl WizardState {
             plugin_state,
             studio_items,
             studio_state,
+            provider_view: ProviderView::Main,
+            custom_provider_name: String::new(),
+            custom_provider_url: String::new(),
+            custom_provider_field: 0,
+            persona_edit_mode: PersonaEdit::None,
+            custom_persona_text: String::new(),
+            wikipedia_url: String::new(),
             pea_strategy_idx: 0,
             pea_budget_input: "50.00".into(),
             pea_heartbeat_input: "300".into(),
             pea_field: 0,
-            pea_editing: false,
             agent_items,
             agent_state,
             agent_search: String::new(),
@@ -691,6 +730,12 @@ impl WizardState {
             web_password: String::new(),
             web_editing: false,
             download_webbert: true,
+            web_port: "8919".into(),
+            web_access: 0,
+            web_allowed_ips: String::new(),
+            channel_sub_field: 0,
+            studio_editing_key: false,
+            studio_key_idx: None,
             start_time: Instant::now(),
         }
     }
@@ -836,33 +881,52 @@ impl WizardState {
             .filter(|s| s.selected)
             .map(|s| s.id.clone())
             .collect();
+        let studio_api_keys: Vec<(String, String)> = self.studio_items.iter()
+            .filter(|s| s.selected && !s.api_key.is_empty())
+            .map(|s| (s.id.clone(), s.api_key.clone()))
+            .collect();
         let pea_budget_usd = self.pea_budget_input.parse::<f64>().unwrap_or(50.0);
         let pea_budget_strategy = PEA_STRATEGIES.get(self.pea_strategy_idx)
             .map(|(id, _)| id.to_string())
             .unwrap_or_else(|| "adaptive".to_string());
         let pea_heartbeat_secs = self.pea_heartbeat_input.parse::<u64>().unwrap_or(300);
+        // Persona: custom or wikipedia prefix
+        let persona = match self.persona_edit_mode {
+            PersonaEdit::Custom if !self.custom_persona_text.is_empty() => {
+                format!("custom:{}", self.custom_persona_text)
+            }
+            PersonaEdit::Wikipedia if !self.wikipedia_url.is_empty() => {
+                format!("wikipedia:{}", self.wikipedia_url)
+            }
+            _ => self.selected_persona.clone(),
+        };
+        let web_access = if self.web_access == 0 { "private".to_string() } else { "public".to_string() };
         WizardResult {
             provider_id: self.selected_provider_id,
             provider_name: self.selected_provider_name.clone(),
-            base_url: self.selected_base_url,
+            base_url: if self.provider_view == ProviderView::Custom { self.custom_provider_url.clone() } else { self.selected_base_url },
             api_key: self.api_key_input,
             models,
             primary_model: primary,
             constitution: self.selected_constitution,
-            persona: self.selected_persona,
+            persona,
             enable_telegram: self.telegram_enabled,
             telegram_token: self.telegram_token,
             enable_web: self.web_enabled,
             web_password: self.web_password,
             selected_agents: agents,
             download_webbert: self.download_webbert,
-            custom_provider_name: String::new(),
-            custom_provider_url: String::new(),
+            custom_provider_name: self.custom_provider_name,
+            custom_provider_url: self.custom_provider_url,
             enabled_plugins,
             studio_providers,
             pea_budget_usd,
             pea_budget_strategy,
             pea_heartbeat_secs,
+            web_port: self.web_port,
+            web_access,
+            web_allowed_ips: self.web_allowed_ips,
+            studio_api_keys,
         }
     }
 }
@@ -919,8 +983,17 @@ fn handle_key(state: &mut WizardState, key: crossterm::event::KeyEvent) {
         // If editing a text field, just cancel editing
         if state.telegram_editing { state.telegram_editing = false; return; }
         if state.web_editing { state.web_editing = false; return; }
-        if state.pea_editing { state.pea_editing = false; return; }
+        if state.studio_editing_key { state.studio_editing_key = false; state.studio_key_idx = None; return; }
         if state.show_agent_detail { state.show_agent_detail = false; return; }
+        // Custom provider/persona: back to main view
+        if state.step == Step::Provider && state.provider_view == ProviderView::Custom {
+            state.provider_view = ProviderView::Main;
+            return;
+        }
+        if state.step == Step::Persona && state.persona_edit_mode != PersonaEdit::None {
+            state.persona_edit_mode = PersonaEdit::None;
+            return;
+        }
         if state.step == Step::Welcome { state.should_quit = true; }
         else { state.step = state.step.prev(); }
         return;
@@ -934,12 +1007,56 @@ fn handle_key(state: &mut WizardState, key: crossterm::event::KeyEvent) {
                 state.should_quit = true;
             }
         }
-        Step::Provider => match key.code {
-            KeyCode::Up | KeyCode::Char('k') => state.move_provider_up(),
-            KeyCode::Down | KeyCode::Char('j') => state.move_provider_down(),
-            KeyCode::Enter => state.confirm_provider(),
-            KeyCode::Char('q') => state.should_quit = true,
-            _ => {}
+        Step::Provider => {
+            if state.provider_view == ProviderView::Custom {
+                // Custom provider form input
+                match key.code {
+                    KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        match state.custom_provider_field {
+                            0 => state.custom_provider_name.push(c),
+                            _ => state.custom_provider_url.push(c),
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        match state.custom_provider_field {
+                            0 => { state.custom_provider_name.pop(); }
+                            _ => { state.custom_provider_url.pop(); }
+                        }
+                    }
+                    KeyCode::Tab => {
+                        state.custom_provider_field = 1 - state.custom_provider_field;
+                    }
+                    KeyCode::Enter => {
+                        if state.custom_provider_field == 0 && !state.custom_provider_name.is_empty() {
+                            state.custom_provider_field = 1;
+                        } else if !state.custom_provider_url.is_empty() {
+                            state.selected_provider_id = "custom".to_string();
+                            state.selected_provider_name = state.custom_provider_name.clone();
+                            state.selected_base_url = state.custom_provider_url.clone();
+                            state.step = Step::ApiKeyModel;
+                        }
+                    }
+                    _ => {}
+                }
+            } else {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => state.move_provider_up(),
+                    KeyCode::Down | KeyCode::Char('j') => state.move_provider_down(),
+                    KeyCode::Enter => {
+                        if let Some(idx) = state.provider_state.selected() {
+                            let item = &state.provider_items[idx];
+                            if !item.is_header && item.id == "custom" {
+                                state.provider_view = ProviderView::Custom;
+                                state.custom_provider_field = 0;
+                            } else {
+                                state.confirm_provider();
+                            }
+                        }
+                    }
+                    KeyCode::Char('q') => state.should_quit = true,
+                    _ => {}
+                }
+            }
         },
         Step::ApiKeyModel => handle_api_key_model(state, key),
         Step::Constitution => match key.code {
@@ -965,28 +1082,68 @@ fn handle_key(state: &mut WizardState, key: crossterm::event::KeyEvent) {
             }
             _ => {}
         },
-        Step::Persona => match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                let len = state.persona_items.len();
-                if len > 0 {
-                    let i = state.persona_state.selected().unwrap_or(0);
-                    state.persona_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+        Step::Persona => {
+            if state.persona_edit_mode != PersonaEdit::None {
+                // Text input mode for custom/wikipedia
+                match key.code {
+                    KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        match state.persona_edit_mode {
+                            PersonaEdit::Custom => state.custom_persona_text.push(c),
+                            PersonaEdit::Wikipedia => state.wikipedia_url.push(c),
+                            _ => {}
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        match state.persona_edit_mode {
+                            PersonaEdit::Custom => { state.custom_persona_text.pop(); }
+                            PersonaEdit::Wikipedia => { state.wikipedia_url.pop(); }
+                            _ => {}
+                        }
+                    }
+                    KeyCode::Enter => {
+                        let has_text = match state.persona_edit_mode {
+                            PersonaEdit::Custom => !state.custom_persona_text.is_empty(),
+                            PersonaEdit::Wikipedia => !state.wikipedia_url.is_empty(),
+                            _ => false,
+                        };
+                        if has_text {
+                            state.step = Step::Plugins;
+                        }
+                    }
+                    _ => {}
+                }
+            } else {
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        let len = state.persona_items.len();
+                        if len > 0 {
+                            let i = state.persona_state.selected().unwrap_or(0);
+                            state.persona_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let len = state.persona_items.len();
+                        if len > 0 {
+                            let i = state.persona_state.selected().unwrap_or(0);
+                            state.persona_state.select(Some((i + 1) % len));
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if let Some(idx) = state.persona_state.selected() {
+                            let id = &state.persona_items[idx].id;
+                            if id == "custom" {
+                                state.persona_edit_mode = PersonaEdit::Custom;
+                            } else if id == "wikipedia" {
+                                state.persona_edit_mode = PersonaEdit::Wikipedia;
+                            } else {
+                                state.selected_persona = id.clone();
+                                state.step = Step::Plugins;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let len = state.persona_items.len();
-                if len > 0 {
-                    let i = state.persona_state.selected().unwrap_or(0);
-                    state.persona_state.select(Some((i + 1) % len));
-                }
-            }
-            KeyCode::Enter => {
-                if let Some(idx) = state.persona_state.selected() {
-                    state.selected_persona = state.persona_items[idx].id.clone();
-                    state.step = Step::Plugins;
-                }
-            }
-            _ => {}
         },
         Step::Plugins => handle_plugins(state, key),
         Step::Studio => handle_studio(state, key),
@@ -1036,6 +1193,26 @@ fn handle_plugins(state: &mut WizardState, key: crossterm::event::KeyEvent) {
 }
 
 fn handle_studio(state: &mut WizardState, key: crossterm::event::KeyEvent) {
+    // API key editing mode
+    if state.studio_editing_key {
+        if let Some(idx) = state.studio_key_idx {
+            match key.code {
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    state.studio_items[idx].api_key.push(c);
+                }
+                KeyCode::Backspace => {
+                    state.studio_items[idx].api_key.pop();
+                }
+                KeyCode::Enter => {
+                    state.studio_editing_key = false;
+                    state.studio_key_idx = None;
+                }
+                _ => {}
+            }
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => {
             let len = state.studio_items.len();
@@ -1054,7 +1231,13 @@ fn handle_studio(state: &mut WizardState, key: crossterm::event::KeyEvent) {
         KeyCode::Char(' ') => {
             if let Some(idx) = state.studio_state.selected() {
                 if idx < state.studio_items.len() {
-                    state.studio_items[idx].selected = !state.studio_items[idx].selected;
+                    let was_selected = state.studio_items[idx].selected;
+                    state.studio_items[idx].selected = !was_selected;
+                    // If toggling ON a cloud provider, show key input
+                    if !was_selected && state.studio_items[idx].needs_key {
+                        state.studio_editing_key = true;
+                        state.studio_key_idx = Some(idx);
+                    }
                 }
             }
         }
@@ -1064,34 +1247,28 @@ fn handle_studio(state: &mut WizardState, key: crossterm::event::KeyEvent) {
         KeyCode::Char('n') => {
             for s in state.studio_items.iter_mut() { s.selected = false; }
         }
-        KeyCode::Enter => { state.step = Step::Pea; }
+        KeyCode::Char('s') => {
+            // Skip
+            state.step = Step::Pea;
+        }
+        KeyCode::Enter => {
+            // Check if any selected cloud provider still needs a key
+            let needs_key_idx = state.studio_items.iter().enumerate()
+                .find(|(_, s)| s.selected && s.needs_key && s.api_key.is_empty())
+                .map(|(i, _)| i);
+            if let Some(idx) = needs_key_idx {
+                state.studio_editing_key = true;
+                state.studio_key_idx = Some(idx);
+                state.studio_state.select(Some(idx));
+            } else {
+                state.step = Step::Pea;
+            }
+        }
         _ => {}
     }
 }
 
 fn handle_pea(state: &mut WizardState, key: crossterm::event::KeyEvent) {
-    if state.pea_editing {
-        match key.code {
-            KeyCode::Char(c) if c.is_ascii_digit() || c == '.' => {
-                match state.pea_field {
-                    1 => state.pea_budget_input.push(c),
-                    2 => { if c.is_ascii_digit() { state.pea_heartbeat_input.push(c); } }
-                    _ => {}
-                }
-            }
-            KeyCode::Backspace => {
-                match state.pea_field {
-                    1 => { state.pea_budget_input.pop(); }
-                    2 => { state.pea_heartbeat_input.pop(); }
-                    _ => {}
-                }
-            }
-            KeyCode::Enter => { state.pea_editing = false; }
-            _ => {}
-        }
-        return;
-    }
-
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => {
             state.pea_field = state.pea_field.saturating_sub(1);
@@ -1109,14 +1286,21 @@ fn handle_pea(state: &mut WizardState, key: crossterm::event::KeyEvent) {
                 state.pea_strategy_idx = (state.pea_strategy_idx + 1) % PEA_STRATEGIES.len();
             }
         }
-        KeyCode::Enter => {
-            if state.pea_field == 1 || state.pea_field == 2 {
-                state.pea_editing = true;
-            } else {
-                state.step = Step::Channels;
+        KeyCode::Char(c) if c.is_ascii_digit() || c == '.' => {
+            match state.pea_field {
+                1 => state.pea_budget_input.push(c),
+                2 => { if c.is_ascii_digit() { state.pea_heartbeat_input.push(c); } }
+                _ => {}
             }
         }
-        KeyCode::Char('n') | KeyCode::Char(' ') if state.pea_field == 0 => {
+        KeyCode::Backspace => {
+            match state.pea_field {
+                1 => { state.pea_budget_input.pop(); }
+                2 => { state.pea_heartbeat_input.pop(); }
+                _ => {}
+            }
+        }
+        KeyCode::Enter => {
             state.step = Step::Channels;
         }
         _ => {}
@@ -1298,7 +1482,17 @@ fn handle_agents(state: &mut WizardState, key: crossterm::event::KeyEvent) {
     }
 }
 
+fn find_free_port(start: u16) -> u16 {
+    for port in start..10000 {
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+    start
+}
+
 fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
+    // Sub-field editing: telegram token
     if state.telegram_editing {
         match key.code {
             KeyCode::Char(c) => { state.telegram_token.push(c); }
@@ -1308,24 +1502,79 @@ fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
         }
         return;
     }
+    // Sub-field editing: web password
     if state.web_editing {
         match key.code {
             KeyCode::Char(c) => { state.web_password.push(c); }
             KeyCode::Backspace => { state.web_password.pop(); }
-            KeyCode::Enter => { state.web_editing = false; }
+            KeyCode::Enter => {
+                state.web_editing = false;
+                // After password, move to port sub-field
+                state.channel_sub_field = 1;
+            }
             _ => {}
         }
         return;
+    }
+    // Sub-field editing within Web channel (port, access, allowed IPs)
+    if state.web_enabled && state.channel_focus == 1 && state.channel_sub_field > 0 {
+        match state.channel_sub_field {
+            1 => {
+                // Port editing
+                match key.code {
+                    KeyCode::Char(c) if c.is_ascii_digit() => { state.web_port.push(c); }
+                    KeyCode::Backspace => { state.web_port.pop(); }
+                    KeyCode::Tab | KeyCode::Down => { state.channel_sub_field = 2; }
+                    KeyCode::Up => { state.channel_sub_field = 0; }
+                    KeyCode::Enter => { state.channel_sub_field = 0; }
+                    _ => {}
+                }
+                return;
+            }
+            2 => {
+                // Access mode cycle
+                match key.code {
+                    KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') => {
+                        state.web_access = 1 - state.web_access;
+                    }
+                    KeyCode::Tab | KeyCode::Down => {
+                        if state.web_access == 0 {
+                            state.channel_sub_field = 3; // allowed IPs
+                        } else {
+                            state.channel_sub_field = 0;
+                        }
+                    }
+                    KeyCode::Up => { state.channel_sub_field = 1; }
+                    KeyCode::Enter => { state.channel_sub_field = 0; }
+                    _ => {}
+                }
+                return;
+            }
+            3 => {
+                // Allowed IPs editing
+                match key.code {
+                    KeyCode::Char(c) => { state.web_allowed_ips.push(c); }
+                    KeyCode::Backspace => { state.web_allowed_ips.pop(); }
+                    KeyCode::Tab | KeyCode::Down | KeyCode::Enter => { state.channel_sub_field = 0; }
+                    KeyCode::Up => { state.channel_sub_field = 2; }
+                    _ => {}
+                }
+                return;
+            }
+            _ => {}
+        }
     }
 
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => {
             state.channel_focus = state.channel_focus.saturating_sub(1);
+            state.channel_sub_field = 0;
         }
         KeyCode::Down | KeyCode::Char('j') => {
             state.channel_focus = (state.channel_focus + 1).min(2);
+            state.channel_sub_field = 0;
         }
-        KeyCode::Char(' ') | KeyCode::Enter if key.code == KeyCode::Char(' ') => {
+        KeyCode::Char(' ') => {
             match state.channel_focus {
                 0 => {
                     state.telegram_enabled = !state.telegram_enabled;
@@ -1335,8 +1584,17 @@ fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
                 }
                 1 => {
                     state.web_enabled = !state.web_enabled;
-                    if state.web_enabled && state.web_password.is_empty() {
-                        state.web_editing = true;
+                    if state.web_enabled {
+                        if state.web_password.is_empty() {
+                            state.web_editing = true;
+                        }
+                        // Check port availability
+                        if let Ok(port) = state.web_port.parse::<u16>() {
+                            if std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
+                                let free = find_free_port(port + 1);
+                                state.web_port = free.to_string();
+                            }
+                        }
                     }
                 }
                 2 => {
@@ -1345,10 +1603,13 @@ fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
                 _ => {}
             }
         }
-        KeyCode::Enter => {
-            state.step = Step::Agents;
+        KeyCode::Tab => {
+            // Tab into sub-fields when on an expanded channel
+            if state.channel_focus == 1 && state.web_enabled {
+                state.channel_sub_field = 1;
+            }
         }
-        KeyCode::Tab | KeyCode::Char('n') => {
+        KeyCode::Enter => {
             state.step = Step::Agents;
         }
         _ => {}
@@ -1463,6 +1724,42 @@ fn draw_provider(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     ]).split(area);
 
     draw_step_indicator(frame, chunks[0], Step::Provider);
+
+    if state.provider_view == ProviderView::Custom {
+        // Custom provider form
+        let content_area = centered_rect(55, 40, chunks[2]);
+        let block = Block::default()
+            .borders(Borders::ALL).border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(BORDER))
+            .title(Line::from(vec![
+                Span::styled(" ", Style::default().bg(BG)),
+                Span::styled("Custom Provider", Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
+                Span::styled(" ", Style::default().bg(BG)),
+            ])).style(Style::default().bg(BG));
+        let block_inner = block.inner(content_area);
+        frame.render_widget(block, content_area);
+
+        let name_fg = if state.custom_provider_field == 0 { ACCENT } else { FG };
+        let url_fg = if state.custom_provider_field == 1 { ACCENT } else { FG };
+        let name_cursor = if state.custom_provider_field == 0 { "_" } else { "" };
+        let url_cursor = if state.custom_provider_field == 1 { "_" } else { "" };
+
+        let lines = vec![
+            Line::from(""),
+            Line::from(vec![Span::styled("  Provider Name", Style::default().fg(HEADING).bg(BG).add_modifier(Modifier::BOLD))]),
+            Line::from(vec![
+                Span::styled(format!("  {}{}", state.custom_provider_name, name_cursor), Style::default().fg(name_fg).bg(BG)),
+            ]),
+            Line::from(""),
+            Line::from(vec![Span::styled("  Base URL", Style::default().fg(HEADING).bg(BG).add_modifier(Modifier::BOLD))]),
+            Line::from(vec![
+                Span::styled(format!("  {}{}", state.custom_provider_url, url_cursor), Style::default().fg(url_fg).bg(BG)),
+            ]),
+        ];
+        frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), block_inner);
+        draw_hint_bar(frame, chunks[3], &[("Tab", "switch field"), ("Enter", "confirm"), ("Esc", "back")]);
+        return;
+    }
 
     let list_area = centered_rect(60, 90, chunks[2]);
 
@@ -1672,6 +1969,36 @@ fn draw_persona(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     ]).split(area);
     draw_step_indicator(frame, chunks[0], Step::Persona);
 
+    // Custom persona or wikipedia input mode
+    if state.persona_edit_mode != PersonaEdit::None {
+        let content_area = centered_rect(55, 35, chunks[2]);
+        let (title, label, value) = match state.persona_edit_mode {
+            PersonaEdit::Custom => ("Custom Persona", "Describe your agent's personality", &state.custom_persona_text),
+            PersonaEdit::Wikipedia => ("Wikipedia Persona", "Enter Wikipedia URL", &state.wikipedia_url),
+            _ => ("", "", &state.custom_persona_text),
+        };
+        let block = Block::default()
+            .borders(Borders::ALL).border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(BORDER))
+            .title(Line::from(vec![
+                Span::styled(" ", Style::default().bg(BG)),
+                Span::styled(title, Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
+                Span::styled(" ", Style::default().bg(BG)),
+            ])).style(Style::default().bg(BG));
+        let block_inner = block.inner(content_area);
+        frame.render_widget(block, content_area);
+
+        let lines = vec![
+            Line::from(""),
+            Line::from(vec![Span::styled(format!("  {}", label), Style::default().fg(HEADING).bg(BG).add_modifier(Modifier::BOLD))]),
+            Line::from(""),
+            Line::from(vec![Span::styled(format!("  {}_", value), Style::default().fg(ACCENT).bg(BG))]),
+        ];
+        frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), block_inner);
+        draw_hint_bar(frame, chunks[3], &[("type", "enter text"), ("Enter", "confirm"), ("Esc", "back")]);
+        return;
+    }
+
     let list_area = centered_rect(55, 80, chunks[2]);
     let mut items: Vec<ListItem> = Vec::new();
     let mut last_category = String::new();
@@ -1796,18 +2123,36 @@ fn draw_studio(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     ]).split(area);
     draw_step_indicator(frame, chunks[0], Step::Studio);
 
-    let list_area = centered_rect(60, 70, chunks[2]);
+    let list_area = centered_rect(60, 75, chunks[2]);
     let selected_count = state.studio_items.iter().filter(|s| s.selected).count();
 
-    let items: Vec<ListItem> = state.studio_items.iter().map(|s| {
+    let mut items: Vec<ListItem> = Vec::new();
+    for (i, s) in state.studio_items.iter().enumerate() {
         let check = if s.selected { "◆" } else { "◇" };
         let check_color = if s.selected { GREEN } else { DIM };
-        ListItem::new(Line::from(vec![
+        let mut spans = vec![
             Span::styled(format!("  {} ", check), Style::default().fg(check_color).bg(BG)),
             Span::styled(format!("{:<18}", s.name), Style::default().fg(FG).bg(BG)),
             Span::styled(s.description.clone(), Style::default().fg(DIM).bg(BG)),
-        ])).style(Style::default().bg(BG))
-    }).collect();
+        ];
+        // Show key status for cloud providers
+        if s.selected && s.needs_key {
+            if s.api_key.is_empty() {
+                spans.push(Span::styled("  ✗ needs key", Style::default().fg(ACCENT2).bg(BG)));
+            } else {
+                spans.push(Span::styled(format!("  ✓ {}", mask_key(&s.api_key)), Style::default().fg(GREEN).bg(BG)));
+            }
+        }
+        items.push(ListItem::new(Line::from(spans)).style(Style::default().bg(BG)));
+
+        // Show inline key input if editing this provider's key
+        if state.studio_editing_key && state.studio_key_idx == Some(i) {
+            items.push(ListItem::new(Line::from(vec![
+                Span::styled("      API Key: ", Style::default().fg(HEADING).bg(BG)),
+                Span::styled(format!("{}_", s.api_key), Style::default().fg(ACCENT).bg(BG)),
+            ])).style(Style::default().bg(BG)));
+        }
+    }
 
     let block = Block::default()
         .borders(Borders::ALL).border_type(BorderType::Rounded)
@@ -1818,14 +2163,19 @@ fn draw_studio(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
             Span::styled(" ", Style::default().bg(BG)),
         ]))
         .title_bottom(Line::from(vec![
-            Span::styled(" Media generation providers ", Style::default().fg(DIM).bg(BG)),
+            Span::styled(" Media generation providers · s=skip ", Style::default().fg(DIM).bg(BG)),
         ])).style(Style::default().bg(BG));
 
     let list = List::new(items).block(block)
         .highlight_style(Style::default().bg(HIGHLIGHT_BG).fg(ACCENT).add_modifier(Modifier::BOLD))
         .highlight_symbol("▸ ");
     frame.render_stateful_widget(list, list_area, &mut state.studio_state.clone());
-    draw_hint_bar(frame, chunks[3], &[("↑↓", "navigate"), ("Space", "toggle"), ("a", "all"), ("n", "none"), ("Enter", "next")]);
+    let hints: Vec<(&str, &str)> = if state.studio_editing_key {
+        vec![("type", "enter key"), ("Enter", "confirm"), ("Esc", "cancel")]
+    } else {
+        vec![("↑↓", "navigate"), ("Space", "toggle"), ("s", "skip"), ("Enter", "next")]
+    };
+    draw_hint_bar(frame, chunks[3], &hints);
 }
 
 fn draw_pea(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
@@ -1874,7 +2224,7 @@ fn draw_pea(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     // Budget field
     let (fg1, bg1) = field_style(1);
     let marker1 = if state.pea_field == 1 { "▸" } else { " " };
-    let budget_display = if state.pea_editing && state.pea_field == 1 {
+    let budget_display = if state.pea_field == 1 {
         format!("${}_", state.pea_budget_input)
     } else {
         format!("${}", state.pea_budget_input)
@@ -1890,7 +2240,7 @@ fn draw_pea(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     // Heartbeat field
     let (fg2, bg2) = field_style(2);
     let marker2 = if state.pea_field == 2 { "▸" } else { " " };
-    let hb_display = if state.pea_editing && state.pea_field == 2 {
+    let hb_display = if state.pea_field == 2 {
         format!("{}_", state.pea_heartbeat_input)
     } else {
         state.pea_heartbeat_input.clone()
@@ -1904,12 +2254,7 @@ fn draw_pea(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
 
     frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), block_inner);
 
-    let hints: Vec<(&str, &str)> = if state.pea_editing {
-        vec![("type", "enter value"), ("Enter", "confirm")]
-    } else {
-        vec![("↑↓", "field"), ("←→", "strategy"), ("Enter", "edit/next"), ("Esc", "back")]
-    };
-    draw_hint_bar(frame, chunks[3], &hints);
+    draw_hint_bar(frame, chunks[3], &[("↑↓", "field"), ("←→", "strategy"), ("type", "edit value"), ("Enter", "next"), ("Esc", "back")]);
 }
 
 fn draw_agent_detail(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
@@ -1980,7 +2325,7 @@ fn draw_channels(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     ]).split(area);
     draw_step_indicator(frame, chunks[0], Step::Channels);
 
-    let content_area = centered_rect(55, 50, chunks[2]);
+    let content_area = centered_rect(55, 65, chunks[2]);
     let block = Block::default()
         .borders(Borders::ALL).border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BORDER))
@@ -1993,41 +2338,104 @@ fn draw_channels(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     let block_inner = block.inner(content_area);
     frame.render_widget(block, content_area);
 
-    let channel_items: Vec<(usize, &str, bool, &str, bool)> = vec![
-        (0, "Telegram Bot", state.telegram_enabled, if state.telegram_editing { &state.telegram_token } else { &state.telegram_token }, state.telegram_editing),
-        (1, "Web Dashboard", state.web_enabled, if state.web_editing { &state.web_password } else { &state.web_password }, state.web_editing),
-        (2, "WebBERT Model", state.download_webbert, "", false),
-    ];
-
     let mut lines = Vec::new();
     lines.push(Line::from(""));
 
-    for (idx, label, enabled, token, editing) in &channel_items {
-        let focused = state.channel_focus == *idx;
+    // Telegram
+    {
+        let focused = state.channel_focus == 0;
         let marker = if focused { "▸" } else { " " };
-        let check = if *enabled { "◆" } else { "◇" };
-        let check_color = if *enabled { GREEN } else { DIM };
+        let check = if state.telegram_enabled { "◆" } else { "◇" };
+        let check_color = if state.telegram_enabled { GREEN } else { DIM };
         let bg = if focused { HIGHLIGHT_BG } else { BG };
 
         let mut spans = vec![
             Span::styled(format!("  {} ", marker), Style::default().fg(ACCENT).bg(bg)),
             Span::styled(format!("{} ", check), Style::default().fg(check_color).bg(bg)),
-            Span::styled(format!("{:<18}", label), Style::default().fg(if focused { ACCENT } else { FG }).bg(bg).add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() })),
+            Span::styled(format!("{:<18}", "Telegram Bot"), Style::default().fg(if focused { ACCENT } else { FG }).bg(bg).add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() })),
         ];
-
-        if *idx == 2 {
-            spans.push(Span::styled("~256MB local classifier", Style::default().fg(DIM).bg(bg)));
-        } else if *editing {
-            spans.push(Span::styled(format!("{}_", token), Style::default().fg(ACCENT).bg(bg)));
-        } else if !token.is_empty() {
-            spans.push(Span::styled(mask_key(token), Style::default().fg(DIM).bg(bg)));
+        if state.telegram_editing {
+            spans.push(Span::styled(format!("{}_", state.telegram_token), Style::default().fg(ACCENT).bg(bg)));
+        } else if !state.telegram_token.is_empty() {
+            spans.push(Span::styled(mask_key(&state.telegram_token), Style::default().fg(DIM).bg(bg)));
         }
-
         lines.push(Line::from(spans));
     }
 
+    // Web Dashboard
+    {
+        let focused = state.channel_focus == 1;
+        let marker = if focused && state.channel_sub_field == 0 { "▸" } else { " " };
+        let check = if state.web_enabled { "◆" } else { "◇" };
+        let check_color = if state.web_enabled { GREEN } else { DIM };
+        let bg = if focused && state.channel_sub_field == 0 { HIGHLIGHT_BG } else { BG };
+
+        let mut spans = vec![
+            Span::styled(format!("  {} ", marker), Style::default().fg(ACCENT).bg(bg)),
+            Span::styled(format!("{} ", check), Style::default().fg(check_color).bg(bg)),
+            Span::styled(format!("{:<18}", "Web Dashboard"), Style::default().fg(if focused { ACCENT } else { FG }).bg(bg).add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() })),
+        ];
+        if state.web_editing {
+            spans.push(Span::styled(format!("pw: {}_", state.web_password), Style::default().fg(ACCENT).bg(bg)));
+        } else if !state.web_password.is_empty() {
+            spans.push(Span::styled(format!("pw: {}", mask_key(&state.web_password)), Style::default().fg(DIM).bg(bg)));
+        }
+        lines.push(Line::from(spans));
+
+        // Web sub-fields (shown when web is enabled)
+        if state.web_enabled {
+            let port_focused = focused && state.channel_sub_field == 1;
+            let port_marker = if port_focused { "▸" } else { " " };
+            let port_cursor = if port_focused { "_" } else { "" };
+            lines.push(Line::from(vec![
+                Span::styled(format!("      {} ", port_marker), Style::default().fg(ACCENT).bg(if port_focused { HIGHLIGHT_BG } else { BG })),
+                Span::styled("Port          ", Style::default().fg(HEADING).bg(if port_focused { HIGHLIGHT_BG } else { BG })),
+                Span::styled(format!("{}{}", state.web_port, port_cursor), Style::default().fg(if port_focused { ACCENT } else { FG }).bg(if port_focused { HIGHLIGHT_BG } else { BG })),
+            ]));
+
+            let access_focused = focused && state.channel_sub_field == 2;
+            let access_marker = if access_focused { "▸" } else { " " };
+            let access_label = if state.web_access == 0 { "Private (localhost)" } else { "Public (any IP)" };
+            lines.push(Line::from(vec![
+                Span::styled(format!("      {} ", access_marker), Style::default().fg(ACCENT).bg(if access_focused { HIGHLIGHT_BG } else { BG })),
+                Span::styled("Access        ", Style::default().fg(HEADING).bg(if access_focused { HIGHLIGHT_BG } else { BG })),
+                Span::styled(format!("◄ {} ►", access_label), Style::default().fg(if access_focused { ACCENT } else { FG }).bg(if access_focused { HIGHLIGHT_BG } else { BG })),
+            ]));
+
+            if state.web_access == 0 {
+                let ips_focused = focused && state.channel_sub_field == 3;
+                let ips_marker = if ips_focused { "▸" } else { " " };
+                let ips_cursor = if ips_focused { "_" } else { "" };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("      {} ", ips_marker), Style::default().fg(ACCENT).bg(if ips_focused { HIGHLIGHT_BG } else { BG })),
+                    Span::styled("Allowed IPs   ", Style::default().fg(HEADING).bg(if ips_focused { HIGHLIGHT_BG } else { BG })),
+                    Span::styled(
+                        if state.web_allowed_ips.is_empty() && !ips_focused { "optional".to_string() } else { format!("{}{}", state.web_allowed_ips, ips_cursor) },
+                        Style::default().fg(if ips_focused { ACCENT } else { DIM }).bg(if ips_focused { HIGHLIGHT_BG } else { BG }),
+                    ),
+                ]));
+            }
+        }
+    }
+
+    // WebBERT
+    {
+        let focused = state.channel_focus == 2;
+        let marker = if focused { "▸" } else { " " };
+        let check = if state.download_webbert { "◆" } else { "◇" };
+        let check_color = if state.download_webbert { GREEN } else { DIM };
+        let bg = if focused { HIGHLIGHT_BG } else { BG };
+
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {} ", marker), Style::default().fg(ACCENT).bg(bg)),
+            Span::styled(format!("{} ", check), Style::default().fg(check_color).bg(bg)),
+            Span::styled(format!("{:<18}", "WebBERT Model"), Style::default().fg(if focused { ACCENT } else { FG }).bg(bg).add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() })),
+            Span::styled("~256MB local classifier", Style::default().fg(DIM).bg(bg)),
+        ]));
+    }
+
     frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), block_inner);
-    draw_hint_bar(frame, chunks[3], &[("↑↓", "navigate"), ("Space", "toggle"), ("Enter", "next"), ("Esc", "back")]);
+    draw_hint_bar(frame, chunks[3], &[("↑↓", "navigate"), ("Space", "toggle"), ("Tab", "sub-fields"), ("Enter", "next"), ("Esc", "back")]);
 }
 
 fn draw_summary(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
@@ -2059,7 +2467,12 @@ fn draw_summary(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
         ])
     };
 
-    lines.push(row("Provider", &state.selected_provider_name, FG));
+    if state.provider_view == ProviderView::Custom {
+        lines.push(row("Provider", &format!("{} (custom)", state.custom_provider_name), FG));
+        lines.push(row("URL", &state.custom_provider_url, DIM));
+    } else {
+        lines.push(row("Provider", &state.selected_provider_name, FG));
+    }
 
     let selected_models = state.selected_models();
     if !selected_models.is_empty() {
@@ -2087,10 +2500,25 @@ fn draw_summary(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     let strategy = PEA_STRATEGIES.get(state.pea_strategy_idx).map(|(id, _)| *id).unwrap_or("adaptive");
     lines.push(row("PEA Strategy", strategy, FG));
     lines.push(row("PEA Budget", &format!("${}/mo", state.pea_budget_input), FG));
+    lines.push(row("PEA Heartbeat", &format!("{}s", state.pea_heartbeat_input), FG));
 
     let selected_agents = state.selected_agents();
     if !selected_agents.is_empty() {
         lines.push(row("Agents", &format!("{} selected", selected_agents.len()), FG));
+    }
+
+    // Studio key status
+    let studio_with_keys: Vec<&StudioItem> = state.studio_items.iter()
+        .filter(|s| s.selected && s.needs_key)
+        .collect();
+    if !studio_with_keys.is_empty() {
+        for s in &studio_with_keys {
+            let status = if s.api_key.is_empty() { "✗" } else { "✓" };
+            let color = if s.api_key.is_empty() { ACCENT2 } else { GREEN };
+            lines.push(Line::from(vec![
+                Span::styled(format!("    {:<18}", format!("  {} {}", status, s.name)), Style::default().fg(color).bg(BG)),
+            ]));
+        }
     }
 
     lines.push(Line::from(""));
@@ -2107,6 +2535,11 @@ fn draw_summary(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
         Span::styled(ck(state.download_webbert), Style::default().fg(cc(state.download_webbert)).bg(BG)),
         Span::styled(" WebBERT", Style::default().fg(FG).bg(BG)),
     ]));
+
+    if state.web_enabled {
+        let access_label = if state.web_access == 0 { "private" } else { "public" };
+        lines.push(row("Web Port", &format!(":{} ({})", state.web_port, access_label), DIM));
+    }
 
     lines.push(Line::from(""));
     lines.push(Line::from(vec![

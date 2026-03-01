@@ -86,6 +86,9 @@ cron = "0.12"
 secrecy = { version = "0.8", features = ["serde"] }
 zeroize = "1"
 
+# .env file loading
+dotenvy = "0.15"
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

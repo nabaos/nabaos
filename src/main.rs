@@ -802,6 +802,17 @@ Examples:
 }
 
 fn main() {
+    // Load .env from data directory before anything else
+    let data_dir = std::env::var("NABA_DATA_DIR").unwrap_or_else(|_|
+        std::env::var("HOME")
+            .map(|h| format!("{}/.nabaos", h))
+            .unwrap_or_else(|_| "/tmp/.nabaos".into())
+    );
+    let env_path = std::path::Path::new(&data_dir).join(".env");
+    if env_path.exists() {
+        dotenvy::from_path(&env_path).ok();
+    }
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -3179,6 +3190,19 @@ fn cmd_setup(
                     env_lines.push(format!("NABA_PEA_HEARTBEAT={}", result.pea_heartbeat_secs));
                     if !result.custom_provider_name.is_empty() {
                         env_lines.push(format!("NABA_LLM_PROVIDER_NAME={}", result.custom_provider_name));
+                    }
+                    if !result.custom_provider_url.is_empty() {
+                        env_lines.push(format!("NABA_LLM_CUSTOM_URL={}", result.custom_provider_url));
+                    }
+                    if result.enable_web {
+                        env_lines.push(format!("NABA_WEB_PORT={}", result.web_port));
+                        env_lines.push(format!("NABA_WEB_ACCESS={}", result.web_access));
+                        if result.web_access == "private" && !result.web_allowed_ips.is_empty() {
+                            env_lines.push(format!("NABA_WEB_ALLOWED_IPS={}", result.web_allowed_ips));
+                        }
+                    }
+                    for (provider_id, api_key) in &result.studio_api_keys {
+                        env_lines.push(format!("NABA_STUDIO_KEY_{}={}", provider_id.to_uppercase(), api_key));
                     }
                     env_lines.push(String::new());
 
