@@ -3179,6 +3179,9 @@ fn cmd_setup(
                         if !result.telegram_token.is_empty() {
                             env_lines.push(format!("NABA_TELEGRAM_BOT_TOKEN={}", result.telegram_token));
                         }
+                        if !result.telegram_chat_ids.is_empty() {
+                            env_lines.push(format!("NABA_ALLOWED_CHAT_IDS={}", result.telegram_chat_ids));
+                        }
                     }
                     if result.enable_web {
                         env_lines.push("NABA_WEB_ENABLED=true".to_string());

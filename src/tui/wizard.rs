@@ -173,6 +173,7 @@ pub struct WizardResult {
     pub persona: String,
     pub enable_telegram: bool,
     pub telegram_token: String,
+    pub telegram_chat_ids: String,
     pub enable_web: bool,
     pub web_password: String,
     pub selected_agents: Vec<String>,
@@ -419,6 +420,8 @@ struct WizardState {
     telegram_enabled: bool,
     telegram_token: String,
     telegram_editing: bool,
+    telegram_chat_ids: String,
+    telegram_chat_ids_editing: bool,
     web_enabled: bool,
     web_password: String,
     web_editing: bool,
@@ -726,6 +729,8 @@ impl WizardState {
             telegram_enabled: false,
             telegram_token: String::new(),
             telegram_editing: false,
+            telegram_chat_ids: String::new(),
+            telegram_chat_ids_editing: false,
             web_enabled: false,
             web_password: String::new(),
             web_editing: false,
@@ -912,6 +917,7 @@ impl WizardState {
             persona,
             enable_telegram: self.telegram_enabled,
             telegram_token: self.telegram_token,
+            telegram_chat_ids: self.telegram_chat_ids,
             enable_web: self.web_enabled,
             web_password: self.web_password,
             selected_agents: agents,
@@ -981,6 +987,7 @@ fn handle_key(state: &mut WizardState, key: crossterm::event::KeyEvent) {
     }
     if key.code == KeyCode::Esc {
         // If editing a text field, just cancel editing
+        if state.telegram_chat_ids_editing { state.telegram_chat_ids_editing = false; return; }
         if state.telegram_editing { state.telegram_editing = false; return; }
         if state.web_editing { state.web_editing = false; return; }
         if state.studio_editing_key { state.studio_editing_key = false; state.studio_key_idx = None; return; }
@@ -1502,6 +1509,18 @@ fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
         }
         return;
     }
+    // Sub-field editing: telegram chat IDs
+    if state.telegram_chat_ids_editing {
+        match key.code {
+            KeyCode::Char(c) if c.is_ascii_digit() || c == ',' || c == ' ' || c == '-' => {
+                state.telegram_chat_ids.push(c);
+            }
+            KeyCode::Backspace => { state.telegram_chat_ids.pop(); }
+            KeyCode::Enter => { state.telegram_chat_ids_editing = false; }
+            _ => {}
+        }
+        return;
+    }
     // Sub-field editing: web password
     if state.web_editing {
         match key.code {
@@ -1605,12 +1624,19 @@ fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
         }
         KeyCode::Tab => {
             // Tab into sub-fields when on an expanded channel
-            if state.channel_focus == 1 && state.web_enabled {
+            if state.channel_focus == 0 && state.telegram_enabled && !state.telegram_token.is_empty() {
+                state.telegram_chat_ids_editing = true;
+            } else if state.channel_focus == 1 && state.web_enabled {
                 state.channel_sub_field = 1;
             }
         }
         KeyCode::Enter => {
-            state.step = Step::Agents;
+            // If focused on Telegram and token already set, edit chat IDs
+            if state.channel_focus == 0 && state.telegram_enabled && !state.telegram_token.is_empty() {
+                state.telegram_chat_ids_editing = true;
+            } else {
+                state.step = Step::Agents;
+            }
         }
         _ => {}
     }
@@ -2392,6 +2418,36 @@ fn draw_channels(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
             lines.push(Line::from(vec![
                 Span::styled("      2. Copy the token (123456:ABC-DEF...)", Style::default().fg(DIM).bg(BG)),
             ]));
+        }
+
+        // Chat IDs sub-field
+        if state.telegram_enabled {
+            let ids_focused = state.channel_focus == 0 && !state.telegram_editing;
+            let ids_editing = state.telegram_chat_ids_editing;
+            let ids_marker = if ids_editing || ids_focused { "▸" } else { " " };
+            let ids_bg = if ids_editing || ids_focused { HIGHLIGHT_BG } else { BG };
+
+            let mut id_spans = vec![
+                Span::styled(format!("      {} ", ids_marker), Style::default().fg(ACCENT).bg(ids_bg)),
+                Span::styled("Chat IDs      ", Style::default().fg(HEADING).bg(ids_bg)),
+            ];
+            if ids_editing {
+                id_spans.push(Span::styled(format!("{}_", state.telegram_chat_ids), Style::default().fg(ACCENT).bg(ids_bg)));
+            } else if !state.telegram_chat_ids.is_empty() {
+                id_spans.push(Span::styled(&state.telegram_chat_ids, Style::default().fg(FG).bg(ids_bg)));
+            } else {
+                id_spans.push(Span::styled("not set", Style::default().fg(DIM).bg(ids_bg)));
+            }
+            lines.push(Line::from(id_spans));
+
+            if ids_editing || (ids_focused && state.telegram_chat_ids.is_empty()) {
+                lines.push(Line::from(vec![
+                    Span::styled("      Your Telegram numeric ID (comma-separated for multiple)", Style::default().fg(DIM).bg(BG)),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled("      Tip: Message @userinfobot on Telegram to find your ID", Style::default().fg(DIM).bg(BG)),
+                ]));
+            }
         }
     }
 
