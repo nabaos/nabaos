@@ -197,7 +197,7 @@ impl BertClassifier {
 pub fn try_load_bert(model_dir: &Path) -> Option<BertClassifier> {
     let onnx_path = model_dir.join("bert_model.onnx");
     if !onnx_path.exists() {
-        tracing::info!(
+        tracing::debug!(
             "BERT model not found at {} — skipping Tier 1",
             onnx_path.display()
         );

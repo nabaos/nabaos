@@ -296,6 +296,27 @@ download_models() {
     rm -rf "$tmp_dir"
 }
 
+# ─── Download BERT security classifier from HuggingFace ─────────────────────
+download_bert_model() {
+    local bert_dir="${DATA_DIR}/models/setfit-w5h2"
+    if [ -f "${bert_dir}/bert_model.onnx" ]; then
+        ok "BERT security classifier already present"
+        return
+    fi
+
+    info "Downloading BERT security classifier from HuggingFace..."
+    mkdir -p "$bert_dir"
+    local hf_base="https://huggingface.co/biztiger/nabaos-bert-security-classifier/resolve/main"
+    local files=("bert_model.onnx" "bert_tokenizer.json" "bert_classes.json")
+    for f in "${files[@]}"; do
+        if ! download "${hf_base}/${f}" "${bert_dir}/${f}" 2>/dev/null; then
+            warn "Could not download ${f} — BERT Tier 1 classification disabled"
+            return
+        fi
+    done
+    ok "BERT security classifier installed"
+}
+
 # ─── Install ONNX Runtime (for local AI classification) ──────────────────────
 install_onnx_runtime() {
     # Skip if already installed (check actual file, not just ldconfig cache)
@@ -470,6 +491,7 @@ main() {
     ensure_default_constitution
     ensure_agent_catalog
     download_models
+    download_bert_model
 
     # Install ONNX Runtime for local classification (Linux only)
     if [ "$OS" = "linux" ]; then
