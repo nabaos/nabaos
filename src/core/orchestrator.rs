@@ -2212,8 +2212,17 @@ impl Orchestrator {
 
         // Try building from any configured provider in the registry
         let configured = self.provider_registry.list_configured();
+        let model_override = self.config.llm_model.as_deref();
         for prov_id in &configured {
-            if let Ok(provider) = self.provider_registry.build_provider(prov_id, None) {
+            if let Ok(mut provider) =
+                self.provider_registry.build_provider(prov_id, model_override)
+            {
+                // Apply custom base URL if configured (e.g. for OpenAI-compatible aggregators)
+                if let Some(ref base_url) = self.config.llm_base_url {
+                    let base = base_url.trim_end_matches('/');
+                    let base = base.strip_suffix("/v1").unwrap_or(base);
+                    provider.base_url = format!("{}/v1/chat/completions", base);
+                }
                 return Ok(provider);
             }
         }
