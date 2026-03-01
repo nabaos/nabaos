@@ -1,4 +1,4 @@
-//! Agents tab — catalog browser + running agents.
+//! Agents tab — searchable catalog browser with adaptive columns.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -59,6 +59,38 @@ impl AgentsTab {
 
 impl Tab for AgentsTab {
     fn render(&self, frame: &mut Frame, area: Rect) {
+        if self.agents.is_empty() {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(Line::from(vec![Span::styled(
+                    " Agents ",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )]));
+            let content = Paragraph::new(vec![
+                Line::from(""),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "  No agents in catalog",
+                    Style::default().fg(Color::DarkGray),
+                )]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Run ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("nabaos setup", Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        " to initialize the catalog",
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+            ])
+            .block(block);
+            frame.render_widget(content, area);
+            return;
+        }
+
         let chunks = Layout::vertical([
             Constraint::Length(3), // search
             Constraint::Min(5),   // list
@@ -68,51 +100,101 @@ impl Tab for AgentsTab {
         // Search bar
         let search_block = Block::default()
             .borders(Borders::ALL)
-            .title(" Search agents ");
-        let search_para = Paragraph::new(self.search.as_str()).block(search_block);
+            .border_style(Style::default().fg(Color::DarkGray))
+            .title(Line::from(vec![Span::styled(
+                " Search ",
+                Style::default().fg(Color::Cyan),
+            )]));
+        let search_display = if self.search.is_empty() {
+            Line::from(vec![Span::styled(
+                " Type to filter agents...",
+                Style::default().fg(Color::DarkGray),
+            )])
+        } else {
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled(&self.search, Style::default().fg(Color::White)),
+            ])
+        };
+        let search_para = Paragraph::new(search_display).block(search_block);
         frame.render_widget(search_para, chunks[0]);
 
-        // Agent list
+        // Agent list with adaptive columns
         let filtered = self.filtered();
+        let avail = chunks[1].width.saturating_sub(6) as usize; // borders + highlight + status
+        let name_w = 22.min(avail / 3);
+        let cat_w = 14.min(avail / 4);
+        let desc_w = avail.saturating_sub(name_w + cat_w + 2);
+
         let items: Vec<ListItem> = filtered
             .iter()
             .map(|a| {
-                let status = if a.installed { "✓" } else { " " };
+                let status = if a.installed { "●" } else { "○" };
+                let status_color = if a.installed {
+                    Color::Green
+                } else {
+                    Color::DarkGray
+                };
+                let name = truncate(&a.name, name_w);
+                let cat = truncate(&a.category, cat_w);
+                let desc = truncate(&a.description, desc_w);
+
                 ListItem::new(Line::from(vec![
+                    Span::styled(format!("{} ", status), Style::default().fg(status_color)),
                     Span::styled(
-                        format!("{} ", status),
-                        Style::default().fg(if a.installed {
-                            Color::Green
-                        } else {
-                            Color::DarkGray
-                        }),
+                        format!("{:<width$} ", name, width = name_w),
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        format!("{:<22} ", a.name),
-                        Style::default().add_modifier(Modifier::BOLD),
+                        format!("{:<width$} ", cat, width = cat_w),
+                        Style::default().fg(category_color(&a.category)),
                     ),
-                    Span::styled(
-                        format!("{:<14} ", a.category),
-                        Style::default().fg(Color::Cyan),
-                    ),
-                    Span::raw(&a.description),
+                    Span::styled(desc, Style::default().fg(Color::DarkGray)),
                 ]))
             })
             .collect();
 
+        let title = if filtered.len() != self.agents.len() {
+            format!(" Agents ({}/{}) ", filtered.len(), self.agents.len())
+        } else {
+            format!(" Agents ({}) ", self.agents.len())
+        };
+
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" Agents ({}) ", filtered.len()));
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(
+            .border_style(Style::default().fg(Color::DarkGray))
+            .title(Line::from(vec![Span::styled(
+                title,
                 Style::default()
-                    .add_modifier(Modifier::BOLD)
-                    .bg(Color::DarkGray),
-            )
-            .highlight_symbol("▸ ");
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )]));
 
-        frame.render_stateful_widget(list, area, &mut self.state.clone());
+        if filtered.is_empty() && !self.search.is_empty() {
+            let empty_block = block;
+            let empty_msg = Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    format!("  No agents matching \"{}\"", self.search),
+                    Style::default().fg(Color::DarkGray),
+                )]),
+            ])
+            .block(empty_block);
+            frame.render_widget(empty_msg, chunks[1]);
+        } else {
+            let list = List::new(items)
+                .block(block)
+                .highlight_style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                        .bg(Color::DarkGray),
+                )
+                .highlight_symbol("▸ ");
+            frame.render_stateful_widget(list, chunks[1], &mut self.state.clone());
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
@@ -135,6 +217,9 @@ impl Tab for AgentsTab {
             }
             KeyCode::Backspace => {
                 self.search.pop();
+                if !self.filtered().is_empty() {
+                    self.state.select(Some(0));
+                }
                 true
             }
             KeyCode::Char(c) => {
@@ -144,5 +229,37 @@ impl Tab for AgentsTab {
             }
             _ => false,
         }
+    }
+}
+
+/// Color-code categories for visual grouping.
+fn category_color(cat: &str) -> Color {
+    let c = cat.to_lowercase();
+    if c.contains("research") || c.contains("analysis") {
+        Color::Blue
+    } else if c.contains("productivity") || c.contains("workflow") {
+        Color::Green
+    } else if c.contains("finance") || c.contains("trading") {
+        Color::Yellow
+    } else if c.contains("security") || c.contains("compliance") {
+        Color::Red
+    } else if c.contains("development") || c.contains("devops") {
+        Color::Cyan
+    } else if c.contains("communication") || c.contains("social") {
+        Color::Magenta
+    } else if c.contains("creative") || c.contains("design") {
+        Color::LightMagenta
+    } else {
+        Color::DarkGray
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else if max <= 1 {
+        "…".to_string()
+    } else {
+        format!("{}…", &s[..max - 1])
     }
 }

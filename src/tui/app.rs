@@ -1,6 +1,14 @@
-//! Main TUI application — full-screen dashboard with tabs.
+//! Main TUI application — full-screen dashboard with tabbed interface.
+//!
+//! Features:
+//! - Background query processing (non-blocking UI)
+//! - Animated loading spinner
+//! - Live stats in title bar
+//! - Help overlay
+//! - Agents loaded from catalog, objectives from PEA engine
 
 use std::io;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -8,10 +16,10 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::ExecutableCommand;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs};
 use ratatui::Terminal;
 
 use crate::core::config::NyayaConfig;
@@ -21,8 +29,21 @@ use super::tabs::agents::AgentsTab;
 use super::tabs::chat::ChatTab;
 use super::tabs::history::{HistoryEntry, HistoryTab};
 use super::tabs::settings::{ConfigEntry, SettingsTab};
-use super::tabs::tasks::TasksTab;
+use super::tabs::tasks::{ObjectiveSummary, TasksTab};
 use super::tabs::{Tab, TabId};
+
+/// Messages from background processing threads.
+enum AppMessage {
+    QueryResult {
+        text: String,
+        cost_label: String,
+        tier: String,
+        latency_ms: f64,
+        cost: f64,
+        query: String,
+    },
+    QueryError(String),
+}
 
 /// The main TUI application state.
 pub struct App {
@@ -33,14 +54,20 @@ pub struct App {
     pub settings: SettingsTab,
     pub history: HistoryTab,
     pub should_quit: bool,
+    pub show_help: bool,
     pub stats_queries: u64,
     pub stats_saved: f64,
+    pub stats_spent: f64,
     pub stats_cache_pct: f64,
     config: NyayaConfig,
+    rx: mpsc::Receiver<AppMessage>,
+    tx: mpsc::Sender<AppMessage>,
 }
 
 impl App {
     pub fn new(config: NyayaConfig) -> Self {
+        let (tx, rx) = mpsc::channel();
+
         let mut settings = SettingsTab::new();
 
         // Populate settings from config
@@ -51,6 +78,14 @@ impl App {
                     .llm_provider
                     .as_deref()
                     .unwrap_or("not set")
+                    .to_string(),
+            },
+            ConfigEntry {
+                key: "LLM Model".into(),
+                value: config
+                    .llm_model
+                    .as_deref()
+                    .unwrap_or("default")
                     .to_string(),
             },
             ConfigEntry {
@@ -70,7 +105,7 @@ impl App {
         });
         settings.set_entries(entries);
 
-        Self {
+        let mut app = Self {
             active_tab: TabId::Chat,
             chat: ChatTab::new(),
             tasks: TasksTab::new(),
@@ -78,10 +113,63 @@ impl App {
             settings,
             history: HistoryTab::new(),
             should_quit: false,
+            show_help: false,
             stats_queries: 0,
             stats_saved: 0.0,
+            stats_spent: 0.0,
             stats_cache_pct: 0.0,
             config,
+            rx,
+            tx,
+        };
+
+        // Load initial data
+        app.load_agents();
+        app.load_objectives();
+        app.refresh_stats();
+
+        app
+    }
+
+    /// Load agents from the catalog directory.
+    fn load_agents(&mut self) {
+        use crate::agent_os::catalog::AgentCatalog;
+
+        let catalog_dir = self.config.data_dir.join("catalog");
+        let catalog = AgentCatalog::new(&catalog_dir);
+
+        if let Ok(entries) = catalog.list() {
+            let agents: Vec<_> = entries
+                .into_iter()
+                .map(|e| super::tabs::agents::AgentEntry {
+                    name: e.name,
+                    category: e.category,
+                    description: e.description,
+                    installed: false,
+                })
+                .collect();
+            self.agents.set_agents(agents);
+        }
+    }
+
+    /// Load objectives from PEA engine.
+    fn load_objectives(&mut self) {
+        use crate::pea::engine::PeaEngine;
+
+        if let Ok(engine) = PeaEngine::open(&self.config.data_dir) {
+            if let Ok(objectives) = engine.list_objectives() {
+                let summaries: Vec<_> = objectives
+                    .into_iter()
+                    .map(|obj| ObjectiveSummary {
+                        id: obj.id,
+                        description: obj.description,
+                        status: format!("{}", obj.status),
+                        spent: obj.spent_usd,
+                        budget: obj.budget_usd,
+                    })
+                    .collect();
+                self.tasks.set_objectives(summaries);
+            }
         }
     }
 
@@ -91,48 +179,93 @@ impl App {
             if let Ok(summary) = orch.cost_summary(None) {
                 self.stats_queries = summary.total_llm_calls + summary.total_cache_hits;
                 self.stats_saved = summary.total_saved_usd;
+                self.stats_spent = summary.total_spent_usd;
                 self.stats_cache_pct = summary.savings_percent;
             }
         }
     }
 
-    /// Process a chat query through the orchestrator.
-    fn process_query(&mut self, query: String) {
+    /// Submit a query for background processing.
+    fn submit_query(&mut self, query: String) {
         self.chat.push_user(query.clone());
+        self.chat.is_loading = true;
 
-        match Orchestrator::new(self.config.clone()) {
-            Ok(mut orch) => match orch.process_query(&query, None) {
-                Ok(result) => {
-                    let text = result
-                        .response_text
-                        .unwrap_or_else(|| result.description.clone());
-                    let tier_str = format!("{}", result.tier);
-                    let cost_label = if tier_str.contains("cache") || tier_str.contains("Cache") {
-                        format!("[cached · $0.00]")
-                    } else {
-                        format!("[llm · ${:.4}]", 0.003) // approximate
-                    };
-                    self.chat.push_agent(text, cost_label.clone());
+        let tx = self.tx.clone();
+        let config = self.config.clone();
+        let q = query;
 
-                    // Add to history
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            match Orchestrator::new(config) {
+                Ok(mut orch) => match orch.process_query(&q, None) {
+                    Ok(result) => {
+                        let text = result
+                            .response_text
+                            .unwrap_or_else(|| result.description.clone());
+                        let tier_str = format!("{}", result.tier);
+                        let is_cached = tier_str.contains("Cache")
+                            || tier_str.contains("cache")
+                            || tier_str.contains("Fingerprint")
+                            || tier_str.contains("Bert");
+                        let cost = if is_cached { 0.0 } else { result.confidence * 0.001 };
+                        let cost_label = if is_cached {
+                            "cached · $0.00".to_string()
+                        } else {
+                            format!("llm · ${:.4}", cost)
+                        };
+                        let elapsed = start.elapsed().as_millis() as f64;
+                        tx.send(AppMessage::QueryResult {
+                            text,
+                            cost_label,
+                            tier: tier_str,
+                            latency_ms: if result.latency_ms > 0.0 {
+                                result.latency_ms
+                            } else {
+                                elapsed
+                            },
+                            cost,
+                            query: q,
+                        })
+                        .ok();
+                    }
+                    Err(e) => {
+                        tx.send(AppMessage::QueryError(e.to_string())).ok();
+                    }
+                },
+                Err(e) => {
+                    tx.send(AppMessage::QueryError(e.to_string())).ok();
+                }
+            }
+        });
+    }
+
+    /// Poll for background results (non-blocking).
+    fn poll_messages(&mut self) {
+        while let Ok(msg) = self.rx.try_recv() {
+            match msg {
+                AppMessage::QueryResult {
+                    text,
+                    cost_label,
+                    tier,
+                    latency_ms,
+                    cost,
+                    query,
+                } => {
+                    self.chat.push_agent(text, cost_label);
                     self.history.push(HistoryEntry {
                         timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
                         query,
-                        tier: tier_str,
-                        cost: result.confidence * 0.001, // rough estimate
-                        latency_ms: result.latency_ms,
+                        tier,
+                        cost,
+                        latency_ms,
                     });
-
                     self.refresh_stats();
+                    self.load_objectives();
                 }
-                Err(e) => {
+                AppMessage::QueryError(e) => {
                     self.chat
-                        .push_agent(format!("Error: {}", e), "[error]".into());
+                        .push_agent(format!("Error: {}", e), "error".into());
                 }
-            },
-            Err(e) => {
-                self.chat
-                    .push_agent(format!("Error: {}", e), "[error]".into());
             }
         }
     }
@@ -151,76 +284,91 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
         .map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?;
 
     let mut app = App::new(config);
-    app.refresh_stats();
-
     let mut last_refresh = Instant::now();
-    let refresh_interval = Duration::from_secs(5);
+    let refresh_interval = Duration::from_secs(3);
 
     // Main loop
     let result = loop {
+        // Tick animations
+        app.chat.tick();
+
+        // Poll background results
+        app.poll_messages();
+
         // Draw
         terminal
             .draw(|frame| draw_ui(frame, &app))
             .map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?;
 
-        // Poll events
-        if event::poll(Duration::from_millis(250))
+        // Poll events (100ms for smooth spinner animation)
+        if event::poll(Duration::from_millis(100))
             .map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?
         {
             if let Event::Key(key) = event::read()
                 .map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?
             {
-                // Global keys
-                match key.code {
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.should_quit = true;
-                    }
-                    KeyCode::Char('q')
-                        if app.active_tab != TabId::Chat && app.active_tab != TabId::Agents =>
-                    {
-                        app.should_quit = true;
-                    }
-                    KeyCode::Tab => {
-                        app.active_tab = app.active_tab.next();
-                    }
-                    KeyCode::Char('1') if key.modifiers.is_empty() && app.active_tab != TabId::Chat && app.active_tab != TabId::Agents => {
-                        app.active_tab = TabId::Chat;
-                    }
-                    KeyCode::Char('2') if key.modifiers.is_empty() && app.active_tab != TabId::Chat && app.active_tab != TabId::Agents => {
-                        app.active_tab = TabId::Tasks;
-                    }
-                    KeyCode::Char('3') if key.modifiers.is_empty() && app.active_tab != TabId::Chat && app.active_tab != TabId::Agents => {
-                        app.active_tab = TabId::Agents;
-                    }
-                    KeyCode::Char('4') if key.modifiers.is_empty() && app.active_tab != TabId::Chat && app.active_tab != TabId::Agents => {
-                        app.active_tab = TabId::Settings;
-                    }
-                    KeyCode::Char('5') if key.modifiers.is_empty() && app.active_tab != TabId::Chat && app.active_tab != TabId::Agents => {
-                        app.active_tab = TabId::History;
-                    }
-                    KeyCode::Enter if app.active_tab == TabId::Chat => {
-                        let input = app.chat.take_input();
-                        if !input.is_empty() {
-                            app.process_query(input);
+                // Help overlay intercepts all keys
+                if app.show_help {
+                    app.show_help = false;
+                    // Don't process the key further
+                } else {
+                    // Global keys
+                    match key.code {
+                        KeyCode::Char('c')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            app.should_quit = true;
                         }
-                    }
-                    _ => {
-                        // Delegate to active tab
-                        match app.active_tab {
-                            TabId::Chat => {
-                                app.chat.handle_key(key);
+                        KeyCode::Char('q')
+                            if app.active_tab != TabId::Chat
+                                && app.active_tab != TabId::Agents =>
+                        {
+                            app.should_quit = true;
+                        }
+                        KeyCode::Char('?')
+                            if app.active_tab != TabId::Chat
+                                && app.active_tab != TabId::Agents =>
+                        {
+                            app.show_help = !app.show_help;
+                        }
+                        KeyCode::Tab => {
+                            app.active_tab = app.active_tab.next();
+                        }
+                        KeyCode::BackTab => {
+                            app.active_tab = app.active_tab.prev();
+                        }
+                        KeyCode::Char(n @ '1'..='5')
+                            if key.modifiers.is_empty()
+                                && app.active_tab != TabId::Chat
+                                && app.active_tab != TabId::Agents =>
+                        {
+                            app.active_tab =
+                                TabId::from_index((n as usize) - ('1' as usize));
+                        }
+                        KeyCode::Enter if app.active_tab == TabId::Chat => {
+                            let input = app.chat.take_input();
+                            if !input.is_empty() {
+                                app.submit_query(input);
                             }
-                            TabId::Tasks => {
-                                app.tasks.handle_key(key);
-                            }
-                            TabId::Agents => {
-                                app.agents.handle_key(key);
-                            }
-                            TabId::Settings => {
-                                app.settings.handle_key(key);
-                            }
-                            TabId::History => {
-                                app.history.handle_key(key);
+                        }
+                        _ => {
+                            // Delegate to active tab
+                            match app.active_tab {
+                                TabId::Chat => {
+                                    app.chat.handle_key(key);
+                                }
+                                TabId::Tasks => {
+                                    app.tasks.handle_key(key);
+                                }
+                                TabId::Agents => {
+                                    app.agents.handle_key(key);
+                                }
+                                TabId::Settings => {
+                                    app.settings.handle_key(key);
+                                }
+                                TabId::History => {
+                                    app.history.handle_key(key);
+                                }
                             }
                         }
                     }
@@ -250,120 +398,205 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
 fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
     let size = frame.area();
 
-    // Outer border
+    // Build live stats for title bar
+    let stats_text = format!(
+        " saved {} · cache {:.0}% · {} queries ",
+        format_money(app.stats_saved),
+        app.stats_cache_pct,
+        app.stats_queries,
+    );
+
+    // Outer block with stats in bottom border
     let outer = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" NabaOS v{} ", env!("CARGO_PKG_VERSION")))
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Line::from(vec![Span::styled(
+            format!(" NabaOS v{} ", env!("CARGO_PKG_VERSION")),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]))
+        .title_bottom(Line::from(vec![Span::styled(
+            stats_text,
+            Style::default().fg(Color::DarkGray),
+        )]));
+
     let inner = outer.inner(size);
     frame.render_widget(outer, size);
 
-    // Main layout: sidebar + content + status bar
-    let main_chunks = Layout::vertical([
-        Constraint::Min(10),   // nav + content
-        Constraint::Length(1), // status bar
+    // Layout: tab bar + content + keybinding hints
+    let chunks = Layout::vertical([
+        Constraint::Length(2), // tab bar
+        Constraint::Min(5),   // content
+        Constraint::Length(1), // keybinding hints
     ])
     .split(inner);
 
-    // Sidebar + content
-    let content_chunks = Layout::horizontal([
-        Constraint::Length(16), // sidebar
-        Constraint::Min(30),   // content
-    ])
-    .split(main_chunks[0]);
+    // Tab bar
+    draw_tab_bar(frame, chunks[0], app);
 
-    // Sidebar: nav + stats
-    let sidebar_chunks = Layout::vertical([
-        Constraint::Min(8),    // nav tabs
-        Constraint::Length(6), // stats
-    ])
-    .split(content_chunks[0]);
-
-    draw_nav(frame, sidebar_chunks[0], app);
-    draw_stats(frame, sidebar_chunks[1], app);
-
-    // Content area: active tab
-    let content_area = content_chunks[1];
+    // Content area — active tab
     match app.active_tab {
-        TabId::Chat => app.chat.render(frame, content_area),
-        TabId::Tasks => app.tasks.render(frame, content_area),
-        TabId::Agents => app.agents.render(frame, content_area),
-        TabId::Settings => app.settings.render(frame, content_area),
-        TabId::History => app.history.render(frame, content_area),
+        TabId::Chat => app.chat.render(frame, chunks[1]),
+        TabId::Tasks => app.tasks.render(frame, chunks[1]),
+        TabId::Agents => app.agents.render(frame, chunks[1]),
+        TabId::Settings => app.settings.render(frame, chunks[1]),
+        TabId::History => app.history.render(frame, chunks[1]),
     }
 
-    // Status bar
-    let status = Paragraph::new(Line::from(vec![
-        Span::styled(" Tab", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(": switch  "),
-        Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(": send  "),
-        Span::styled("Ctrl+C", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(": quit"),
-    ]))
-    .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(status, main_chunks[1]);
-}
+    // Keybinding hints
+    let hints = build_hints(app.active_tab);
+    let hint_spans: Vec<Span> = hints
+        .iter()
+        .enumerate()
+        .flat_map(|(i, (k, v))| {
+            let mut spans = vec![
+                Span::styled(
+                    format!(" {} ", k),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("{}", v), Style::default().fg(Color::DarkGray)),
+            ];
+            if i < hints.len() - 1 {
+                spans.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
+            }
+            spans
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(Line::from(hint_spans)), chunks[2]);
 
-/// Draw the navigation sidebar.
-fn draw_nav(frame: &mut ratatui::Frame, area: Rect, app: &App) {
-    let block = Block::default().borders(Borders::ALL).title(" Nav ");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let tabs = TabId::all();
-    for (i, tab_id) in tabs.iter().enumerate() {
-        if i as u16 >= inner.height {
-            break;
-        }
-        let is_active = *tab_id == app.active_tab;
-        let (symbol, style) = if is_active {
-            (
-                "\u{25cf} ", // ●
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
-        } else {
-            (
-                "\u{25cb} ", // ○
-                Style::default().fg(Color::White),
-            )
-        };
-        let line = Paragraph::new(format!("{}{}", symbol, tab_id.label())).style(style);
-        let tab_area = Rect {
-            x: inner.x,
-            y: inner.y + i as u16,
-            width: inner.width,
-            height: 1,
-        };
-        frame.render_widget(line, tab_area);
+    // Help overlay
+    if app.show_help {
+        draw_help_overlay(frame, size);
     }
 }
 
-/// Draw the stats section in the sidebar.
-fn draw_stats(frame: &mut ratatui::Frame, area: Rect, app: &App) {
-    let block = Block::default().borders(Borders::ALL).title(" Stats ");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+/// Draw the top tab bar using ratatui Tabs widget.
+fn draw_tab_bar(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, app: &App) {
+    let titles: Vec<Line> = TabId::all()
+        .iter()
+        .enumerate()
+        .map(|(i, tab)| {
+            let label = match tab {
+                TabId::Agents if !app.agents.agents.is_empty() => {
+                    format!("{} ({})", tab.label(), app.agents.agents.len())
+                }
+                TabId::Tasks if !app.tasks.objectives.is_empty() => {
+                    format!("{} ({})", tab.label(), app.tasks.objectives.len())
+                }
+                TabId::History if !app.history.entries.is_empty() => {
+                    format!("{} ({})", tab.label(), app.history.entries.len())
+                }
+                _ => tab.label().to_string(),
+            };
+            Line::from(format!(" {} {} ", i + 1, label))
+        })
+        .collect();
 
-    let lines = vec![
-        format!("Saved ${:.2}", app.stats_saved),
-        format!("Cache {:.0}%", app.stats_cache_pct),
-        format!("Queries {}", app.stats_queries),
+    let tabs = Tabs::new(titles)
+        .select(app.active_tab.index())
+        .style(Style::default().fg(Color::DarkGray))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        )
+        .divider("│");
+
+    frame.render_widget(tabs, area);
+}
+
+/// Build context-sensitive keybinding hints.
+fn build_hints(tab: TabId) -> Vec<(&'static str, &'static str)> {
+    match tab {
+        TabId::Chat => vec![
+            ("Enter", "send"),
+            ("↑↓", "history"),
+            ("PgUp/Dn", "scroll"),
+            ("Tab", "switch"),
+            ("^C", "quit"),
+        ],
+        TabId::Agents => vec![
+            ("↑↓", "navigate"),
+            ("type", "search"),
+            ("Tab", "switch"),
+            ("^C", "quit"),
+        ],
+        _ => vec![
+            ("↑↓/jk", "navigate"),
+            ("Tab", "switch"),
+            ("1-5", "jump"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
+    }
+}
+
+/// Draw the help overlay centered on screen.
+fn draw_help_overlay(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
+    let w = 50.min(area.width.saturating_sub(4));
+    let h = 16.min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(w)) / 2 + area.x;
+    let y = (area.height.saturating_sub(h)) / 2 + area.y;
+    let help_area = ratatui::layout::Rect::new(x, y, w, h);
+
+    frame.render_widget(Clear, help_area);
+
+    let help_lines = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  Keyboard Shortcuts",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        help_row("Tab / Shift+Tab", "Switch tabs"),
+        help_row("1-5", "Jump to tab"),
+        help_row("↑ ↓ / j k", "Navigate lists"),
+        help_row("Enter", "Send query (Chat)"),
+        help_row("PgUp / PgDn", "Scroll messages"),
+        help_row("q", "Quit"),
+        help_row("Ctrl+C", "Force quit"),
+        help_row("?", "Toggle this help"),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  Press any key to close",
+            Style::default().fg(Color::DarkGray),
+        )]),
     ];
 
-    for (i, line) in lines.iter().enumerate() {
-        if i as u16 >= inner.height {
-            break;
-        }
-        let para = Paragraph::new(line.as_str()).style(Style::default().fg(Color::DarkGray));
-        let line_area = Rect {
-            x: inner.x,
-            y: inner.y + i as u16,
-            width: inner.width,
-            height: 1,
-        };
-        frame.render_widget(para, line_area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(Line::from(vec![Span::styled(
+            " Help ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]));
+
+    frame.render_widget(Paragraph::new(help_lines).block(block), help_area);
+}
+
+fn help_row<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
+    Line::from(vec![
+        Span::styled(
+            format!("  {:<19}", key),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(desc, Style::default().fg(Color::DarkGray)),
+    ])
+}
+
+fn format_money(usd: f64) -> String {
+    if usd < 0.01 && usd > 0.0 {
+        format!("${:.4}", usd)
+    } else {
+        format!("${:.2}", usd)
     }
 }

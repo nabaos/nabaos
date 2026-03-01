@@ -1,15 +1,10 @@
-//! Tab trait and registry for the TUI dashboard.
+//! Tab definitions and shared Tab trait.
 
-pub mod agents;
-pub mod chat;
-pub mod history;
-pub mod settings;
-pub mod tasks;
-
-use ratatui::Frame;
+use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
+use ratatui::Frame;
 
-/// Identifies a tab in the TUI.
+/// Identifies each tab in the TUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabId {
     Chat,
@@ -22,11 +17,11 @@ pub enum TabId {
 impl TabId {
     pub fn label(&self) -> &'static str {
         match self {
-            TabId::Chat => "Chat",
-            TabId::Tasks => "Tasks",
-            TabId::Agents => "Agents",
-            TabId::Settings => "Settings",
-            TabId::History => "History",
+            Self::Chat => "Chat",
+            Self::Tasks => "Tasks",
+            Self::Agents => "Agents",
+            Self::Settings => "Settings",
+            Self::History => "History",
         }
     }
 
@@ -40,22 +35,45 @@ impl TabId {
         ]
     }
 
-    pub fn next(&self) -> TabId {
+    pub fn index(&self) -> usize {
         match self {
-            TabId::Chat => TabId::Tasks,
-            TabId::Tasks => TabId::Agents,
-            TabId::Agents => TabId::Settings,
-            TabId::Settings => TabId::History,
-            TabId::History => TabId::Chat,
+            Self::Chat => 0,
+            Self::Tasks => 1,
+            Self::Agents => 2,
+            Self::Settings => 3,
+            Self::History => 4,
         }
+    }
+
+    pub fn from_index(i: usize) -> Self {
+        match i {
+            0 => Self::Chat,
+            1 => Self::Tasks,
+            2 => Self::Agents,
+            3 => Self::Settings,
+            4 => Self::History,
+            _ => Self::Chat,
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        Self::from_index((self.index() + 1) % Self::all().len())
+    }
+
+    pub fn prev(&self) -> Self {
+        let len = Self::all().len();
+        Self::from_index((self.index() + len - 1) % len)
     }
 }
 
-/// Trait that each tab implements.
+/// Shared trait for all tabs.
 pub trait Tab {
-    /// Render the tab content into the given area.
     fn render(&self, frame: &mut Frame, area: Rect);
-
-    /// Handle a key event. Returns true if the event was consumed.
-    fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> bool;
+    fn handle_key(&mut self, key: KeyEvent) -> bool;
 }
+
+pub mod agents;
+pub mod chat;
+pub mod history;
+pub mod settings;
+pub mod tasks;

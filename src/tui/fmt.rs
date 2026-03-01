@@ -22,7 +22,7 @@ pub fn color_enabled() -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// ANSI escape constants (empty when color is disabled)
+// ANSI escape constants
 // ---------------------------------------------------------------------------
 
 pub const BOLD: &str = "\x1b[1m";
@@ -49,54 +49,32 @@ fn c(code: &str) -> &str {
 // ---------------------------------------------------------------------------
 
 fn term_width() -> usize {
-    // Try to read from COLUMNS env first, then fallback to 50
+    // Try crossterm first (when tui feature is active)
+    #[cfg(feature = "tui")]
+    {
+        if let Ok((w, _)) = crossterm::terminal::size() {
+            if w > 20 {
+                return w as usize;
+            }
+        }
+    }
+    // Fallback to COLUMNS env
     std::env::var("COLUMNS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(50)
+        .unwrap_or(80)
 }
 
 // ---------------------------------------------------------------------------
 // Box drawing
 // ---------------------------------------------------------------------------
 
-/// `╭─── Title ───────────────────────────────╮`
-pub fn header(title: &str) -> String {
-    let w = term_width();
-    let label = format!(" {} ", title);
-    let label_visible_len = title.len() + 2; // space + title + space
-    let dashes = if w > label_visible_len + 4 {
-        w - label_visible_len - 4 // 2 for ╭─ and 2 for ─╮
-    } else {
-        2
-    };
-    let left_dashes = 3;
-    let right_dashes = if dashes > left_dashes {
-        dashes - left_dashes
-    } else {
-        1
-    };
-    format!(
-        "{}╭─{}{}{}{}{}{}─╮{}",
-        c(DIM),
-        "─".repeat(left_dashes),
-        c(RESET),
-        c(BOLD),
-        label,
-        c(RESET),
-        c(DIM),
-        // right fill
-        &format!("{}─{}╮{}", "─".repeat(right_dashes), "", c(RESET)),
-    )
-    // Simplified: just build a clean line
-}
-
-/// Build a header line: ╭─── Title ──────────────────────╮
+/// `╭─── Title ──────────────────────╮`
 pub fn header_line(title: &str) -> String {
     let w = term_width();
     let label = format!(" {} ", title);
-    let inner = w.saturating_sub(2); // minus ╭ and ╮
-    let left = 3; // ───
+    let inner = w.saturating_sub(2);
+    let left = 3;
     let right = inner.saturating_sub(left + label.len());
     format!(
         "{}╭{}{}{}{}{}{}╮{}",
@@ -109,6 +87,11 @@ pub fn header_line(title: &str) -> String {
         c(DIM).to_string() + &"─".repeat(right),
         c(RESET),
     )
+}
+
+/// Alias for backward compatibility.
+pub fn header(title: &str) -> String {
+    header_line(title)
 }
 
 /// `╰──────────────────────────────────────────╯`
@@ -149,7 +132,8 @@ pub fn section(title: &str) -> String {
 pub fn row(key: &str, val: &str) -> String {
     let w = term_width();
     let inner = w.saturating_sub(2);
-    let content = format!("  {:<12} {}", key, val);
+    let raw_content = format!("  {:<12} {}", key, val);
+    let content = truncate_visible(&raw_content, inner);
     let pad = inner.saturating_sub(visible_len(&content));
     format!(
         "{}│{}{}{}{}│{}",
@@ -166,7 +150,8 @@ pub fn row(key: &str, val: &str) -> String {
 pub fn row_pair(k1: &str, v1: &str, k2: &str, v2: &str) -> String {
     let w = term_width();
     let inner = w.saturating_sub(2);
-    let content = format!("  {:<10} {:<10}{:<10} {}", k1, v1, k2, v2);
+    let raw_content = format!("  {:<10} {:<10}{:<10} {}", k1, v1, k2, v2);
+    let content = truncate_visible(&raw_content, inner);
     let pad = inner.saturating_sub(visible_len(&content));
     format!(
         "{}│{}{}{}{}│{}",
@@ -183,7 +168,8 @@ pub fn row_pair(k1: &str, v1: &str, k2: &str, v2: &str) -> String {
 pub fn row_raw(content: &str) -> String {
     let w = term_width();
     let inner = w.saturating_sub(2);
-    let vlen = visible_len(content);
+    let content = truncate_visible(content, inner);
+    let vlen = visible_len(&content);
     let pad = inner.saturating_sub(vlen);
     format!(
         "{}│{}{}{}{}│{}",
@@ -310,7 +296,7 @@ pub fn tokens(count: u64) -> String {
 // ---------------------------------------------------------------------------
 
 /// Compute the visible length of a string, stripping ANSI escape codes.
-fn visible_len(s: &str) -> usize {
+pub fn visible_len(s: &str) -> usize {
     let mut len = 0usize;
     let mut in_escape = false;
     for ch in s.chars() {
@@ -321,12 +307,46 @@ fn visible_len(s: &str) -> usize {
         } else if ch == '\x1b' {
             in_escape = true;
         } else {
-            // Account for multi-byte unicode characters that display as single width
-            // Box-drawing and emoji can vary, but for our purposes most are width 1
             len += 1;
         }
     }
     len
+}
+
+/// Truncate a string to at most `max_visible` visible characters,
+/// preserving ANSI escape sequences. Adds "…" if truncated.
+fn truncate_visible(s: &str, max_visible: usize) -> String {
+    let vlen = visible_len(s);
+    if vlen <= max_visible {
+        return s.to_string();
+    }
+    let target = max_visible.saturating_sub(1); // leave room for "…"
+    let mut result = String::new();
+    let mut vis_count = 0;
+    let mut in_escape = false;
+    for ch in s.chars() {
+        if in_escape {
+            result.push(ch);
+            if ch == 'm' {
+                in_escape = false;
+            }
+        } else if ch == '\x1b' {
+            result.push(ch);
+            in_escape = true;
+        } else {
+            if vis_count >= target {
+                break;
+            }
+            result.push(ch);
+            vis_count += 1;
+        }
+    }
+    // Reset ANSI state and add ellipsis
+    if result.contains('\x1b') {
+        result.push_str(c(RESET));
+    }
+    result.push('…');
+    result
 }
 
 #[cfg(test)]
@@ -369,11 +389,22 @@ mod tests {
 
     #[test]
     fn test_progress_bar() {
-        // With NO_COLOR, no ANSI codes
         std::env::set_var("NO_COLOR", "1");
         let bar = progress_bar(0.5, 10);
         assert!(bar.contains("█████"));
         assert!(bar.contains("░░░░░"));
+        std::env::remove_var("NO_COLOR");
+    }
+
+    #[test]
+    fn test_truncate_visible() {
+        std::env::set_var("NO_COLOR", "1");
+        let short = "hello";
+        assert_eq!(truncate_visible(short, 10), "hello");
+        let long = "hello world this is long";
+        let truncated = truncate_visible(long, 10);
+        assert_eq!(visible_len(&truncated), 10);
+        assert!(truncated.ends_with('…'));
         std::env::remove_var("NO_COLOR");
     }
 }
