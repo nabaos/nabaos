@@ -813,11 +813,18 @@ fn main() {
         dotenvy::from_path(&env_path).ok();
     }
 
+    // Suppress verbose ONNX Runtime allocator logs (BFCArena spam).
+    // SAFETY: called in main() before any threads are spawned.
+    if std::env::var("ORT_LOG_LEVEL").is_err() {
+        #[allow(unsafe_code)]
+        unsafe { std::env::set_var("ORT_LOG_LEVEL", "warning"); }
+    }
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,ort=warn")),
         )
         .with_target(false)
         .init();
@@ -3195,6 +3202,8 @@ fn cmd_setup(
                         env_lines.push(format!("NABA_LLM_CUSTOM_URL={}", result.custom_provider_url));
                     }
                     if result.enable_web {
+                        let host = if result.web_access == "public" { "0.0.0.0" } else { "127.0.0.1" };
+                        env_lines.push(format!("NABA_WEB_BIND={}:{}", host, result.web_port));
                         env_lines.push(format!("NABA_WEB_PORT={}", result.web_port));
                         env_lines.push(format!("NABA_WEB_ACCESS={}", result.web_access));
                         if result.web_access == "private" && !result.web_allowed_ips.is_empty() {

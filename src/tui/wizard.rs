@@ -1846,6 +1846,28 @@ fn draw_api_key_model(frame: &mut ratatui::Frame, area: Rect, state: &WizardStat
                 Style::default().fg(DIM).bg(BG),
             ),
         ]));
+        let help_url = match state.selected_provider_id.as_str() {
+            "anthropic" => "console.anthropic.com/settings/keys",
+            "openai" => "platform.openai.com/api-keys",
+            "google" => "aistudio.google.com/apikey",
+            "deepseek" => "platform.deepseek.com/api_keys",
+            "groq" => "console.groq.com/keys",
+            "openrouter" => "openrouter.ai/settings/keys",
+            "nanogpt" => "nano-gpt.com/api",
+            "together" => "api.together.xyz/settings/api-keys",
+            "fireworks" => "fireworks.ai/account/api-keys",
+            "mistral" => "console.mistral.ai/api-keys",
+            "huggingface" => "huggingface.co/settings/tokens",
+            "cerebras" => "cloud.cerebras.ai/platform",
+            "perplexity" => "perplexity.ai/settings/api",
+            "deepinfra" => "deepinfra.com/dash/api_keys",
+            _ => "",
+        };
+        if !help_url.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  Get your key → {}", help_url), Style::default().fg(DIM).bg(BG)),
+            ]));
+        }
         lines.push(Line::from(""));
     } else {
         lines.push(Line::from(vec![
@@ -2360,6 +2382,17 @@ fn draw_channels(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
             spans.push(Span::styled(mask_key(&state.telegram_token), Style::default().fg(DIM).bg(bg)));
         }
         lines.push(Line::from(spans));
+        if state.telegram_editing || (focused && state.telegram_token.is_empty()) {
+            lines.push(Line::from(vec![
+                Span::styled("      Talk to @BotFather on Telegram:", Style::default().fg(DIM).bg(BG)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("      1. Send /newbot, choose a name", Style::default().fg(DIM).bg(BG)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("      2. Copy the token (123456:ABC-DEF...)", Style::default().fg(DIM).bg(BG)),
+            ]));
+        }
     }
 
     // Web Dashboard
@@ -2381,6 +2414,11 @@ fn draw_channels(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
             spans.push(Span::styled(format!("pw: {}", mask_key(&state.web_password)), Style::default().fg(DIM).bg(bg)));
         }
         lines.push(Line::from(spans));
+        if state.web_editing {
+            lines.push(Line::from(vec![
+                Span::styled("      Choose a login password for the web dashboard", Style::default().fg(DIM).bg(BG)),
+            ]));
+        }
 
         // Web sub-fields (shown when web is enabled)
         if state.web_enabled {

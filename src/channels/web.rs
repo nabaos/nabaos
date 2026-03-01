@@ -2555,19 +2555,19 @@ async fn handle_list_leases(State(state): State<AppState>) -> impl IntoResponse 
     }
 }
 
-/// Build-not-found fallback when nyaya-web/dist does not exist.
+/// Build-not-found fallback when nabaos-web/dist does not exist.
 async fn fallback_html() -> Html<&'static str> {
     Html(
         r#"<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Nyaya Dashboard</title>
+<head><meta charset="utf-8"><title>NabaOS Dashboard</title>
 <style>body{font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#1a1a2e;color:#e0e0e0}
 .box{text-align:center;padding:2rem;border:1px solid #333;border-radius:8px;background:#16213e}
 h1{margin-top:0}code{background:#0f3460;padding:2px 6px;border-radius:4px}</style></head>
 <body><div class="box">
-<h1>Nyaya Dashboard</h1>
+<h1>NabaOS Dashboard</h1>
 <p>Frontend build not found.</p>
-<p>Run <code>cd nyaya-web &amp;&amp; npm run build</code> to build the SPA.</p>
+<p>Run <code>cd nabaos-web &amp;&amp; npm run build</code> to build the SPA.</p>
 <p>The REST API is available at <code>/api/v1/*</code>.</p>
 </div></body></html>"#,
     )
@@ -2963,9 +2963,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/oauth/callback", get(oauth_callback))
         .with_state(state);
 
-    // Serve static files from nyaya-web/dist if the directory exists,
+    // Serve static files from nabaos-web/dist if the directory exists,
     // otherwise use the fallback HTML.
-    let static_dir = std::path::Path::new("nyaya-web/dist");
+    let static_dir = std::path::Path::new("nabaos-web/dist");
     if static_dir.is_dir() {
         let serve_dir = tower_http::services::ServeDir::new(static_dir).not_found_service(
             tower_http::services::ServeFile::new(static_dir.join("index.html")),
