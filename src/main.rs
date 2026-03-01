@@ -73,6 +73,9 @@ Examples:
         /// Bind address for web dashboard (host:port)
         #[arg(long, default_value = "127.0.0.1:8919")]
         bind: String,
+        /// Run in foreground (used by systemd ExecStart)
+        #[arg(long)]
+        foreground: bool,
     },
 
     /// Ask the agent a question (orchestrate a query)
@@ -875,7 +878,9 @@ fn run(cli: Cli) -> Result<()> {
             telegram_only,
             web_only,
             bind,
+            foreground,
         } => {
+            let _ = foreground; // will be used in Task 7 (systemd daemon mode)
             if telegram_only {
                 cmd_telegram(&config)
             } else if web_only {
@@ -2672,6 +2677,8 @@ fn cmd_daemon(config: &NyayaConfig) -> Result<()> {
 
     println!("Starting Nyaya daemon...");
 
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+
     // Initialize workflow engine
     std::fs::create_dir_all(&config.data_dir)?;
     let wf_db_path = config.data_dir.join("workflows.db");
@@ -2801,6 +2808,7 @@ fn cmd_daemon(config: &NyayaConfig) -> Result<()> {
     if std::env::var("NABA_WEB_PASSWORD").is_ok() {
         let web_config = config.clone();
         let web_engine = std::sync::Arc::clone(&workflow_engine);
+        let web_shutdown_rx = shutdown_tx.subscribe();
         std::thread::spawn(move || {
             let bind =
                 std::env::var("NABA_WEB_BIND").unwrap_or_else(|_| "127.0.0.1:8919".to_string());
@@ -2820,12 +2828,30 @@ fn cmd_daemon(config: &NyayaConfig) -> Result<()> {
                 }
             };
             let two_fa = nabaos::security::two_factor::TwoFactorAuth::from_env();
+
+            // Advisory: firewall hint for public web access
+            if bind.starts_with("0.0.0.0") {
+                let port = bind.split(':').last().unwrap_or("8919");
+                if std::process::Command::new("ufw")
+                    .arg("status")
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).contains("active"))
+                    .unwrap_or(false)
+                {
+                    println!(
+                        "[daemon] Hint: sudo ufw allow {}/tcp  (web is public)",
+                        port
+                    );
+                }
+            }
+
             if let Err(e) = rt.block_on(nabaos::channels::web::run_server_with_engine(
                 web_config,
                 orch,
                 two_fa,
                 &bind,
                 Some(web_engine),
+                Some(web_shutdown_rx),
             )) {
                 eprintln!("[daemon] Web server error: {}", e);
             }
@@ -2873,7 +2899,17 @@ fn cmd_daemon(config: &NyayaConfig) -> Result<()> {
     let manifest = nabaos::runtime::manifest::AgentManifest::workflow_manifest();
     let mut last_trigger_fired: std::collections::HashMap<String, u64> =
         std::collections::HashMap::new();
-    loop {
+
+    // Graceful shutdown on Ctrl+C
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || {
+        eprintln!("\n[daemon] Received shutdown signal, stopping...");
+        r.store(false, std::sync::atomic::Ordering::SeqCst);
+    })
+    .ok();
+
+    while running.load(std::sync::atomic::Ordering::SeqCst) {
         // Process due scheduled jobs
         match orch.process_due_jobs() {
             Ok(results) => {
@@ -3003,9 +3039,14 @@ fn cmd_daemon(config: &NyayaConfig) -> Result<()> {
             }
         }
 
-        // Sleep 60 seconds
-        std::thread::sleep(std::time::Duration::from_secs(60));
+        // Sleep 1 second (short interval for responsive shutdown)
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
+
+    // Signal web server to shut down gracefully
+    let _ = shutdown_tx.send(true);
+    println!("[daemon] Shutdown complete.");
+    Ok(())
 }
 
 /// Parse a duration string like "6h", "30m", "1d", "300s" into seconds.

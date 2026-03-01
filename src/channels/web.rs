@@ -3002,7 +3002,7 @@ pub async fn run_server(
     two_fa: TwoFactorAuth,
     bind_addr: &str,
 ) -> Result<()> {
-    run_server_with_engine(config, orch, two_fa, bind_addr, None).await
+    run_server_with_engine(config, orch, two_fa, bind_addr, None, None).await
 }
 
 /// Start the web server with an optional workflow engine.
@@ -3012,6 +3012,7 @@ pub async fn run_server_with_engine(
     two_fa: TwoFactorAuth,
     bind_addr: &str,
     workflow_engine: Option<Arc<Mutex<WorkflowEngine>>>,
+    shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<()> {
     // Hash the password from env if set
     let password_hash = std::env::var("NABA_WEB_PASSWORD")
@@ -3051,9 +3052,23 @@ pub async fn run_server_with_engine(
 
     tracing::info!("Nyaya web dashboard listening on http://{}", bind_addr);
 
-    axum::serve(listener, app)
-        .await
-        .map_err(|e| crate::core::error::NyayaError::Config(format!("Web server error: {}", e)))?;
+    if let Some(mut rx) = shutdown_rx {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = rx.wait_for(|&v| v).await;
+                tracing::info!("Web server shutting down gracefully...");
+            })
+            .await
+            .map_err(|e| {
+                crate::core::error::NyayaError::Config(format!("Web server error: {}", e))
+            })?;
+    } else {
+        axum::serve(listener, app)
+            .await
+            .map_err(|e| {
+                crate::core::error::NyayaError::Config(format!("Web server error: {}", e))
+            })?;
+    }
 
     Ok(())
 }

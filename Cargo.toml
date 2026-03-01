@@ -148,6 +148,9 @@ ratatui = { version = "0.29", optional = true }
 crossterm = { version = "0.28", optional = true }
 async-trait = "0.1.89"
 
+# Graceful shutdown on Ctrl+C
+ctrlc = "3.4"
+
 [dev-dependencies]
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
