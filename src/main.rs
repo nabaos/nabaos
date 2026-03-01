@@ -3168,6 +3168,18 @@ fn cmd_setup(
                             env_lines.push(format!("NABA_WEB_PASSWORD={}", result.web_password));
                         }
                     }
+                    if !result.enabled_plugins.is_empty() {
+                        env_lines.push(format!("NABA_PLUGINS={}", result.enabled_plugins.join(",")));
+                    }
+                    if !result.studio_providers.is_empty() {
+                        env_lines.push(format!("NABA_STUDIO_PROVIDERS={}", result.studio_providers.join(",")));
+                    }
+                    env_lines.push(format!("NABA_PEA_BUDGET={:.2}", result.pea_budget_usd));
+                    env_lines.push(format!("NABA_PEA_STRATEGY={}", result.pea_budget_strategy));
+                    env_lines.push(format!("NABA_PEA_HEARTBEAT={}", result.pea_heartbeat_secs));
+                    if !result.custom_provider_name.is_empty() {
+                        env_lines.push(format!("NABA_LLM_PROVIDER_NAME={}", result.custom_provider_name));
+                    }
                     env_lines.push(String::new());
 
                     std::fs::create_dir_all(&config.data_dir).ok();
@@ -3237,6 +3249,13 @@ fn cmd_setup(
                     }
                     println!("{}", fmt::ok(&format!("Constitution: {}", result.constitution)));
                     println!("{}", fmt::ok(&format!("Persona: {}", result.persona)));
+                    if !result.enabled_plugins.is_empty() {
+                        println!("{}", fmt::ok(&format!("Plugins: {}", result.enabled_plugins.join(", "))));
+                    }
+                    if !result.studio_providers.is_empty() {
+                        println!("{}", fmt::ok(&format!("Studio: {}", result.studio_providers.join(", "))));
+                    }
+                    println!("{}", fmt::ok(&format!("PEA: {} ${:.0}/mo {}s heartbeat", result.pea_budget_strategy, result.pea_budget_usd, result.pea_heartbeat_secs)));
                     if !result.selected_agents.is_empty() {
                         println!("{}", fmt::ok(&format!("Agents: {} installed", result.selected_agents.len())));
                     }

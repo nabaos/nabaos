@@ -14,10 +14,10 @@ fn openai_compat(id: &str, name: &str, base_url: &str) -> ProviderDef {
     }
 }
 
-/// Returns all 55 built-in provider definitions.
+/// Returns all 61 built-in provider definitions.
 #[allow(clippy::vec_init_then_push)]
 pub fn builtin_providers() -> Vec<ProviderDef> {
-    let mut providers = Vec::with_capacity(55);
+    let mut providers = Vec::with_capacity(61);
 
     // ── Big 5 (with full model definitions) ──────────────────────────
 
@@ -339,6 +339,32 @@ pub fn builtin_providers() -> Vec<ProviderDef> {
         "Parasail",
         "https://api.parasail.io",
     ));
+    providers.push(openai_compat(
+        "qwen",
+        "Qwen (DashScope)",
+        "https://dashscope.aliyuncs.com/compatible-mode",
+    ));
+    providers.push(openai_compat(
+        "kimi",
+        "Kimi (Moonshot AI)",
+        "https://api.moonshot.cn",
+    ));
+    providers.push(openai_compat(
+        "baichuan",
+        "Baichuan",
+        "https://api.baichuan-ai.com",
+    ));
+    providers.push(openai_compat("yi", "Yi (01.AI)", "https://api.01.ai"));
+    providers.push(openai_compat(
+        "zhipu",
+        "Zhipu (GLM)",
+        "https://open.bigmodel.cn/api/paas",
+    ));
+    providers.push(openai_compat(
+        "minimax",
+        "MiniMax",
+        "https://api.minimax.chat",
+    ));
 
     providers
 }
@@ -352,8 +378,8 @@ mod tests {
         let providers = builtin_providers();
         assert_eq!(
             providers.len(),
-            55,
-            "Expected exactly 55 built-in providers"
+            61,
+            "Expected exactly 61 built-in providers"
         );
     }
 

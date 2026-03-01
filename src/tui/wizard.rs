@@ -1,13 +1,16 @@
 //! Full-screen setup wizard — immersive TUI for first-run configuration.
 //!
-//! An 8-step interactive wizard with:
+//! An 11-step interactive wizard with:
 //! - Geometric constellation logo
-//! - Provider selection with category headers
+//! - Provider selection with category headers (including Chinese providers)
 //! - API key input with masked display + multi-model selection
 //! - Constitution template picker
-//! - Persona/style selection (built-in + SillyTavern import)
-//! - Agent catalog browser with multi-select
+//! - 25 globally diverse personas + custom/Wikipedia options
+//! - Plugin selector (14 modules)
+//! - Studio media provider selector
+//! - PEA autonomous agent settings (budget, strategy, heartbeat)
 //! - Channel configuration
+//! - Agent catalog browser with multi-select + detail popup
 //! - Summary screen
 
 use std::io;
@@ -174,6 +177,14 @@ pub struct WizardResult {
     pub web_password: String,
     pub selected_agents: Vec<String>,
     pub download_webbert: bool,
+    // New fields
+    pub custom_provider_name: String,
+    pub custom_provider_url: String,
+    pub enabled_plugins: Vec<String>,
+    pub studio_providers: Vec<String>,
+    pub pea_budget_usd: f64,
+    pub pea_budget_strategy: String,
+    pub pea_heartbeat_secs: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,8 +194,11 @@ enum Step {
     ApiKeyModel,
     Constitution,
     Persona,
-    Agents,
+    Plugins,
+    Studio,
+    Pea,
     Channels,
+    Agents,
     Summary,
 }
 
@@ -196,9 +210,12 @@ impl Step {
             Self::ApiKeyModel => 2,
             Self::Constitution => 3,
             Self::Persona => 4,
-            Self::Agents => 5,
-            Self::Channels => 6,
-            Self::Summary => 7,
+            Self::Plugins => 5,
+            Self::Studio => 6,
+            Self::Pea => 7,
+            Self::Channels => 8,
+            Self::Agents => 9,
+            Self::Summary => 10,
         }
     }
 
@@ -210,6 +227,9 @@ impl Step {
             Self::ApiKeyModel => "Models",
             Self::Constitution => "Rules",
             Self::Persona => "Style",
+            Self::Plugins => "Plugins",
+            Self::Studio => "Studio",
+            Self::Pea => "PEA",
             Self::Agents => "Agents",
             Self::Channels => "Channels",
             Self::Summary => "Done",
@@ -219,7 +239,8 @@ impl Step {
     fn all() -> &'static [Step] {
         &[
             Step::Welcome, Step::Provider, Step::ApiKeyModel, Step::Constitution,
-            Step::Persona, Step::Agents, Step::Channels, Step::Summary,
+            Step::Persona, Step::Plugins, Step::Studio, Step::Pea,
+            Step::Channels, Step::Agents, Step::Summary,
         ]
     }
 
@@ -230,9 +251,12 @@ impl Step {
             Self::Provider => Self::ApiKeyModel,
             Self::ApiKeyModel => Self::Constitution,
             Self::Constitution => Self::Persona,
-            Self::Persona => Self::Agents,
-            Self::Agents => Self::Channels,
-            Self::Channels => Self::Summary,
+            Self::Persona => Self::Plugins,
+            Self::Plugins => Self::Studio,
+            Self::Studio => Self::Pea,
+            Self::Pea => Self::Channels,
+            Self::Channels => Self::Agents,
+            Self::Agents => Self::Summary,
             Self::Summary => Self::Summary,
         }
     }
@@ -244,9 +268,12 @@ impl Step {
             Self::ApiKeyModel => Self::Provider,
             Self::Constitution => Self::ApiKeyModel,
             Self::Persona => Self::Constitution,
-            Self::Agents => Self::Persona,
-            Self::Channels => Self::Agents,
-            Self::Summary => Self::Channels,
+            Self::Plugins => Self::Persona,
+            Self::Studio => Self::Plugins,
+            Self::Pea => Self::Studio,
+            Self::Channels => Self::Pea,
+            Self::Agents => Self::Channels,
+            Self::Summary => Self::Agents,
         }
     }
 }
@@ -271,13 +298,40 @@ struct AgentItem {
     category: String,
     description: String,
     selected: bool,
+    // Extended fields for detail popup
+    version: String,
+    author: String,
+    permissions: Vec<String>,
+    license: String,
 }
 
 struct PersonaItem {
     id: String,
     name: String,
     description: String,
+    category: String,
 }
+
+struct PluginItem {
+    id: String,
+    name: String,
+    description: String,
+    selected: bool,
+}
+
+struct StudioItem {
+    id: String,
+    name: String,
+    description: String,
+    selected: bool,
+}
+
+const PEA_STRATEGIES: &[(&str, &str)] = &[
+    ("adaptive", "Adjusts spending based on task complexity and success rate"),
+    ("aggressive", "Prioritizes quality over cost, uses expensive models freely"),
+    ("conservative", "Prefers cheaper models, escalates only when necessary"),
+    ("minimal", "Minimizes spending, stays on cache/cheap layer as much as possible"),
+];
 
 struct WizardState {
     step: Step,
@@ -318,10 +372,26 @@ struct WizardState {
     persona_state: ListState,
     selected_persona: String,
 
+    // Plugins (new)
+    plugin_items: Vec<PluginItem>,
+    plugin_state: ListState,
+
+    // Studio (new)
+    studio_items: Vec<StudioItem>,
+    studio_state: ListState,
+
+    // PEA settings (new)
+    pea_strategy_idx: usize,
+    pea_budget_input: String,
+    pea_heartbeat_input: String,
+    pea_field: usize, // 0=strategy, 1=budget, 2=heartbeat
+    pea_editing: bool,
+
     // Agents
     agent_items: Vec<AgentItem>,
     agent_state: ListState,
     agent_search: String,
+    show_agent_detail: bool,
 
     // Channels
     channel_focus: usize,
@@ -393,6 +463,19 @@ impl WizardState {
             provider_items.push(SelectItem { id: id.to_string(), label: name.to_string(), hint: hint.to_string(), is_header: false, base_url: String::new() });
         }
 
+        // Chinese
+        provider_items.push(SelectItem { id: String::new(), label: "Chinese".into(), hint: String::new(), is_header: true, base_url: String::new() });
+        for (id, name, hint) in &[
+            ("qwen", "Qwen (DashScope)", "Alibaba Cloud"),
+            ("kimi", "Kimi (Moonshot AI)", "long-context"),
+            ("baichuan", "Baichuan", "bilingual"),
+            ("yi", "Yi (01.AI)", "open-source"),
+            ("zhipu", "Zhipu (GLM)", "ChatGLM"),
+            ("minimax", "MiniMax", "multimodal"),
+        ] {
+            provider_items.push(SelectItem { id: id.to_string(), label: name.to_string(), hint: hint.to_string(), is_header: false, base_url: String::new() });
+        }
+
         // Fill in base URLs from catalog
         let catalog = crate::providers::catalog::builtin_providers();
         for item in provider_items.iter_mut() {
@@ -435,15 +518,43 @@ impl WizardState {
         let mut constitution_state = ListState::default();
         constitution_state.select(Some(0));
 
-        // Personas
+        // Personas — 25 globally diverse + custom options
         let persona_items = vec![
-            PersonaItem { id: "default".into(), name: "Nyaya".into(), description: "Balanced, adaptive assistant (default)".into() },
-            PersonaItem { id: "sherlock".into(), name: "Sherlock".into(), description: "Formal, deductive, domain expert".into() },
-            PersonaItem { id: "ironman".into(), name: "J.A.R.V.I.S.".into(), description: "Witty, sardonic, technically brilliant".into() },
-            PersonaItem { id: "gandhi".into(), name: "Gandhi".into(), description: "Formal, principled, uses parables".into() },
-            PersonaItem { id: "ambedkar".into(), name: "Ambedkar".into(), description: "Scholarly, justice-focused, analytical".into() },
-            PersonaItem { id: "bhagat_singh".into(), name: "Bhagat Singh".into(), description: "Passionate, revolutionary, bold".into() },
-            PersonaItem { id: "custom".into(), name: "Custom".into(), description: "Import from SillyTavern or create new".into() },
+            // Default
+            PersonaItem { id: "nyaya".into(), name: "Nyaya".into(), description: "Balanced, adaptive (default)".into(), category: "Default".into() },
+            // Philosophical
+            PersonaItem { id: "socrates".into(), name: "Socrates".into(), description: "Socratic method, questioning".into(), category: "Philosophical".into() },
+            PersonaItem { id: "confucius".into(), name: "Confucius".into(), description: "Harmonious, virtue-focused".into(), category: "Philosophical".into() },
+            PersonaItem { id: "seneca".into(), name: "Seneca".into(), description: "Stoic, practical wisdom".into(), category: "Philosophical".into() },
+            PersonaItem { id: "hypatia".into(), name: "Hypatia".into(), description: "Scholarly, mathematical".into(), category: "Philosophical".into() },
+            // Fictional
+            PersonaItem { id: "sherlock".into(), name: "Sherlock".into(), description: "Deductive, observant".into(), category: "Fictional".into() },
+            PersonaItem { id: "jarvis".into(), name: "J.A.R.V.I.S.".into(), description: "Witty, sardonic assistant".into(), category: "Fictional".into() },
+            PersonaItem { id: "wednesday".into(), name: "Wednesday".into(), description: "Dry, blunt, deadpan".into(), category: "Fictional".into() },
+            PersonaItem { id: "gandalf".into(), name: "Gandalf".into(), description: "Sage, cryptic wisdom".into(), category: "Fictional".into() },
+            PersonaItem { id: "spock".into(), name: "Spock".into(), description: "Logical, precise".into(), category: "Fictional".into() },
+            PersonaItem { id: "cortana".into(), name: "Cortana".into(), description: "Warm, mission-focused".into(), category: "Fictional".into() },
+            // Scientific
+            PersonaItem { id: "curie".into(), name: "Marie Curie".into(), description: "Rigorous, persistent".into(), category: "Scientific".into() },
+            PersonaItem { id: "feynman".into(), name: "Feynman".into(), description: "Playful, explains simply".into(), category: "Scientific".into() },
+            PersonaItem { id: "turing".into(), name: "Turing".into(), description: "Analytical, pattern-seeking".into(), category: "Scientific".into() },
+            PersonaItem { id: "lovelace".into(), name: "Ada Lovelace".into(), description: "Visionary, poetic".into(), category: "Scientific".into() },
+            // Leadership
+            PersonaItem { id: "sun_tzu".into(), name: "Sun Tzu".into(), description: "Strategic, concise".into(), category: "Leadership".into() },
+            PersonaItem { id: "cleopatra".into(), name: "Cleopatra".into(), description: "Diplomatic, persuasive".into(), category: "Leadership".into() },
+            PersonaItem { id: "mandela".into(), name: "Mandela".into(), description: "Patient, principled".into(), category: "Leadership".into() },
+            // Creative
+            PersonaItem { id: "da_vinci".into(), name: "Da Vinci".into(), description: "Polymath, inventive".into(), category: "Creative".into() },
+            PersonaItem { id: "frida".into(), name: "Frida Kahlo".into(), description: "Passionate, authentic".into(), category: "Creative".into() },
+            // Archetypes
+            PersonaItem { id: "butler".into(), name: "Butler".into(), description: "Formal, organized".into(), category: "Archetype".into() },
+            PersonaItem { id: "coach".into(), name: "Coach".into(), description: "Motivational, encouraging".into(), category: "Archetype".into() },
+            PersonaItem { id: "hacker".into(), name: "Hacker".into(), description: "Terse, efficient".into(), category: "Archetype".into() },
+            PersonaItem { id: "professor".into(), name: "Professor".into(), description: "Academic, thorough".into(), category: "Archetype".into() },
+            PersonaItem { id: "pirate".into(), name: "Pirate".into(), description: "Playful, adventurous".into(), category: "Archetype".into() },
+            // Custom
+            PersonaItem { id: "custom".into(), name: "Custom".into(), description: "Create custom or import from SillyTavern".into(), category: "Custom".into() },
+            PersonaItem { id: "wikipedia".into(), name: "From Wikipedia".into(), description: "Generate persona from a Wikipedia URL".into(), category: "Custom".into() },
         ];
         let mut persona_state = ListState::default();
         persona_state.select(Some(0));
@@ -467,24 +578,32 @@ impl WizardState {
                     category: entry.category,
                     description: entry.description,
                     selected: false,
+                    version: entry.version,
+                    author: entry.author,
+                    permissions: entry.permissions,
+                    license: "MIT".to_string(),
                 });
             }
         }
         // Fallback starter agents if catalog is empty
         if agent_items.is_empty() {
-            for (name, cat, desc) in &[
-                ("morning-briefing", "Daily Productivity", "Calendar, weather, news summary"),
-                ("email-assistant", "Email & Communication", "Smart email triage and drafting"),
-                ("dev-helper", "Developer & DevOps", "Git, CI status, PR summaries"),
-                ("research-digest", "Research & Analysis", "Summarize papers and articles"),
-                ("budget-tracker", "Finance & Budgeting", "Track expenses and budgets"),
-                ("social-scheduler", "Social Media", "Schedule and manage posts"),
+            for (name, cat, desc, perms) in &[
+                ("morning-briefing", "Daily Productivity", "Calendar, weather, news summary", "calendar.read, weather.read, news.read"),
+                ("email-assistant", "Email & Communication", "Smart email triage and drafting", "email.read, email.write, contacts.read"),
+                ("dev-helper", "Developer & DevOps", "Git, CI status, PR summaries", "git.read, ci.read, github.read"),
+                ("research-digest", "Research & Analysis", "Summarize papers and articles", "web.read, pdf.read, filesystem.write"),
+                ("budget-tracker", "Finance & Budgeting", "Track expenses and budgets", "finance.read, spreadsheet.write"),
+                ("social-scheduler", "Social Media", "Schedule and manage posts", "social.write, schedule.write"),
             ] {
                 agent_items.push(AgentItem {
                     name: name.to_string(),
                     category: cat.to_string(),
                     description: desc.to_string(),
                     selected: false,
+                    version: "1.0.0".to_string(),
+                    author: "NabaOS Core".to_string(),
+                    permissions: perms.split(", ").map(|s| s.to_string()).collect(),
+                    license: "MIT".to_string(),
                 });
             }
         }
@@ -492,6 +611,38 @@ impl WizardState {
         if !agent_items.is_empty() {
             agent_state.select(Some(0));
         }
+
+        // Plugins — 14 modules
+        let plugin_items = vec![
+            PluginItem { id: "browser".into(), name: "Browser".into(), description: "Web browsing and scraping".into(), selected: false },
+            PluginItem { id: "pdf".into(), name: "PDF".into(), description: "PDF reading and generation".into(), selected: false },
+            PluginItem { id: "latex".into(), name: "LaTeX".into(), description: "LaTeX document compilation".into(), selected: false },
+            PluginItem { id: "voice".into(), name: "Voice".into(), description: "Speech-to-text and TTS".into(), selected: false },
+            PluginItem { id: "csv_data".into(), name: "CSV/Data".into(), description: "CSV and structured data processing".into(), selected: true },
+            PluginItem { id: "database".into(), name: "Database".into(), description: "SQL database access".into(), selected: false },
+            PluginItem { id: "git".into(), name: "Git".into(), description: "Git repository operations".into(), selected: true },
+            PluginItem { id: "filesystem".into(), name: "Filesystem".into(), description: "Local file operations".into(), selected: true },
+            PluginItem { id: "deploy".into(), name: "Deploy".into(), description: "Deployment automation".into(), selected: false },
+            PluginItem { id: "homeassistant".into(), name: "Home Assistant".into(), description: "Smart home integration".into(), selected: false },
+            PluginItem { id: "oauth".into(), name: "OAuth".into(), description: "OAuth provider integrations".into(), selected: false },
+            PluginItem { id: "research".into(), name: "Research".into(), description: "Academic paper search".into(), selected: false },
+            PluginItem { id: "tracking".into(), name: "Tracking".into(), description: "Package and order tracking".into(), selected: false },
+            PluginItem { id: "hardware".into(), name: "Hardware".into(), description: "Hardware monitoring".into(), selected: false },
+        ];
+        let mut plugin_state = ListState::default();
+        plugin_state.select(Some(0));
+
+        // Studio — 6 media providers
+        let studio_items = vec![
+            StudioItem { id: "comfyui".into(), name: "ComfyUI".into(), description: "Local image generation".into(), selected: false },
+            StudioItem { id: "fal_ai".into(), name: "fal.ai".into(), description: "Cloud image/video generation".into(), selected: false },
+            StudioItem { id: "dall_e".into(), name: "DALL-E".into(), description: "OpenAI image generation".into(), selected: false },
+            StudioItem { id: "runway".into(), name: "Runway".into(), description: "AI video generation".into(), selected: false },
+            StudioItem { id: "elevenlabs".into(), name: "ElevenLabs".into(), description: "Text-to-speech".into(), selected: false },
+            StudioItem { id: "ffmpeg".into(), name: "ffmpeg".into(), description: "Local A/V processing".into(), selected: false },
+        ];
+        let mut studio_state = ListState::default();
+        studio_state.select(Some(0));
 
         Self {
             step: Step::Welcome,
@@ -518,10 +669,20 @@ impl WizardState {
             selected_constitution: "default".into(),
             persona_items,
             persona_state,
-            selected_persona: "default".into(),
+            selected_persona: "nyaya".into(),
+            plugin_items,
+            plugin_state,
+            studio_items,
+            studio_state,
+            pea_strategy_idx: 0,
+            pea_budget_input: "50.00".into(),
+            pea_heartbeat_input: "300".into(),
+            pea_field: 0,
+            pea_editing: false,
             agent_items,
             agent_state,
             agent_search: String::new(),
+            show_agent_detail: false,
             channel_focus: 0,
             telegram_enabled: false,
             telegram_token: String::new(),
@@ -667,9 +828,22 @@ impl WizardState {
         } else {
             String::new()
         };
+        let enabled_plugins: Vec<String> = self.plugin_items.iter()
+            .filter(|p| p.selected)
+            .map(|p| p.id.clone())
+            .collect();
+        let studio_providers: Vec<String> = self.studio_items.iter()
+            .filter(|s| s.selected)
+            .map(|s| s.id.clone())
+            .collect();
+        let pea_budget_usd = self.pea_budget_input.parse::<f64>().unwrap_or(50.0);
+        let pea_budget_strategy = PEA_STRATEGIES.get(self.pea_strategy_idx)
+            .map(|(id, _)| id.to_string())
+            .unwrap_or_else(|| "adaptive".to_string());
+        let pea_heartbeat_secs = self.pea_heartbeat_input.parse::<u64>().unwrap_or(300);
         WizardResult {
             provider_id: self.selected_provider_id,
-            provider_name: self.selected_provider_name,
+            provider_name: self.selected_provider_name.clone(),
             base_url: self.selected_base_url,
             api_key: self.api_key_input,
             models,
@@ -682,6 +856,13 @@ impl WizardState {
             web_password: self.web_password,
             selected_agents: agents,
             download_webbert: self.download_webbert,
+            custom_provider_name: String::new(),
+            custom_provider_url: String::new(),
+            enabled_plugins,
+            studio_providers,
+            pea_budget_usd,
+            pea_budget_strategy,
+            pea_heartbeat_secs,
         }
     }
 }
@@ -738,6 +919,8 @@ fn handle_key(state: &mut WizardState, key: crossterm::event::KeyEvent) {
         // If editing a text field, just cancel editing
         if state.telegram_editing { state.telegram_editing = false; return; }
         if state.web_editing { state.web_editing = false; return; }
+        if state.pea_editing { state.pea_editing = false; return; }
+        if state.show_agent_detail { state.show_agent_detail = false; return; }
         if state.step == Step::Welcome { state.should_quit = true; }
         else { state.step = state.step.prev(); }
         return;
@@ -800,18 +983,143 @@ fn handle_key(state: &mut WizardState, key: crossterm::event::KeyEvent) {
             KeyCode::Enter => {
                 if let Some(idx) = state.persona_state.selected() {
                     state.selected_persona = state.persona_items[idx].id.clone();
-                    state.step = Step::Agents;
+                    state.step = Step::Plugins;
                 }
             }
             _ => {}
         },
-        Step::Agents => handle_agents(state, key),
+        Step::Plugins => handle_plugins(state, key),
+        Step::Studio => handle_studio(state, key),
+        Step::Pea => handle_pea(state, key),
         Step::Channels => handle_channels(state, key),
+        Step::Agents => handle_agents(state, key),
         Step::Summary => match key.code {
             KeyCode::Enter => { state.confirmed = true; }
-            KeyCode::Char('b') | KeyCode::Backspace => { state.step = Step::Channels; }
+            KeyCode::Char('b') | KeyCode::Backspace => { state.step = Step::Agents; }
             _ => {}
         },
+    }
+}
+
+fn handle_plugins(state: &mut WizardState, key: crossterm::event::KeyEvent) {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            let len = state.plugin_items.len();
+            if len > 0 {
+                let i = state.plugin_state.selected().unwrap_or(0);
+                state.plugin_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let len = state.plugin_items.len();
+            if len > 0 {
+                let i = state.plugin_state.selected().unwrap_or(0);
+                state.plugin_state.select(Some((i + 1) % len));
+            }
+        }
+        KeyCode::Char(' ') => {
+            if let Some(idx) = state.plugin_state.selected() {
+                if idx < state.plugin_items.len() {
+                    state.plugin_items[idx].selected = !state.plugin_items[idx].selected;
+                }
+            }
+        }
+        KeyCode::Char('a') => {
+            for p in state.plugin_items.iter_mut() { p.selected = true; }
+        }
+        KeyCode::Char('n') => {
+            for p in state.plugin_items.iter_mut() { p.selected = false; }
+        }
+        KeyCode::Enter => { state.step = Step::Studio; }
+        _ => {}
+    }
+}
+
+fn handle_studio(state: &mut WizardState, key: crossterm::event::KeyEvent) {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            let len = state.studio_items.len();
+            if len > 0 {
+                let i = state.studio_state.selected().unwrap_or(0);
+                state.studio_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let len = state.studio_items.len();
+            if len > 0 {
+                let i = state.studio_state.selected().unwrap_or(0);
+                state.studio_state.select(Some((i + 1) % len));
+            }
+        }
+        KeyCode::Char(' ') => {
+            if let Some(idx) = state.studio_state.selected() {
+                if idx < state.studio_items.len() {
+                    state.studio_items[idx].selected = !state.studio_items[idx].selected;
+                }
+            }
+        }
+        KeyCode::Char('a') => {
+            for s in state.studio_items.iter_mut() { s.selected = true; }
+        }
+        KeyCode::Char('n') => {
+            for s in state.studio_items.iter_mut() { s.selected = false; }
+        }
+        KeyCode::Enter => { state.step = Step::Pea; }
+        _ => {}
+    }
+}
+
+fn handle_pea(state: &mut WizardState, key: crossterm::event::KeyEvent) {
+    if state.pea_editing {
+        match key.code {
+            KeyCode::Char(c) if c.is_ascii_digit() || c == '.' => {
+                match state.pea_field {
+                    1 => state.pea_budget_input.push(c),
+                    2 => { if c.is_ascii_digit() { state.pea_heartbeat_input.push(c); } }
+                    _ => {}
+                }
+            }
+            KeyCode::Backspace => {
+                match state.pea_field {
+                    1 => { state.pea_budget_input.pop(); }
+                    2 => { state.pea_heartbeat_input.pop(); }
+                    _ => {}
+                }
+            }
+            KeyCode::Enter => { state.pea_editing = false; }
+            _ => {}
+        }
+        return;
+    }
+
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.pea_field = state.pea_field.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+            state.pea_field = (state.pea_field + 1).min(2);
+        }
+        KeyCode::Left => {
+            if state.pea_field == 0 {
+                state.pea_strategy_idx = state.pea_strategy_idx.checked_sub(1).unwrap_or(PEA_STRATEGIES.len() - 1);
+            }
+        }
+        KeyCode::Right => {
+            if state.pea_field == 0 {
+                state.pea_strategy_idx = (state.pea_strategy_idx + 1) % PEA_STRATEGIES.len();
+            }
+        }
+        KeyCode::Enter => {
+            if state.pea_field == 1 || state.pea_field == 2 {
+                state.pea_editing = true;
+            } else {
+                state.step = Step::Channels;
+            }
+        }
+        KeyCode::Char('n') | KeyCode::Char(' ') if state.pea_field == 0 => {
+            state.step = Step::Channels;
+        }
+        _ => {}
     }
 }
 
@@ -900,6 +1208,26 @@ fn handle_api_key_model(state: &mut WizardState, key: crossterm::event::KeyEvent
 }
 
 fn handle_agents(state: &mut WizardState, key: crossterm::event::KeyEvent) {
+    // Agent detail popup mode
+    if state.show_agent_detail {
+        match key.code {
+            KeyCode::Char(' ') => {
+                let filtered = state.filtered_agent_indices();
+                if let Some(view_idx) = state.agent_state.selected() {
+                    if view_idx < filtered.len() {
+                        let real_idx = filtered[view_idx];
+                        state.agent_items[real_idx].selected = !state.agent_items[real_idx].selected;
+                    }
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('d') | KeyCode::Char('i') | KeyCode::Char('q') => {
+                state.show_agent_detail = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     let filtered = state.filtered_agent_indices();
 
     match key.code {
@@ -948,7 +1276,10 @@ fn handle_agents(state: &mut WizardState, key: crossterm::event::KeyEvent) {
             }
         }
         KeyCode::Enter => {
-            state.step = Step::Channels;
+            state.step = Step::Summary;
+        }
+        KeyCode::Char('d') | KeyCode::Char('i') if state.agent_search.is_empty() => {
+            state.show_agent_detail = true;
         }
         KeyCode::Backspace => {
             if !state.agent_search.is_empty() {
@@ -956,7 +1287,7 @@ fn handle_agents(state: &mut WizardState, key: crossterm::event::KeyEvent) {
                 state.agent_state.select(Some(0));
             }
         }
-        KeyCode::Char(c) if !state.agent_search.is_empty() || (c != 'k' && c != 'j' && c != 'a' && c != 'n') => {
+        KeyCode::Char(c) if !state.agent_search.is_empty() || (c != 'k' && c != 'j' && c != 'a' && c != 'n' && c != 'd' && c != 'i') => {
             // Search mode — any letter starts filtering
             if c.is_alphanumeric() || c == '-' || c == '_' {
                 state.agent_search.push(c);
@@ -1015,10 +1346,10 @@ fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
             }
         }
         KeyCode::Enter => {
-            state.step = Step::Summary;
+            state.step = Step::Agents;
         }
         KeyCode::Tab | KeyCode::Char('n') => {
-            state.step = Step::Summary;
+            state.step = Step::Agents;
         }
         _ => {}
     }
@@ -1045,9 +1376,17 @@ fn draw_wizard(frame: &mut ratatui::Frame, state: &WizardState) {
         Step::ApiKeyModel => draw_api_key_model(frame, inner, state),
         Step::Constitution => draw_constitution(frame, inner, state),
         Step::Persona => draw_persona(frame, inner, state),
-        Step::Agents => draw_agents(frame, inner, state),
+        Step::Plugins => draw_plugins(frame, inner, state),
+        Step::Studio => draw_studio(frame, inner, state),
+        Step::Pea => draw_pea(frame, inner, state),
         Step::Channels => draw_channels(frame, inner, state),
+        Step::Agents => draw_agents(frame, inner, state),
         Step::Summary => draw_summary(frame, inner, state),
+    }
+
+    // Agent detail popup overlay
+    if state.show_agent_detail {
+        draw_agent_detail(frame, inner, state);
     }
 }
 
@@ -1333,14 +1672,22 @@ fn draw_persona(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     ]).split(area);
     draw_step_indicator(frame, chunks[0], Step::Persona);
 
-    let list_area = centered_rect(55, 70, chunks[2]);
-    let items: Vec<ListItem> = state.persona_items.iter().map(|p| {
-        ListItem::new(Line::from(vec![
-            Span::styled("  ", Style::default().bg(BG)),
+    let list_area = centered_rect(55, 80, chunks[2]);
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut last_category = String::new();
+    for p in &state.persona_items {
+        if p.category != last_category {
+            items.push(ListItem::new(Line::from(vec![
+                Span::styled(format!("  {} ", p.category), Style::default().fg(HEADING).bg(BG).add_modifier(Modifier::BOLD)),
+            ])).style(Style::default().bg(BG)));
+            last_category = p.category.clone();
+        }
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled("    ", Style::default().bg(BG)),
             Span::styled(format!("{:<16}", p.name), Style::default().fg(FG).bg(BG).add_modifier(Modifier::BOLD)),
             Span::styled(p.description.clone(), Style::default().fg(DIM).bg(BG)),
-        ])).style(Style::default().bg(BG))
-    }).collect();
+        ])).style(Style::default().bg(BG)));
+    }
 
     let block = Block::default()
         .borders(Borders::ALL).border_type(BorderType::Rounded)
@@ -1403,6 +1750,228 @@ fn draw_agents(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
         .highlight_symbol("▸ ");
     frame.render_stateful_widget(list, list_area, &mut state.agent_state.clone());
     draw_hint_bar(frame, chunks[3], &[("↑↓", "navigate"), ("Space", "toggle"), ("a", "all"), ("n", "none"), ("type", "search"), ("Enter", "next")]);
+}
+
+fn draw_plugins(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
+    let chunks = Layout::vertical([
+        Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
+    ]).split(area);
+    draw_step_indicator(frame, chunks[0], Step::Plugins);
+
+    let list_area = centered_rect(60, 90, chunks[2]);
+    let selected_count = state.plugin_items.iter().filter(|p| p.selected).count();
+
+    let items: Vec<ListItem> = state.plugin_items.iter().map(|p| {
+        let check = if p.selected { "◆" } else { "◇" };
+        let check_color = if p.selected { GREEN } else { DIM };
+        ListItem::new(Line::from(vec![
+            Span::styled(format!("  {} ", check), Style::default().fg(check_color).bg(BG)),
+            Span::styled(format!("{:<18}", p.name), Style::default().fg(FG).bg(BG)),
+            Span::styled(p.description.clone(), Style::default().fg(DIM).bg(BG)),
+        ])).style(Style::default().bg(BG))
+    }).collect();
+
+    let block = Block::default()
+        .borders(Borders::ALL).border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default().bg(BG)),
+            Span::styled(format!("Plugins · {} enabled", selected_count), Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
+            Span::styled(" ", Style::default().bg(BG)),
+        ]))
+        .title_bottom(Line::from(vec![
+            Span::styled(" Enable modules for your agent to use ", Style::default().fg(DIM).bg(BG)),
+        ])).style(Style::default().bg(BG));
+
+    let list = List::new(items).block(block)
+        .highlight_style(Style::default().bg(HIGHLIGHT_BG).fg(ACCENT).add_modifier(Modifier::BOLD))
+        .highlight_symbol("▸ ");
+    frame.render_stateful_widget(list, list_area, &mut state.plugin_state.clone());
+    draw_hint_bar(frame, chunks[3], &[("↑↓", "navigate"), ("Space", "toggle"), ("a", "all"), ("n", "none"), ("Enter", "next")]);
+}
+
+fn draw_studio(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
+    let chunks = Layout::vertical([
+        Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
+    ]).split(area);
+    draw_step_indicator(frame, chunks[0], Step::Studio);
+
+    let list_area = centered_rect(60, 70, chunks[2]);
+    let selected_count = state.studio_items.iter().filter(|s| s.selected).count();
+
+    let items: Vec<ListItem> = state.studio_items.iter().map(|s| {
+        let check = if s.selected { "◆" } else { "◇" };
+        let check_color = if s.selected { GREEN } else { DIM };
+        ListItem::new(Line::from(vec![
+            Span::styled(format!("  {} ", check), Style::default().fg(check_color).bg(BG)),
+            Span::styled(format!("{:<18}", s.name), Style::default().fg(FG).bg(BG)),
+            Span::styled(s.description.clone(), Style::default().fg(DIM).bg(BG)),
+        ])).style(Style::default().bg(BG))
+    }).collect();
+
+    let block = Block::default()
+        .borders(Borders::ALL).border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default().bg(BG)),
+            Span::styled(format!("Studio · {} enabled", selected_count), Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
+            Span::styled(" ", Style::default().bg(BG)),
+        ]))
+        .title_bottom(Line::from(vec![
+            Span::styled(" Media generation providers ", Style::default().fg(DIM).bg(BG)),
+        ])).style(Style::default().bg(BG));
+
+    let list = List::new(items).block(block)
+        .highlight_style(Style::default().bg(HIGHLIGHT_BG).fg(ACCENT).add_modifier(Modifier::BOLD))
+        .highlight_symbol("▸ ");
+    frame.render_stateful_widget(list, list_area, &mut state.studio_state.clone());
+    draw_hint_bar(frame, chunks[3], &[("↑↓", "navigate"), ("Space", "toggle"), ("a", "all"), ("n", "none"), ("Enter", "next")]);
+}
+
+fn draw_pea(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
+    let chunks = Layout::vertical([
+        Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
+    ]).split(area);
+    draw_step_indicator(frame, chunks[0], Step::Pea);
+
+    let content_area = centered_rect(55, 55, chunks[2]);
+    let block = Block::default()
+        .borders(Borders::ALL).border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default().bg(BG)),
+            Span::styled("PEA · Autonomous Agent Settings", Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
+            Span::styled(" ", Style::default().bg(BG)),
+        ])).style(Style::default().bg(BG));
+
+    let block_inner = block.inner(content_area);
+    frame.render_widget(block, content_area);
+
+    let (strategy_id, strategy_desc) = PEA_STRATEGIES.get(state.pea_strategy_idx).unwrap_or(&("adaptive", ""));
+
+    let field_style = |idx: usize| -> (Color, Color) {
+        if state.pea_field == idx { (ACCENT, HIGHLIGHT_BG) } else { (FG, BG) }
+    };
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(""));
+
+    // Strategy field
+    let (fg0, bg0) = field_style(0);
+    let marker0 = if state.pea_field == 0 { "▸" } else { " " };
+    lines.push(Line::from(vec![
+        Span::styled(format!("  {} ", marker0), Style::default().fg(ACCENT).bg(bg0)),
+        Span::styled("Strategy    ", Style::default().fg(HEADING).bg(bg0).add_modifier(Modifier::BOLD)),
+        Span::styled("◄ ", Style::default().fg(DIM).bg(bg0)),
+        Span::styled(strategy_id.to_string(), Style::default().fg(fg0).bg(bg0).add_modifier(Modifier::BOLD)),
+        Span::styled(" ►", Style::default().fg(DIM).bg(bg0)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(format!("               {}", strategy_desc), Style::default().fg(DIM).bg(BG)),
+    ]));
+    lines.push(Line::from(""));
+
+    // Budget field
+    let (fg1, bg1) = field_style(1);
+    let marker1 = if state.pea_field == 1 { "▸" } else { " " };
+    let budget_display = if state.pea_editing && state.pea_field == 1 {
+        format!("${}_", state.pea_budget_input)
+    } else {
+        format!("${}", state.pea_budget_input)
+    };
+    lines.push(Line::from(vec![
+        Span::styled(format!("  {} ", marker1), Style::default().fg(ACCENT).bg(bg1)),
+        Span::styled("Budget      ", Style::default().fg(HEADING).bg(bg1).add_modifier(Modifier::BOLD)),
+        Span::styled(budget_display, Style::default().fg(fg1).bg(bg1).add_modifier(Modifier::BOLD)),
+        Span::styled(" /month", Style::default().fg(DIM).bg(bg1)),
+    ]));
+    lines.push(Line::from(""));
+
+    // Heartbeat field
+    let (fg2, bg2) = field_style(2);
+    let marker2 = if state.pea_field == 2 { "▸" } else { " " };
+    let hb_display = if state.pea_editing && state.pea_field == 2 {
+        format!("{}_", state.pea_heartbeat_input)
+    } else {
+        state.pea_heartbeat_input.clone()
+    };
+    lines.push(Line::from(vec![
+        Span::styled(format!("  {} ", marker2), Style::default().fg(ACCENT).bg(bg2)),
+        Span::styled("Heartbeat   ", Style::default().fg(HEADING).bg(bg2).add_modifier(Modifier::BOLD)),
+        Span::styled(hb_display, Style::default().fg(fg2).bg(bg2).add_modifier(Modifier::BOLD)),
+        Span::styled(" seconds", Style::default().fg(DIM).bg(bg2)),
+    ]));
+
+    frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), block_inner);
+
+    let hints: Vec<(&str, &str)> = if state.pea_editing {
+        vec![("type", "enter value"), ("Enter", "confirm")]
+    } else {
+        vec![("↑↓", "field"), ("←→", "strategy"), ("Enter", "edit/next"), ("Esc", "back")]
+    };
+    draw_hint_bar(frame, chunks[3], &hints);
+}
+
+fn draw_agent_detail(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
+    let filtered = state.filtered_agent_indices();
+    let view_idx = state.agent_state.selected().unwrap_or(0);
+    if view_idx >= filtered.len() { return; }
+    let agent = &state.agent_items[filtered[view_idx]];
+
+    let popup = centered_rect(60, 60, area);
+
+    // Clear background
+    let clear = Block::default().style(Style::default().bg(Color::Rgb(15, 15, 20)));
+    frame.render_widget(clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL).border_type(BorderType::Double)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default().bg(BG)),
+            Span::styled(agent.name.clone(), Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
+            Span::styled(" ", Style::default().bg(BG)),
+        ])).style(Style::default().bg(BG));
+
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let row = |label: &str, value: &str| -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("  {:<14}", label), Style::default().fg(HEADING).bg(BG)),
+            Span::styled(value.to_string(), Style::default().fg(FG).bg(BG)),
+        ])
+    };
+
+    let check = if agent.selected { "◆ Selected" } else { "◇ Not selected" };
+    let check_color = if agent.selected { GREEN } else { DIM };
+
+    let mut lines = vec![
+        Line::from(""),
+        row("Name", &agent.name),
+        row("Version", &agent.version),
+        row("Category", &agent.category),
+        row("Author", &agent.author),
+        row("License", &agent.license),
+        Line::from(""),
+        row("Description", &agent.description),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Permissions   ", Style::default().fg(HEADING).bg(BG)),
+            Span::styled(agent.permissions.join(", "), Style::default().fg(ACCENT2).bg(BG)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(format!("  {} ", check), Style::default().fg(check_color).bg(BG)),
+            Span::styled("  Space=toggle · Esc=close", Style::default().fg(DIM).bg(BG)),
+        ]),
+    ];
+    // Pad to fill
+    while lines.len() < inner.height as usize {
+        lines.push(Line::from(""));
+    }
+
+    frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), inner);
 }
 
 fn draw_channels(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
@@ -1506,6 +2075,19 @@ fn draw_summary(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     lines.push(row("Constitution", &state.selected_constitution, FG));
     lines.push(row("Persona", &state.selected_persona, FG));
 
+    let plugin_count = state.plugin_items.iter().filter(|p| p.selected).count();
+    if plugin_count > 0 {
+        lines.push(row("Plugins", &format!("{} enabled", plugin_count), FG));
+    }
+    let studio_count = state.studio_items.iter().filter(|s| s.selected).count();
+    if studio_count > 0 {
+        lines.push(row("Studio", &format!("{} providers", studio_count), FG));
+    }
+
+    let strategy = PEA_STRATEGIES.get(state.pea_strategy_idx).map(|(id, _)| *id).unwrap_or("adaptive");
+    lines.push(row("PEA Strategy", strategy, FG));
+    lines.push(row("PEA Budget", &format!("${}/mo", state.pea_budget_input), FG));
+
     let selected_agents = state.selected_agents();
     if !selected_agents.is_empty() {
         lines.push(row("Agents", &format!("{} selected", selected_agents.len()), FG));
@@ -1578,8 +2160,13 @@ mod tests {
         assert_eq!(Step::Provider.next(), Step::ApiKeyModel);
         assert_eq!(Step::ApiKeyModel.next(), Step::Constitution);
         assert_eq!(Step::Constitution.next(), Step::Persona);
-        assert_eq!(Step::Persona.next(), Step::Agents);
-        assert_eq!(Step::Summary.prev(), Step::Channels);
+        assert_eq!(Step::Persona.next(), Step::Plugins);
+        assert_eq!(Step::Plugins.next(), Step::Studio);
+        assert_eq!(Step::Studio.next(), Step::Pea);
+        assert_eq!(Step::Pea.next(), Step::Channels);
+        assert_eq!(Step::Channels.next(), Step::Agents);
+        assert_eq!(Step::Agents.next(), Step::Summary);
+        assert_eq!(Step::Summary.prev(), Step::Agents);
         assert_eq!(Step::Welcome.prev(), Step::Welcome);
     }
 
