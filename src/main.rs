@@ -163,6 +163,9 @@ Examples:
         action: WatcherCommands,
     },
 
+    /// Stop the running agent
+    Stop,
+
     /// Validate configuration and check service health
     Check {
         /// Check running daemon health via HTTP
@@ -880,13 +883,30 @@ fn run(cli: Cli) -> Result<()> {
             bind,
             foreground,
         } => {
-            let _ = foreground; // will be used in Task 7 (systemd daemon mode)
             if telegram_only {
                 cmd_telegram(&config)
             } else if web_only {
                 cmd_web(&config, &bind)
-            } else {
+            } else if foreground {
                 cmd_daemon(&config)
+            } else {
+                println!("NabaOS v{}", env!("CARGO_PKG_VERSION"));
+                println!("\nPre-flight checks:");
+                preflight_checks(&config)?;
+                println!();
+
+                match install_systemd_service(&config) {
+                    Ok(true) => Ok(()),
+                    Ok(false) => {
+                        println!("systemd not available, running in foreground...");
+                        cmd_daemon(&config)
+                    }
+                    Err(e) => {
+                        println!("systemd install failed: {}", e);
+                        println!("Falling back to foreground mode...");
+                        cmd_daemon(&config)
+                    }
+                }
             }
         }
         Commands::Ask { query } => cmd_orchestrate(&config, &query),
@@ -942,6 +962,48 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Pea { action } => cmd_pea(action, &data_dir),
         #[cfg(feature = "watcher")]
         Commands::Watcher { action } => cmd_watcher(action, &data_dir),
+        Commands::Stop => {
+            let user_flag = if nix_is_root() { "" } else { "--user" };
+
+            let mut cmd = std::process::Command::new("systemctl");
+            if !user_flag.is_empty() { cmd.arg(user_flag); }
+            match cmd.args(["stop", "nabaos"]).status() {
+                Ok(s) if s.success() => {
+                    println!("NabaOS stopped.");
+                    if let Ok(bind) = std::env::var("NABA_WEB_BIND") {
+                        if bind.starts_with("0.0.0.0") {
+                            let port = bind.split(':').last().unwrap_or("8919");
+                            if std::process::Command::new("ufw")
+                                .arg("status")
+                                .output()
+                                .map(|o| String::from_utf8_lossy(&o.stdout).contains("active"))
+                                .unwrap_or(false)
+                            {
+                                println!("Hint: sudo ufw delete allow {}/tcp", port);
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                _ => {
+                    let pid_path = config.data_dir.join("nabaos.pid");
+                    if pid_path.exists() {
+                        let pid_str = std::fs::read_to_string(&pid_path)?;
+                        let pid: i32 = pid_str.trim().parse()
+                            .map_err(|_| NyayaError::Config("Invalid PID in nabaos.pid".to_string()))?;
+                        // Use kill command instead of libc (no unsafe needed)
+                        std::process::Command::new("kill")
+                            .arg(pid.to_string())
+                            .status()?;
+                        println!("Sent SIGTERM to PID {}", pid);
+                        std::fs::remove_file(&pid_path).ok();
+                        Ok(())
+                    } else {
+                        return Err(NyayaError::Config("NabaOS is not running (no systemd service or PID file found)".to_string()))
+                    }
+                }
+            }
+        }
         Commands::Check { health } => cmd_check(health, &config),
         #[cfg(feature = "tui")]
         Commands::Tui {} => nabaos::tui::app::run_tui(config),
@@ -2670,6 +2732,148 @@ fn cmd_web(config: &NyayaConfig, bind: &str) -> Result<()> {
     ))
 }
 
+fn nix_is_root() -> bool {
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
+        .unwrap_or(false)
+}
+
+fn preflight_checks(config: &NyayaConfig) -> Result<()> {
+    let env_path = config.data_dir.join(".env");
+    let mut ok_count = 0u32;
+    let mut fail_count = 0u32;
+
+    if env_path.exists() {
+        println!("  \u{2713} Config file exists");
+        ok_count += 1;
+    } else {
+        println!("  \u{2717} Config file missing (run: nabaos setup)");
+        fail_count += 1;
+    }
+
+    if std::env::var("NABA_LLM_PROVIDER").is_ok() {
+        println!("  \u{2713} LLM provider configured");
+        ok_count += 1;
+    } else {
+        println!("  \u{2717} LLM provider not configured");
+        fail_count += 1;
+    }
+
+    if std::env::var("NABA_TELEGRAM_ENABLED").unwrap_or_default() == "true" {
+        if std::env::var("NABA_TELEGRAM_BOT_TOKEN").is_ok() {
+            println!("  \u{2713} Telegram bot token set");
+            ok_count += 1;
+        } else {
+            println!("  \u{2717} Telegram enabled but token missing");
+            fail_count += 1;
+        }
+        if std::env::var("NABA_ALLOWED_CHAT_IDS").is_ok() {
+            println!("  \u{2713} Telegram chat IDs configured");
+            ok_count += 1;
+        } else {
+            println!("  \u{26a0} NABA_ALLOWED_CHAT_IDS not set \u{2014} bot will deny all messages");
+        }
+    }
+
+    if std::env::var("NABA_WEB_ENABLED").unwrap_or_default() == "true" {
+        let bind = std::env::var("NABA_WEB_BIND").unwrap_or_else(|_| "127.0.0.1:8919".to_string());
+        match std::net::TcpListener::bind(&bind) {
+            Ok(_) => {
+                println!("  \u{2713} Web port {} available", bind);
+                ok_count += 1;
+            }
+            Err(_) => {
+                println!("  \u{2717} Web port {} already in use", bind);
+                fail_count += 1;
+            }
+        }
+    }
+
+    println!("\n  {} checks passed, {} failed", ok_count, fail_count);
+    if fail_count > 0 {
+        return Err(NyayaError::Config("Pre-flight checks failed".to_string()));
+    }
+    Ok(())
+}
+
+fn generate_systemd_unit(config: &NyayaConfig) -> String {
+    let binary = std::env::current_exe().unwrap_or_default();
+    let data_dir = &config.data_dir;
+    let env_file = data_dir.join(".env");
+
+    format!(
+        "[Unit]\n\
+         Description=NabaOS - Autonomous agent runtime\n\
+         After=network-online.target\n\
+         Wants=network-online.target\n\
+         \n\
+         [Service]\n\
+         Type=simple\n\
+         ExecStart={binary} start --foreground\n\
+         EnvironmentFile={env_file}\n\
+         Environment=NABA_DATA_DIR={data_dir}\n\
+         WorkingDirectory={data_dir}\n\
+         Restart=on-failure\n\
+         RestartSec=5\n\
+         TimeoutStopSec=30\n\
+         \n\
+         [Install]\n\
+         WantedBy=default.target\n",
+        binary = binary.display(),
+        env_file = env_file.display(),
+        data_dir = data_dir.display(),
+    )
+}
+
+fn install_systemd_service(config: &NyayaConfig) -> Result<bool> {
+    if std::process::Command::new("systemctl")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return Ok(false);
+    }
+
+    let unit = generate_systemd_unit(config);
+    let is_root = nix_is_root();
+
+    let (service_path, user_flag) = if is_root {
+        ("/etc/systemd/system/nabaos.service".to_string(), "")
+    } else {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let dir = format!("{}/.config/systemd/user", home);
+        std::fs::create_dir_all(&dir)?;
+        (format!("{}/nabaos.service", dir), "--user")
+    };
+
+    std::fs::write(&service_path, &unit)?;
+    println!("  \u{2713} Service file written to {}", service_path);
+
+    let mut cmd = std::process::Command::new("systemctl");
+    if !user_flag.is_empty() {
+        cmd.arg(user_flag);
+    }
+    cmd.arg("daemon-reload").status()?;
+
+    let mut cmd = std::process::Command::new("systemctl");
+    if !user_flag.is_empty() {
+        cmd.arg(user_flag);
+    }
+    cmd.args(["enable", "--now", "nabaos"]).status()?;
+
+    println!("  \u{2713} NabaOS started as systemd service");
+    let jcmd = if user_flag.is_empty() {
+        "journalctl -u nabaos -f"
+    } else {
+        "journalctl --user -u nabaos -f"
+    };
+    println!("  View logs: {}", jcmd);
+
+    Ok(true)
+}
+
 fn cmd_daemon(config: &NyayaConfig) -> Result<()> {
     use nabaos::chain::demo_workflows;
     use nabaos::chain::workflow_engine::WorkflowEngine;
@@ -2677,10 +2881,16 @@ fn cmd_daemon(config: &NyayaConfig) -> Result<()> {
 
     println!("Starting Nyaya daemon...");
 
-    let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let _shutdown_rx = shutdown_rx; // keep receiver alive so channel stays open
 
     // Initialize workflow engine
     std::fs::create_dir_all(&config.data_dir)?;
+
+    // Write PID file for stop command fallback
+    let pid_path = config.data_dir.join("nabaos.pid");
+    std::fs::write(&pid_path, std::process::id().to_string())?;
+
     let wf_db_path = config.data_dir.join("workflows.db");
     let wf_store = WorkflowStore::open(&wf_db_path)?;
 
@@ -3045,6 +3255,10 @@ fn cmd_daemon(config: &NyayaConfig) -> Result<()> {
 
     // Signal web server to shut down gracefully
     let _ = shutdown_tx.send(true);
+
+    // Clean up PID file
+    std::fs::remove_file(&pid_path).ok();
+
     println!("[daemon] Shutdown complete.");
     Ok(())
 }
