@@ -13,6 +13,7 @@ use nabaos::export::ExportTarget;
 use nabaos::runtime::manifest::AgentManifest;
 use nabaos::runtime::sandbox::WasmSandbox;
 use nabaos::security::constitution::{self, ConstitutionEnforcer};
+use nabaos::tui::fmt;
 #[cfg(feature = "bert")]
 use nabaos::w5h2::classifier::W5H2Classifier;
 use nabaos::w5h2::fingerprint::FingerprintCache;
@@ -30,7 +31,7 @@ struct Cli {
     model_dir: Option<PathBuf>,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -165,6 +166,10 @@ Examples:
         #[arg(long)]
         health: bool,
     },
+
+    /// Launch interactive terminal dashboard
+    #[cfg(feature = "tui")]
+    Tui {},
 }
 
 #[derive(Subcommand, Debug)]
@@ -825,7 +830,24 @@ fn run(cli: Cli) -> Result<()> {
     let model_dir = cli.model_dir.unwrap_or(config.model_path.clone());
     let data_dir = cli.data_dir.unwrap_or(config.data_dir.clone());
 
-    match cli.command {
+    // Default to TUI when no subcommand given
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            #[cfg(feature = "tui")]
+            {
+                return nabaos::tui::app::run_tui(config);
+            }
+            #[cfg(not(feature = "tui"))]
+            {
+                eprintln!("No command specified. Build with `--features tui` for interactive dashboard.");
+                eprintln!("Run `nabaos --help` to see available commands.");
+                std::process::exit(1);
+            }
+        }
+    };
+
+    match command {
         Commands::Setup {
             non_interactive,
             interactive,
@@ -898,6 +920,8 @@ fn run(cli: Cli) -> Result<()> {
         #[cfg(feature = "watcher")]
         Commands::Watcher { action } => cmd_watcher(action, &data_dir),
         Commands::Check { health } => cmd_check(health, &config),
+        #[cfg(feature = "tui")]
+        Commands::Tui {} => nabaos::tui::app::run_tui(config),
     }
 }
 
@@ -927,78 +951,87 @@ fn cmd_check(health: bool, config: &NyayaConfig) -> Result<()> {
         }
     }
 
-    println!("NabaOS Startup Validation");
-    println!("========================");
-    let mut all_ok = true;
+    println!("{}", fmt::header_line("System Check"));
+    let mut pass_count = 0u32;
+    let total_count = 6u32;
 
     // 1. Config
-    print!("  Config loads............. ");
-    println!("OK");
+    println!("{}", fmt::ok("Config"));
+    pass_count += 1;
 
     // 2. Constitution
-    print!("  Constitution parses...... ");
     let const_ok = if let Some(ref path) = config.constitution_path {
         std::path::Path::new(path).exists()
     } else {
         true
     };
     if const_ok {
-        println!("OK");
+        println!("{}", fmt::ok("Constitution"));
+        pass_count += 1;
     } else {
-        println!("FAIL (constitution file not found)");
-        all_ok = false;
+        println!("{}", fmt::fail("Constitution (file not found)"));
     }
 
     // 3. SQLite
-    print!("  SQLite opens............. ");
     let test_db = config.data_dir.join("_check_test.db");
     match rusqlite::Connection::open(&test_db) {
         Ok(conn) => {
             drop(conn);
             let _ = std::fs::remove_file(&test_db);
-            println!("OK");
+            println!("{}", fmt::ok("Database"));
+            pass_count += 1;
         }
-        Err(e) => {
-            println!("FAIL ({})", e);
-            all_ok = false;
+        Err(_) => {
+            println!("{}", fmt::fail("Database"));
         }
     }
 
     // 4. Embedding model
-    print!("  Embedding model.......... ");
     let model_dir = config.data_dir.join("models");
     if model_dir.exists()
         && std::fs::read_dir(&model_dir)
             .map(|mut d| d.next().is_some())
             .unwrap_or(false)
     {
-        println!("OK");
+        println!("{}", fmt::ok("Embedding model"));
+        pass_count += 1;
     } else {
-        println!("SKIP (not found — optional)");
+        println!("{}", fmt::skip("Embedding model (not found)"));
+        pass_count += 1; // optional
     }
 
     // 5. LLM API key
-    print!("  LLM API key set.......... ");
     if std::env::var("NABA_LLM_API_KEY").is_ok() {
-        println!("OK");
+        println!("{}", fmt::ok("LLM API key"));
+        pass_count += 1;
     } else {
-        println!("FAIL (NABA_LLM_API_KEY not set)");
-        all_ok = false;
+        println!("{}", fmt::fail("LLM API key (NABA_LLM_API_KEY not set)"));
     }
 
     // 6. Telegram
-    print!("  Telegram bot token....... ");
     if std::env::var("NABA_TELEGRAM_BOT_TOKEN").is_ok() {
-        println!("OK");
+        println!("{}", fmt::ok("Telegram"));
+        pass_count += 1;
     } else {
-        println!("SKIP (not configured)");
+        println!("{}", fmt::skip("Telegram (not configured)"));
+        pass_count += 1; // optional
     }
 
-    println!("========================");
+    println!("{}", fmt::separator());
+    let all_ok = pass_count == total_count;
     if all_ok {
-        println!("All required checks passed.");
+        println!(
+            "{}",
+            fmt::ok(&format!("{}/{} checks passed · ready to go", pass_count, total_count))
+        );
     } else {
-        println!("Some checks failed.");
+        println!(
+            "{}",
+            fmt::fail(&format!("{}/{} checks passed", pass_count, total_count))
+        );
+    }
+    println!("{}", fmt::footer());
+    if !all_ok {
         std::process::exit(1);
     }
 
@@ -1023,36 +1056,86 @@ fn cmd_pea(action: PeaCommands, data_dir: &Path) -> Result<()> {
                 0,
             )];
             let obj_id = engine.create_objective(&description, budget, desires)?;
-            println!("Created objective: {}", obj_id);
-            println!("  Description: {}", description);
-            println!("  Budget: ${:.2}", budget);
-            println!("  Status: active");
+            println!("{}", fmt::header_line("Objective Created"));
+            println!("{}", fmt::active(&description));
+            println!("{}", fmt::row("ID", &obj_id));
+            println!(
+                "{}",
+                fmt::row(
+                    "Budget",
+                    &format!(
+                        "{} {}",
+                        fmt::progress_bar(0.0, 10),
+                        format!("{} / ${:.2}", fmt::money(0.0), budget)
+                    )
+                )
+            );
+            println!("{}", fmt::footer());
         }
         PeaCommands::List => {
             let objectives = engine.list_objectives()?;
             if objectives.is_empty() {
-                println!("No active objectives.");
+                println!("{}", fmt::header_line("Objectives"));
+                println!("{}", fmt::row_raw("  No active objectives."));
+                println!("{}", fmt::footer());
             } else {
-                println!("=== Active Objectives ===");
+                println!("{}", fmt::header_line("Objectives"));
                 for obj in &objectives {
-                    println!(
-                        "  {} | {} | ${:.2}/{:.2} | {}",
-                        obj.id, obj.description, obj.spent_usd, obj.budget_usd, obj.status
+                    let status_str = format!("{}", obj.status);
+                    let line = format!(
+                        "{} · {} · {}/{}",
+                        &obj.id[..obj.id.len().min(12)],
+                        obj.description,
+                        fmt::money(obj.spent_usd),
+                        fmt::money(obj.budget_usd)
                     );
+                    let formatted = match status_str.as_str() {
+                        "active" => fmt::active(&line),
+                        "completed" => fmt::ok(&line),
+                        "failed" => fmt::fail(&line),
+                        "paused" => fmt::skip(&line),
+                        _ => fmt::row_raw(&format!("  {}", line)),
+                    };
+                    println!("{}", formatted);
                 }
+                println!("{}", fmt::footer());
             }
         }
         PeaCommands::Status { id } => match engine.get_status(&id)? {
             Some(obj) => {
-                println!("Objective: {}", obj.id);
-                println!("  Description: {}", obj.description);
-                println!("  Status:      {}", obj.status);
+                println!("{}", fmt::header_line("Objective Status"));
+                let status_str = format!("{}", obj.status);
+                let desc_line = match status_str.as_str() {
+                    "active" => fmt::active(&obj.description),
+                    "completed" => fmt::ok(&obj.description),
+                    "failed" => fmt::fail(&obj.description),
+                    _ => fmt::skip(&obj.description),
+                };
+                println!("{}", desc_line);
+                println!("{}", fmt::row("ID", &obj.id));
+                println!("{}", fmt::row("Status", &status_str));
+                let budget_frac = if obj.budget_usd > 0.0 {
+                    obj.spent_usd / obj.budget_usd
+                } else {
+                    0.0
+                };
                 println!(
-                    "  Budget:      ${:.2} / ${:.2}",
-                    obj.spent_usd, obj.budget_usd
+                    "{}",
+                    fmt::row(
+                        "Budget",
+                        &format!(
+                            "{} {} / {}",
+                            fmt::progress_bar(budget_frac, 10),
+                            fmt::money(obj.spent_usd),
+                            fmt::money(obj.budget_usd)
+                        )
+                    )
                 );
-                println!("  Progress:    {:.0}%", obj.progress_score * 100.0);
-                println!("  Heartbeat:   {}s", obj.heartbeat_interval_secs);
+                println!(
+                    "{}",
+                    fmt::row("Progress", &fmt::pct(obj.progress_score * 100.0))
+                );
+                println!("{}", fmt::footer());
             }
             None => {
                 println!("Objective '{}' not found.", id);
@@ -1061,29 +1144,41 @@ fn cmd_pea(action: PeaCommands, data_dir: &Path) -> Result<()> {
         PeaCommands::Tasks { id } => {
             let tasks = engine.get_tasks(&id)?;
             if tasks.is_empty() {
-                println!("No tasks for objective '{}'.", id);
+                println!("{}", fmt::header_line("Tasks"));
+                println!("{}", fmt::row_raw(&format!("  No tasks for '{}'.", id)));
+                println!("{}", fmt::footer());
             } else {
-                println!("=== Tasks for {} ===", id);
+                println!("{}", fmt::header_line(&format!("Tasks — {}", &id[..id.len().min(12)])));
                 for t in &tasks {
-                    let parent = t.parent_task_id.as_deref().unwrap_or("-");
-                    println!(
-                        "  {} | {} | {} | parent={}",
-                        t.id, t.description, t.status, parent
-                    );
+                    let status_str = format!("{}", t.status);
+                    let line = match status_str.as_str() {
+                        "completed" => fmt::ok(&t.description),
+                        "running" | "active" => fmt::active(&t.description),
+                        "failed" => fmt::fail(&t.description),
+                        _ => fmt::skip(&t.description),
+                    };
+                    println!("{}", line);
                 }
+                println!("{}", fmt::footer());
             }
         }
         PeaCommands::Pause { id } => {
             engine.pause(&id)?;
-            println!("Paused objective '{}'.", id);
+            println!("{}", fmt::header_line("Objective"));
+            println!("{}", fmt::skip(&format!("Paused: {}", id)));
+            println!("{}", fmt::footer());
         }
         PeaCommands::Resume { id } => {
             engine.resume(&id)?;
-            println!("Resumed objective '{}'.", id);
+            println!("{}", fmt::header_line("Objective"));
+            println!("{}", fmt::active(&format!("Resumed: {}", id)));
+            println!("{}", fmt::footer());
         }
         PeaCommands::Cancel { id } => {
             engine.cancel(&id)?;
-            println!("Cancelled objective '{}'.", id);
+            println!("{}", fmt::header_line("Objective"));
+            println!("{}", fmt::fail(&format!("Cancelled: {}", id)));
+            println!("{}", fmt::footer());
         }
     }
 
@@ -1503,12 +1598,21 @@ fn cmd_admin(
             let models =
                 nabaos::providers::discovery::fetch_available_models(&base_url, &api_key)?;
             if models.is_empty() {
-                println!("No models found at {}", base_url);
+                println!("{}", fmt::header_line("Available Models"));
+                println!("{}", fmt::row_raw("  No models found."));
+                println!("{}", fmt::footer());
             } else {
-                println!("Available models ({}):", models.len());
+                println!(
+                    "{}",
+                    fmt::header_line(&format!("Available Models ({})", models.len()))
+                );
                 for (i, m) in models.iter().enumerate() {
-                    println!("  {:>3}) {}", i + 1, m);
+                    println!(
+                        "{}",
+                        fmt::row_raw(&format!("  {:>3}  {}", i + 1, m))
+                    );
                 }
+                println!("{}", fmt::footer());
             }
             Ok(())
         }
@@ -1645,12 +1749,25 @@ fn cmd_classify(model_dir: &Path, query: &str) -> Result<()> {
     let intent = classifier.classify(query)?;
     let elapsed = start.elapsed();
 
-    println!("Query:      {}", query);
-    println!("Intent:     {}", intent.key());
-    println!("Action:     {}", intent.action);
-    println!("Target:     {}", intent.target);
-    println!("Confidence: {:.1}%", intent.confidence * 100.0);
-    println!("Latency:    {:.1}ms", elapsed.as_secs_f64() * 1000.0);
+    println!("{}", fmt::header_line("Classification"));
+    println!("{}", fmt::row("Query", query));
+    println!("{}", fmt::row("Intent", &intent.key().to_string()));
+    println!(
+        "{}",
+        fmt::row(
+            "Confidence",
+            &format!(
+                "{} {}",
+                fmt::progress_bar(intent.confidence as f64, 10),
+                fmt::pct(intent.confidence as f64 * 100.0)
+            )
+        )
+    );
+    println!(
+        "{}",
+        fmt::row("Latency", &fmt::latency(elapsed.as_secs_f64() * 1000.0))
+    );
+    println!("{}", fmt::footer());
 
     Ok(())
 }
@@ -1680,16 +1797,35 @@ fn cmd_cache(action: CacheCommands, data_dir: &Path) -> Result<()> {
             let intent_cache = nabaos::cache::intent_cache::IntentCache::open(&db_path)?;
             let ic_stats = intent_cache.stats()?;
 
-            println!("=== Cache Statistics ===");
-            println!();
-            println!("Fingerprint Cache (Tier 1):");
-            println!("  Entries: {}", fp_stats.total_entries);
-            println!("  Hits:    {}", fp_stats.total_hits);
-            println!();
-            println!("Intent Cache (Tier 2):");
-            println!("  Total entries:   {}", ic_stats.total_entries);
-            println!("  Enabled entries: {}", ic_stats.enabled_entries);
-            println!("  Total hits:      {}", ic_stats.total_hits);
+            let total_hits = fp_stats.total_hits + ic_stats.total_hits;
+            let total_entries = fp_stats.total_entries + ic_stats.total_entries;
+            let hit_rate = if total_entries > 0 {
+                total_hits as f64 / (total_entries.max(1)) as f64
+            } else {
+                0.0
+            };
+
+            println!("{}", fmt::header_line("Cache"));
+            println!(
+                "{}",
+                fmt::row("Fingerprint", &format!("{} entries", fp_stats.total_entries))
+            );
+            println!(
+                "{}",
+                fmt::row("Semantic", &format!("{} entries", ic_stats.total_entries))
+            );
+            println!(
+                "{}",
+                fmt::row(
+                    "Hit rate",
+                    &format!(
+                        "{} {}",
+                        fmt::progress_bar(hit_rate, 10),
+                        fmt::pct(hit_rate * 100.0)
+                    )
+                )
+            );
+            println!("{}", fmt::footer());
 
             Ok(())
         }
@@ -1728,14 +1864,22 @@ fn cmd_secret(action: SecretCommands, data_dir: &Path) -> Result<()> {
         SecretCommands::List => {
             let secrets = vault.list_secrets()?;
             if secrets.is_empty() {
-                println!("No secrets stored.");
+                println!("{}", fmt::header_line("Vault"));
+                println!("{}", fmt::row_raw("  No secrets stored."));
+                println!("{}", fmt::footer());
             } else {
-                println!("{:<20} {:<30} CREATED", "NAME", "INTENT BINDING");
-                println!("{}", "-".repeat(70));
+                println!("{}", fmt::header_line("Vault"));
                 for s in secrets {
-                    let binding = s.intent_binding.as_deref().unwrap_or("-");
-                    println!("{:<20} {:<30} {}", s.name, binding, s.created_at);
+                    println!(
+                        "{}",
+                        fmt::row_raw(&format!(
+                            "  {:<18} {} (AES-256-GCM)",
+                            s.name,
+                            "●●●●●●●●"
+                        ))
+                    );
                 }
+                println!("{}", fmt::footer());
             }
             Ok(())
         }
@@ -1760,19 +1904,31 @@ fn cmd_constitution(action: ConstitutionCommands, config: &NyayaConfig) -> Resul
 
                 let check = enforcer.check(&intent, Some(&query));
 
-                println!("Query:       {}", query);
-                println!("Intent:      {}", intent.key());
-                println!("Enforcement: {:?}", check.enforcement);
+                println!("{}", fmt::header_line("Constitution"));
+                println!("{}", fmt::row("Query", &format!("\"{}\"", query)));
                 println!(
-                    "Allowed:     {}",
-                    if check.allowed { "YES" } else { "BLOCKED" }
+                    "{}",
+                    fmt::row(
+                        "Action",
+                        &format!("{} · Target {}", intent.action, intent.target)
+                    )
                 );
-                if let Some(rule) = &check.matched_rule {
-                    println!("Matched:     {}", rule);
-                }
-                if let Some(reason) = &check.reason {
-                    println!("Reason:      {}", reason);
-                }
+                let verdict = if check.allowed {
+                    fmt::badge("ALLOWED", fmt::GREEN)
+                } else {
+                    fmt::badge("BLOCKED", fmt::RED)
+                };
+                let enforcement_str = format!("{:?}", check.enforcement);
+                let reason = check
+                    .reason
+                    .as_deref()
+                    .or(check.matched_rule.as_deref())
+                    .unwrap_or(&enforcement_str);
+                println!(
+                    "{}",
+                    fmt::row("Verdict", &format!("{} {}", verdict, reason))
+                );
+                println!("{}", fmt::footer());
             }
             #[cfg(not(feature = "bert"))]
             {
@@ -1782,23 +1938,24 @@ fn cmd_constitution(action: ConstitutionCommands, config: &NyayaConfig) -> Resul
             Ok(())
         }
         ConstitutionCommands::Show => {
-            println!("Constitution: {}", enforcer.name());
-            println!("Rules:");
+            println!("{}", fmt::header_line("Constitution"));
+            println!(
+                "{}",
+                fmt::row_raw(&format!("  {}", enforcer.name()))
+            );
+            println!("{}", fmt::separator());
             for rule in enforcer.rules() {
-                println!("  - {} [{:?}]", rule.name, rule.enforcement);
-                if let Some(ref desc) = rule.description {
-                    println!("    {}", desc);
-                }
-                if !rule.trigger_actions.is_empty() {
-                    println!("    Actions: {:?}", rule.trigger_actions);
-                }
-                if !rule.trigger_targets.is_empty() {
-                    println!("    Targets: {:?}", rule.trigger_targets);
-                }
-                if !rule.trigger_keywords.is_empty() {
-                    println!("    Keywords: {:?}", rule.trigger_keywords);
-                }
+                let badge = match format!("{:?}", rule.enforcement).as_str() {
+                    "Block" => fmt::badge("BLOCK", fmt::RED),
+                    "Confirm" => fmt::badge("CONFIRM", fmt::YELLOW),
+                    _ => fmt::badge("ALLOW", fmt::GREEN),
+                };
+                println!(
+                    "{}",
+                    fmt::row_raw(&format!("  {} {}", badge, rule.name))
+                );
             }
+            println!("{}", fmt::footer());
             Ok(())
         }
         ConstitutionCommands::Templates => {
@@ -1825,15 +1982,16 @@ fn cmd_constitution(action: ConstitutionCommands, config: &NyayaConfig) -> Resul
                 "creative",
                 "agriculture",
             ];
-            println!("Available constitution templates:");
-            for name in &names {
-                let c = constitution::get_constitution_template(name).unwrap();
+            println!("{}", fmt::header_line("Constitution Templates"));
+            for (i, name) in names.iter().enumerate() {
+                let tmpl = constitution::get_constitution_template(name).unwrap();
+                let desc = tmpl.description.as_deref().unwrap_or("");
                 println!(
-                    "  {:<20} — {}",
-                    name,
-                    c.description.as_deref().unwrap_or("")
+                    "{}",
+                    fmt::row_raw(&format!("  {:>2}) {:<20} {}", i + 1, name, desc))
                 );
             }
+            println!("{}", fmt::footer());
             Ok(())
         }
         ConstitutionCommands::UseTemplate { name, output } => {
@@ -1977,66 +2135,138 @@ fn cmd_orchestrate(config: &NyayaConfig, query: &str) -> Result<()> {
     let mut orch = Orchestrator::new(config.clone())?;
     let result = orch.process_query(query, None)?;
 
-    println!("=== Orchestrator Result ===");
-    println!("Tier:        {}", result.tier);
-    println!("Intent:      {}", result.intent_key);
-    println!("Confidence:  {:.1}%", result.confidence * 100.0);
-    println!(
-        "Allowed:     {}",
-        if result.allowed { "YES" } else { "BLOCKED" }
-    );
-    println!("Latency:     {:.1}ms", result.latency_ms);
-    println!("Description: {}", result.description);
+    // Check if verbose mode via NABAOS_VERBOSE env
+    let verbose = std::env::var("NABAOS_VERBOSE").is_ok();
 
-    if let Some(ref text) = result.response_text {
-        println!();
-        println!("=== Response ===");
-        println!("{}", text);
-    }
+    if verbose {
+        // Detailed output
+        println!("{}", fmt::header_line("Query Result"));
+        let tier_str = format!("{}", result.tier);
+        let tier_badge = fmt::badge(&tier_str, fmt::CYAN);
+        println!(
+            "{}",
+            fmt::row_raw(&format!("  Tier        {}  {}", tier_badge, result.description))
+        );
+        println!("{}", fmt::row("Intent", &result.intent_key));
+        println!(
+            "{}",
+            fmt::row(
+                "Confidence",
+                &format!(
+                    "{} {}",
+                    fmt::progress_bar(result.confidence, 10),
+                    fmt::pct(result.confidence * 100.0)
+                )
+            )
+        );
+        println!("{}", fmt::row("Latency", &fmt::latency(result.latency_ms)));
 
-    if let Some(ref mode) = result.nyaya_mode {
-        println!();
-        println!("=== Nyaya Block ===");
-        println!("Mode:     {}", mode);
-        println!("Receipts: {}", result.receipts_generated);
-    }
+        if let Some(ref text) = result.response_text {
+            println!("{}", fmt::section("Response"));
+            for line in text.lines() {
+                println!("{}", fmt::row_raw(&format!("  {}", line)));
+            }
+        }
 
-    if let Some(ref signal) = result.training_signal {
-        println!();
-        println!("=== Training Signal ===");
-        println!("Label:        {}", signal.intent_label);
-        println!("Rephrasings:  {}", signal.rephrasings.len());
-        for r in &signal.rephrasings {
-            println!("  - {}", r);
+        // Cost info from orchestrator
+        if let Ok(summary) = orch.cost_summary(None) {
+            println!("{}", fmt::section("Cost"));
+            let saved = if tier_str.contains("cache") || tier_str.contains("Cache") {
+                "1 LLM call saved"
+            } else {
+                "LLM call"
+            };
+            println!(
+                "{}",
+                fmt::row_raw(&format!(
+                    "  {}   Lifetime  {}",
+                    saved,
+                    fmt::money(summary.total_saved_usd)
+                ))
+            );
+            if summary.savings_percent > 0.0 {
+                println!(
+                    "{}",
+                    fmt::row(
+                        "Savings",
+                        &format!(
+                            "{} {}",
+                            fmt::progress_bar(summary.savings_percent / 100.0, 10),
+                            fmt::pct(summary.savings_percent)
+                        )
+                    )
+                );
+            }
+        }
+    } else {
+        // Clean, human-friendly output
+        println!("{}", fmt::header_line("NabaOS"));
+        if !result.allowed {
+            println!(
+                "{}",
+                fmt::fail(&format!("Blocked: {}", result.description))
+            );
+        } else if let Some(ref text) = result.response_text {
+            // Show the response directly
+            for line in text.lines() {
+                println!("{}", fmt::row_raw(&format!("  {}", line)));
+            }
+        } else {
+            println!("{}", fmt::row_raw(&format!("  {}", result.description)));
+        }
+
+        // Show savings info
+        let tier_str = format!("{}", result.tier);
+        if let Ok(summary) = orch.cost_summary(None) {
+            println!("{}", fmt::row_empty());
+            let calls_saved = if tier_str.contains("cache") || tier_str.contains("Cache") {
+                "1 LLM call saved"
+            } else {
+                "LLM call used"
+            };
+            println!(
+                "{}",
+                fmt::row_raw(&format!(
+                    "  {}  ·  lifetime saved: {}",
+                    calls_saved,
+                    fmt::money(summary.total_saved_usd)
+                ))
+            );
         }
     }
 
     // Security assessment
     let sec = &result.security;
     if sec.credentials_found > 0 || sec.injection_detected || sec.injection_match_count > 0 {
-        println!();
-        println!("=== Security ===");
+        println!("{}", fmt::section("Security"));
         if sec.credentials_found > 0 {
             println!(
-                "Credentials: {} found (types: {:?})",
-                sec.credentials_found, sec.credential_types
+                "{}",
+                fmt::fail(&format!(
+                    "{} credentials detected ({:?})",
+                    sec.credentials_found, sec.credential_types
+                ))
             );
         }
         if sec.pii_found > 0 {
-            println!("PII:         {} found", sec.pii_found);
-        }
-        if sec.was_redacted {
-            println!("Redacted:    YES (secrets removed before processing)");
+            println!(
+                "{}",
+                fmt::fail(&format!("{} PII detected", sec.pii_found))
+            );
         }
         if sec.injection_match_count > 0 {
             println!(
-                "Injection:   {} patterns (max confidence: {:.0}%)",
-                sec.injection_match_count,
-                sec.injection_confidence * 100.0
+                "{}",
+                fmt::fail(&format!(
+                    "{} injection patterns (confidence: {})",
+                    sec.injection_match_count,
+                    fmt::pct(sec.injection_confidence as f64 * 100.0)
+                ))
             );
         }
     }
 
+    println!("{}", fmt::footer());
     Ok(())
 }
 
@@ -2044,22 +2274,49 @@ fn cmd_costs(config: &NyayaConfig) -> Result<()> {
     let orch = Orchestrator::new(config.clone())?;
     let summary = orch.cost_summary(None)?;
 
-    println!("=== Cost Summary (All Time) ===");
-    println!("{}", summary);
-
-    // Also show today's costs
-    let today_ms = {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
-        now - 86_400_000 // 24 hours ago
-    };
-    let today = orch.cost_summary(Some(today_ms))?;
-    if today.total_llm_calls > 0 || today.total_cache_hits > 0 {
-        println!("=== Last 24 Hours ===");
-        println!("{}", today);
-    }
+    let total_queries = summary.total_llm_calls + summary.total_cache_hits;
+    println!("{}", fmt::header_line("NabaOS Status"));
+    println!(
+        "{}",
+        fmt::row_pair(
+            "Queries",
+            &total_queries.to_string(),
+            "Cache hits",
+            &summary.total_cache_hits.to_string(),
+        )
+    );
+    println!(
+        "{}",
+        fmt::row_pair(
+            "Spent",
+            &fmt::money(summary.total_spent_usd),
+            "Saved",
+            &fmt::money(summary.total_saved_usd),
+        )
+    );
+    println!(
+        "{}",
+        fmt::row(
+            "Savings",
+            &format!(
+                "{} {}",
+                fmt::progress_bar(summary.savings_percent / 100.0, 10),
+                fmt::pct(summary.savings_percent)
+            ),
+        )
+    );
+    println!(
+        "{}",
+        fmt::row(
+            "Tokens",
+            &format!(
+                "{} in / {} out",
+                fmt::tokens(summary.total_input_tokens),
+                fmt::tokens(summary.total_output_tokens)
+            ),
+        )
+    );
+    println!("{}", fmt::footer());
 
     Ok(())
 }
@@ -2132,43 +2389,64 @@ fn cmd_schedule(action: ScheduleCommands, config: &NyayaConfig) -> Result<()> {
 fn cmd_security_scan(text: &str) -> Result<()> {
     use nabaos::security::{credential_scanner, pattern_matcher};
 
-    println!("=== Security Scan ===");
-    println!("Input length: {} chars", text.len());
-    println!();
+    println!("{}", fmt::header_line("Security Scan"));
 
     // Credential scan
     let cred_summary = credential_scanner::scan_summary(text);
-    println!("Credentials: {} found", cred_summary.credential_count);
-    println!("PII:         {} found", cred_summary.pii_count);
-    if !cred_summary.types_found.is_empty() {
-        println!("Types:       {:?}", cred_summary.types_found);
+    if cred_summary.credential_count > 0 {
+        println!(
+            "{}",
+            fmt::fail(&format!(
+                "{} credentials detected",
+                cred_summary.credential_count
+            ))
+        );
+        if !cred_summary.types_found.is_empty() {
+            let types_str = cred_summary
+                .types_found
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("{}", fmt::row_raw(&format!("    {}", types_str)));
+        }
+    } else {
+        println!("{}", fmt::ok("No credentials detected"));
+    }
+
+    if cred_summary.pii_count > 0 {
+        println!(
+            "{}",
+            fmt::fail(&format!("{} PII detected", cred_summary.pii_count))
+        );
     }
 
     // Injection scan
     let injection = pattern_matcher::assess(text);
-    println!();
-    println!(
-        "Injection:   {}",
-        if injection.likely_injection {
-            "DETECTED"
-        } else {
-            "clean"
-        }
-    );
-    println!("Patterns:    {} matches", injection.match_count);
-    if injection.max_confidence > 0.0 {
-        println!("Max conf:    {:.0}%", injection.max_confidence * 100.0);
+    if injection.likely_injection || injection.match_count > 0 {
+        println!(
+            "{}",
+            fmt::fail(&format!(
+                "{} injection patterns (confidence: {})",
+                injection.match_count,
+                fmt::pct(injection.max_confidence as f64 * 100.0)
+            ))
+        );
+    } else {
+        println!("{}", fmt::ok("No injection patterns"));
     }
-    if let Some(cat) = injection.top_category {
-        println!("Category:    {}", cat);
-    }
+
+    println!("{}", fmt::footer());
 
     // Redaction preview
     if cred_summary.credential_count > 0 || cred_summary.pii_count > 0 {
         println!();
-        println!("=== Redacted Output ===");
+        println!("{}", fmt::header_line("Redacted Output"));
         let redacted = credential_scanner::redact_all(text);
-        println!("{}", redacted.redacted);
+        for line in redacted.redacted.lines() {
+            println!("{}", fmt::row_raw(&format!("  {}", line)));
+        }
+        println!("{}", fmt::footer());
     }
 
     Ok(())
@@ -2184,12 +2462,17 @@ fn cmd_abilities(config: &NyayaConfig) -> Result<()> {
     let reg = AbilityRegistry::with_plugins(ReceiptSigner::generate(), plugin_registry);
 
     let all = reg.list_all_abilities();
-    println!("=== Available Abilities ({}) ===", all.len());
-    println!("{:<25} {:<12} DESCRIPTION", "NAME", "SOURCE");
-    println!("{}", "-".repeat(80));
-    for (name, desc, source) in &all {
-        println!("{:<25} {:<12} {}", name, format!("{}", source), desc);
+    println!(
+        "{}",
+        fmt::header_line(&format!("Available Abilities ({})", all.len()))
+    );
+    for (name, desc, _source) in &all {
+        println!(
+            "{}",
+            fmt::row_raw(&format!("  {:<24} {}", name, desc))
+        );
     }
+    println!("{}", fmt::footer());
     Ok(())
 }
 
@@ -3527,41 +3810,51 @@ fn cmd_catalog(action: CatalogCommands, config: &NyayaConfig) -> Result<()> {
         CatalogCommands::List => {
             let entries = catalog.list()?;
             if entries.is_empty() {
-                println!("No agents in catalog.");
-                println!("Agent catalog directory: {}", catalog_dir.display());
+                println!("{}", fmt::header_line("Agent Catalog"));
+                println!("{}", fmt::row_raw("  No agents in catalog."));
+                println!("{}", fmt::footer());
             } else {
                 println!(
-                    "{:<25} {:<15} {:<10} DESCRIPTION",
-                    "NAME", "CATEGORY", "VERSION"
+                    "{}",
+                    fmt::header_line(&format!("Agent Catalog ({})", entries.len()))
                 );
-                println!("{}", "-".repeat(80));
                 for e in &entries {
                     println!(
-                        "{:<25} {:<15} {:<10} {}",
-                        e.name, e.category, e.version, e.description
+                        "{}",
+                        fmt::row_raw(&format!(
+                            "  {:<22} {:<14} {}",
+                            e.name, e.category, e.description
+                        ))
                     );
                 }
-                println!("\n{} agents available.", entries.len());
+                println!("{}", fmt::footer());
             }
             Ok(())
         }
         CatalogCommands::Search { query } => {
             let results = catalog.search(&query)?;
             if results.is_empty() {
-                println!("No agents matching '{}'.", query);
+                println!("{}", fmt::header_line("Search Results"));
+                println!(
+                    "{}",
+                    fmt::row_raw(&format!("  No agents matching '{}'.", query))
+                );
+                println!("{}", fmt::footer());
             } else {
                 println!(
-                    "{:<25} {:<15} {:<10} DESCRIPTION",
-                    "NAME", "CATEGORY", "VERSION"
+                    "{}",
+                    fmt::header_line(&format!("Search Results ({})", results.len()))
                 );
-                println!("{}", "-".repeat(80));
                 for e in &results {
                     println!(
-                        "{:<25} {:<15} {:<10} {}",
-                        e.name, e.category, e.version, e.description
+                        "{}",
+                        fmt::row_raw(&format!(
+                            "  {:<22} {:<14} {}",
+                            e.name, e.category, e.description
+                        ))
                     );
                 }
-                println!("\n{} agents found.", results.len());
+                println!("{}", fmt::footer());
             }
             Ok(())
         }

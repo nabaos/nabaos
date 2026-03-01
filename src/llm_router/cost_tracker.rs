@@ -304,16 +304,32 @@ pub struct CostSummary {
 
 impl std::fmt::Display for CostSummary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "LLM calls:     {}", self.total_llm_calls)?;
-        writeln!(f, "Cache hits:    {}", self.total_cache_hits)?;
-        writeln!(f, "Total spent:   ${:.4}", self.total_spent_usd)?;
-        writeln!(f, "Total saved:   ${:.4}", self.total_saved_usd)?;
-        writeln!(f, "Savings:       {:.1}%", self.savings_percent)?;
-        writeln!(
-            f,
-            "Tokens:        {} in / {} out",
-            self.total_input_tokens, self.total_output_tokens
-        )
+        use crate::tui::fmt as tfmt;
+        let total_queries = self.total_llm_calls + self.total_cache_hits;
+        writeln!(f, "{}", tfmt::row_pair(
+            "Queries", &total_queries.to_string(),
+            "Cache hits", &self.total_cache_hits.to_string(),
+        ))?;
+        writeln!(f, "{}", tfmt::row_pair(
+            "Spent", &tfmt::money(self.total_spent_usd),
+            "Saved", &tfmt::money(self.total_saved_usd),
+        ))?;
+        writeln!(f, "{}", tfmt::row(
+            "Savings",
+            &format!(
+                "{} {}",
+                tfmt::progress_bar(self.savings_percent / 100.0, 10),
+                tfmt::pct(self.savings_percent)
+            ),
+        ))?;
+        write!(f, "{}", tfmt::row(
+            "Tokens",
+            &format!(
+                "{} in / {} out",
+                tfmt::tokens(self.total_input_tokens),
+                tfmt::tokens(self.total_output_tokens)
+            ),
+        ))
     }
 }
 

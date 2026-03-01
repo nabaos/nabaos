@@ -42,6 +42,7 @@ pub mod resource;
 pub mod runtime;
 pub mod security;
 pub mod swarm;
+pub mod tui;
 pub mod viz;
 pub mod w5h2;
 

@@ -184,41 +184,48 @@ impl HardwareInfo {
 
     /// Return a human-readable report of the hardware scan.
     pub fn display_report(&self) -> String {
+        use crate::tui::fmt;
+
+        let ram_gb = self.ram_mb / 1024;
+        let gpu_str = format!("{}", self.gpu);
+
+        let tool_check = |opt: &Option<PathBuf>, name: &str| -> String {
+            if opt.is_some() {
+                fmt::ok(name)
+            } else {
+                fmt::skip(name)
+            }
+        };
+
         let mut lines = Vec::new();
-        lines.push("=== Hardware Scan ===".to_string());
-        lines.push(format!("  CPU cores : {}", self.cpu_cores));
-        lines.push(format!("  RAM       : {} MB", self.ram_mb));
-        lines.push(format!("  GPU       : {}", self.gpu));
-        lines.push(format!("  Disk free : {} GB", self.disk_free_gb));
-        lines.push(format!("  OS        : {}", self.os));
-        lines.push(format!("  Arch      : {}", self.arch));
-        lines.push(String::new());
-        lines.push("=== Detected Tools ===".to_string());
-        lines.push(format!(
-            "  Chromium  : {}",
-            Self::tool_display(&self.chromium_path)
+        lines.push(fmt::header_line("Hardware"));
+        lines.push(fmt::row_pair(
+            "CPU",
+            &format!("{} cores", self.cpu_cores),
+            "RAM",
+            &format!("{} GB", ram_gb),
         ));
-        lines.push(format!(
-            "  Node.js   : {}",
-            Self::tool_display(&self.node_path)
+        lines.push(fmt::row_pair(
+            "GPU",
+            &gpu_str,
+            "Disk",
+            &format!("{} GB free", self.disk_free_gb),
         ));
-        lines.push(format!(
-            "  FFmpeg    : {}",
-            Self::tool_display(&self.ffmpeg_path)
-        ));
-        lines.push(format!(
-            "  LaTeX     : {}",
-            Self::tool_display(&self.latex_path)
-        ));
+        lines.push(fmt::row_pair("OS", &self.os, "Arch", &self.arch));
+        lines.push(fmt::section("Tools"));
+        // Build tool status row
+        let chromium_s = tool_check(&self.chromium_path, "Chromium");
+        let node_s = tool_check(&self.node_path, "Node.js");
+        let ffmpeg_s = tool_check(&self.ffmpeg_path, "FFmpeg");
+        let latex_s = tool_check(&self.latex_path, "LaTeX");
+        lines.push(chromium_s);
+        lines.push(node_s);
+        lines.push(ffmpeg_s);
+        lines.push(latex_s);
+        lines.push(fmt::footer());
         lines.join("\n")
     }
 
-    fn tool_display(opt: &Option<PathBuf>) -> String {
-        match opt {
-            Some(p) => p.display().to_string(),
-            None => "not found".to_string(),
-        }
-    }
 }
 
 #[cfg(test)]
