@@ -40,15 +40,15 @@ pub fn ort_available() -> bool {
             let ok = std::panic::catch_unwind(ort::api).is_ok();
             STATE.store(if ok { 1 } else { 2 }, Ordering::Release);
             if !ok {
-                eprintln!(
-                    "[nabaos] ONNX runtime not available (libonnxruntime.so not found) — \
+                tracing::warn!(
+                    "ONNX runtime not available (libonnxruntime.so not found) — \
                      BERT/ONNX features disabled"
                 );
             }
             return ok;
         }
         // Another thread is probing — spin briefly
-        std::hint::spin_loop();
+        std::thread::yield_now();
     }
 }
 

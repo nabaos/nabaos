@@ -84,6 +84,9 @@ impl ElementDetector {
     ///
     /// Expects `model_dir/omniparser-yolo.onnx` to exist.
     pub fn load(model_dir: &Path) -> Result<Self> {
+        if !crate::security::bert_classifier::ort_available() {
+            return Err(NyayaError::ModelLoad("ONNX runtime not available".to_string()).into());
+        }
         let onnx_path = model_dir.join("omniparser-yolo.onnx");
 
         let session = ort::session::Session::builder()

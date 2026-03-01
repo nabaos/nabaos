@@ -82,6 +82,9 @@ impl WebBertClassifier {
     /// - `webbert-tokenizer.json` (tokenizer)
     /// - `webbert-classes.json` (class label list, JSON array of strings)
     pub fn load(model_dir: &Path) -> Result<Self> {
+        if !crate::security::bert_classifier::ort_available() {
+            return Err(NyayaError::ModelLoad("ONNX runtime not available".to_string()).into());
+        }
         let onnx_path = model_dir.join("webbert.onnx");
         let tokenizer_path = model_dir.join("webbert-tokenizer.json");
         let classes_path = model_dir.join("webbert-classes.json");

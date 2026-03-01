@@ -46,6 +46,9 @@ impl W5H2Classifier {
     /// - head_weights.json (classification head)
     /// - tokenizer.json (HuggingFace tokenizer)
     pub fn load(model_dir: &Path) -> Result<Self> {
+        if !crate::security::bert_classifier::ort_available() {
+            return Err(NyayaError::ModelLoad("ONNX runtime not available".to_string()).into());
+        }
         let onnx_path = model_dir.join("model.onnx");
         let head_path = model_dir.join("head_weights.json");
         let tokenizer_path = model_dir.join("tokenizer.json");

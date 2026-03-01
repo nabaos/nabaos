@@ -1124,7 +1124,12 @@ impl Orchestrator {
                     params: std::collections::HashMap::new(),
                 }
             };
-            intent_key_obj = intent.key();
+            // When ONNX is unavailable, use "unknown_unknown" key (same as #[cfg(not(feature = "bert"))])
+            if !bert_classifier::ort_available() {
+                intent_key_obj = IntentKey("unknown_unknown".to_string());
+            } else {
+                intent_key_obj = intent.key();
+            }
             intent_key = intent_key_obj.to_string();
         }
         #[cfg(not(feature = "bert"))]
