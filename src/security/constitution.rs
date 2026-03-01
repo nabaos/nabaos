@@ -311,9 +311,11 @@ impl ConstitutionEnforcer {
     ///   "send" from matching "transcend" or "sending"
     /// - Wildcard "*" matches any action
     pub fn check_ability(&self, ability: &str) -> ConstitutionCheck {
-        // Extract the action part (before the dot) for matching
-        let action_part = ability.split('.').next().unwrap_or(ability).to_lowercase();
-        let target_part: Option<String> = ability.split('.').nth(1).map(|s| s.to_lowercase());
+        // Extract the action part (before separator) for matching.
+        // Intent keys use '_' (e.g. "check_email"), tool names may use '.' (e.g. "email.send").
+        let sep = if ability.contains('.') { '.' } else { '_' };
+        let action_part = ability.split(sep).next().unwrap_or(ability).to_lowercase();
+        let target_part: Option<String> = ability.split(sep).nth(1).map(|s| s.to_lowercase());
 
         for rule in &self.constitution.rules {
             let has_action_triggers = !rule.trigger_actions.is_empty();
