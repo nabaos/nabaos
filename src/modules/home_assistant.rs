@@ -290,43 +290,43 @@ mod tests {
     #[test]
     fn test_config_from_env_scenarios() {
         // 1. Missing URL
-        std::env::remove_var("NABA_HA_URL");
-        std::env::remove_var("NABA_HA_TOKEN");
+        unsafe { std::env::remove_var("NABA_HA_URL"); }
+        unsafe { std::env::remove_var("NABA_HA_TOKEN"); }
         let result = HaConfig::from_env();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("NABA_HA_URL"));
 
         // 2. Missing token
-        std::env::set_var("NABA_HA_URL", "http://localhost:8123");
-        std::env::remove_var("NABA_HA_TOKEN");
+        unsafe { std::env::set_var("NABA_HA_URL", "http://localhost:8123"); }
+        unsafe { std::env::remove_var("NABA_HA_TOKEN"); }
         let result = HaConfig::from_env();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("NABA_HA_TOKEN"));
 
         // 3. Empty URL
-        std::env::set_var("NABA_HA_URL", "");
-        std::env::set_var("NABA_HA_TOKEN", "tok");
+        unsafe { std::env::set_var("NABA_HA_URL", ""); }
+        unsafe { std::env::set_var("NABA_HA_TOKEN", "tok"); }
         let result = HaConfig::from_env();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must not be empty"));
 
         // 4. Empty token
-        std::env::set_var("NABA_HA_URL", "http://ha:8123");
-        std::env::set_var("NABA_HA_TOKEN", "");
+        unsafe { std::env::set_var("NABA_HA_URL", "http://ha:8123"); }
+        unsafe { std::env::set_var("NABA_HA_TOKEN", ""); }
         let result = HaConfig::from_env();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must not be empty"));
 
         // 5. Valid config — strips trailing slash
-        std::env::set_var("NABA_HA_URL", "http://localhost:8123/");
-        std::env::set_var("NABA_HA_TOKEN", "test_token");
+        unsafe { std::env::set_var("NABA_HA_URL", "http://localhost:8123/"); }
+        unsafe { std::env::set_var("NABA_HA_TOKEN", "test_token"); }
         let config = HaConfig::from_env().unwrap();
         assert_eq!(config.url, "http://localhost:8123");
         assert_eq!(config.token, "test_token");
 
         // Cleanup
-        std::env::remove_var("NABA_HA_URL");
-        std::env::remove_var("NABA_HA_TOKEN");
+        unsafe { std::env::remove_var("NABA_HA_URL"); }
+        unsafe { std::env::remove_var("NABA_HA_TOKEN"); }
     }
 
     // -- entity_id validation --

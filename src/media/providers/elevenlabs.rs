@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_from_env_missing_key() {
-        std::env::remove_var("NABA_ELEVENLABS_API_KEY");
+        unsafe { std::env::remove_var("NABA_ELEVENLABS_API_KEY"); }
         assert!(ElevenLabsClient::from_env().is_none());
     }
 }

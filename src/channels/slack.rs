@@ -154,14 +154,14 @@ mod tests {
 
     #[test]
     fn test_slack_not_configured_without_token() {
-        std::env::remove_var("NABA_SLACK_BOT_TOKEN");
+        unsafe { std::env::remove_var("NABA_SLACK_BOT_TOKEN"); }
         let channel = SlackChannel::new();
         assert!(!channel.is_configured());
     }
 
     #[tokio::test]
     async fn test_send_message_without_token_returns_error() {
-        std::env::remove_var("NABA_SLACK_BOT_TOKEN");
+        unsafe { std::env::remove_var("NABA_SLACK_BOT_TOKEN"); }
         let channel = SlackChannel::new();
         let result = channel.send_message("#general", "hello").await;
         assert!(result.is_err());
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_verify_signature_no_secret() {
-        std::env::remove_var("NABA_SLACK_SIGNING_SECRET");
+        unsafe { std::env::remove_var("NABA_SLACK_SIGNING_SECRET"); }
         let channel = SlackChannel::new();
         assert!(!channel.verify_signature("12345", "body", "v0=abc"));
     }

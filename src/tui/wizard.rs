@@ -1,13 +1,14 @@
 //! Full-screen setup wizard — immersive TUI for first-run configuration.
 //!
-//! A 5-step interactive wizard with:
-//! - Rising sun ASCII art logo
-//! - Scrollable provider selection with category headers
-//! - API key input with masked display
-//! - Background model discovery
+//! An 8-step interactive wizard with:
+//! - Geometric constellation logo
+//! - Provider selection with category headers
+//! - API key input with masked display + multi-model selection
 //! - Constitution template picker
+//! - Persona/style selection (built-in + SillyTavern import)
+//! - Agent catalog browser with multi-select
 //! - Channel configuration
-//! - Animated summary screen
+//! - Summary screen
 
 use std::io;
 use std::sync::mpsc;
@@ -27,75 +28,115 @@ use ratatui::widgets::{
 use ratatui::Terminal;
 
 // ── Color palette ───────────────────────────────────────────────────────────
-// Muted, cohesive scheme — warm amber/gold for accents, slate for structure.
 
-const BG: Color = Color::Rgb(22, 22, 30);         // deep navy-black
-const FG: Color = Color::Rgb(200, 200, 210);       // soft white
-const DIM: Color = Color::Rgb(90, 90, 105);        // muted gray
-const ACCENT: Color = Color::Rgb(255, 175, 95);    // warm amber
-const ACCENT2: Color = Color::Rgb(255, 135, 95);   // coral
-const HIGHLIGHT_BG: Color = Color::Rgb(50, 48, 65); // selection bar
-const GREEN: Color = Color::Rgb(120, 220, 140);    // success
-const BORDER: Color = Color::Rgb(60, 58, 75);      // border gray
-const HEADING: Color = Color::Rgb(160, 155, 180);  // section headers
-const SUN_CORE: Color = Color::Rgb(255, 200, 80);  // sun center
-const SUN_RAY: Color = Color::Rgb(255, 165, 70);   // sun rays
-const SUN_GLOW: Color = Color::Rgb(200, 120, 60);  // sun glow
-const SUN_HORIZON: Color = Color::Rgb(120, 80, 50); // horizon line
-const STEP_DONE: Color = Color::Rgb(120, 220, 140); // completed step
-const STEP_ACTIVE: Color = Color::Rgb(255, 175, 95); // current step
-const STEP_TODO: Color = Color::Rgb(70, 68, 85);     // future step
+const BG: Color = Color::Rgb(22, 22, 30);
+const FG: Color = Color::Rgb(200, 200, 210);
+const DIM: Color = Color::Rgb(90, 90, 105);
+const ACCENT: Color = Color::Rgb(255, 175, 95);
+const ACCENT2: Color = Color::Rgb(255, 135, 95);
+const HIGHLIGHT_BG: Color = Color::Rgb(50, 48, 65);
+const GREEN: Color = Color::Rgb(120, 220, 140);
+const BORDER: Color = Color::Rgb(60, 58, 75);
+const HEADING: Color = Color::Rgb(160, 155, 180);
+const STEP_DONE: Color = Color::Rgb(120, 220, 140);
+const STEP_ACTIVE: Color = Color::Rgb(255, 175, 95);
+const STEP_TODO: Color = Color::Rgb(70, 68, 85);
 
-// ── ASCII art ───────────────────────────────────────────────────────────────
+// Logo colors — constellation / geometric node graph
+const NODE_BRIGHT: Color = Color::Rgb(180, 160, 255);   // bright nodes
+const NODE_DIM: Color = Color::Rgb(100, 90, 150);       // dim nodes
+const EDGE: Color = Color::Rgb(70, 65, 110);            // connection lines
+const GLOW: Color = Color::Rgb(140, 120, 200);          // node glow
 
-fn sun_art() -> Vec<Line<'static>> {
+// ── ASCII art — geometric constellation ─────────────────────────────────────
+
+fn logo_art() -> Vec<Line<'static>> {
+    let s = |text: &'static str, color: Color| Span::styled(text, Style::default().fg(color).bg(BG));
+
     vec![
         Line::from(vec![
-            Span::styled("                    ", Style::default().bg(BG)),
-            Span::styled("·  ·", Style::default().fg(SUN_GLOW).bg(BG)),
-            Span::styled("  ·", Style::default().fg(SUN_HORIZON).bg(BG)),
+            s("                        ", BG),
+            s("◇", NODE_DIM),
         ]),
         Line::from(vec![
-            Span::styled("              ", Style::default().bg(BG)),
-            Span::styled("·", Style::default().fg(SUN_HORIZON).bg(BG)),
-            Span::styled("    ", Style::default().bg(BG)),
-            Span::styled("▄▄████▄▄", Style::default().fg(SUN_CORE).bg(BG)),
-            Span::styled("    ", Style::default().bg(BG)),
-            Span::styled("·", Style::default().fg(SUN_HORIZON).bg(BG)),
+            s("                      ", BG),
+            s("╱", EDGE),
+            s(" ", BG),
+            s("·", NODE_DIM),
+            s(" ", BG),
+            s("╲", EDGE),
         ]),
         Line::from(vec![
-            Span::styled("           ", Style::default().bg(BG)),
-            Span::styled("·", Style::default().fg(SUN_GLOW).bg(BG)),
-            Span::styled("  ", Style::default().bg(BG)),
-            Span::styled("▄█████████████▄", Style::default().fg(SUN_CORE).bg(BG)),
-            Span::styled("  ", Style::default().bg(BG)),
-            Span::styled("·", Style::default().fg(SUN_GLOW).bg(BG)),
+            s("               ", BG),
+            s("◇", NODE_DIM),
+            s("──────", EDGE),
+            s("◆", NODE_BRIGHT),
+            s("       ", BG),
+            s("◆", NODE_BRIGHT),
+            s("──────", EDGE),
+            s("◇", NODE_DIM),
         ]),
         Line::from(vec![
-            Span::styled("          ", Style::default().bg(BG)),
-            Span::styled("╱", Style::default().fg(SUN_RAY).bg(BG)),
-            Span::styled(" ", Style::default().bg(BG)),
-            Span::styled("██████████████████", Style::default().fg(SUN_CORE).bg(BG)),
-            Span::styled(" ", Style::default().bg(BG)),
-            Span::styled("╲", Style::default().fg(SUN_RAY).bg(BG)),
+            s("              ", BG),
+            s("╱", EDGE),
+            s("       ", BG),
+            s("╱", EDGE),
+            s(" ", BG),
+            s("╲", EDGE),
+            s("     ", BG),
+            s("╱", EDGE),
+            s(" ", BG),
+            s("╲", EDGE),
         ]),
         Line::from(vec![
-            Span::styled("       ", Style::default().bg(BG)),
-            Span::styled("── ", Style::default().fg(SUN_RAY).bg(BG)),
-            Span::styled("████████████████████", Style::default().fg(SUN_CORE).bg(BG)),
-            Span::styled(" ──", Style::default().fg(SUN_RAY).bg(BG)),
+            s("            ", BG),
+            s("◆", GLOW),
+            s("───", EDGE),
+            s("◇", NODE_DIM),
+            s("──", EDGE),
+            s("◆", NODE_BRIGHT),
+            s("───", EDGE),
+            s("★", ACCENT),
+            s("───", EDGE),
+            s("◆", NODE_BRIGHT),
+            s("──", EDGE),
+            s("◇", NODE_DIM),
+            s("───", EDGE),
+            s("◆", GLOW),
         ]),
         Line::from(vec![
-            Span::styled("    ", Style::default().bg(BG)),
-            Span::styled("─── ", Style::default().fg(SUN_RAY).bg(BG)),
-            Span::styled("▀▀████████████████████▀▀", Style::default().fg(SUN_CORE).bg(BG)),
-            Span::styled(" ───", Style::default().fg(SUN_RAY).bg(BG)),
+            s("              ", BG),
+            s("╲", EDGE),
+            s("       ", BG),
+            s("╲", EDGE),
+            s(" ", BG),
+            s("╱", EDGE),
+            s("     ", BG),
+            s("╲", EDGE),
+            s(" ", BG),
+            s("╱", EDGE),
         ]),
         Line::from(vec![
-            Span::styled("▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁", Style::default().fg(SUN_HORIZON).bg(BG)),
+            s("               ", BG),
+            s("◇", NODE_DIM),
+            s("──────", EDGE),
+            s("◆", NODE_BRIGHT),
+            s("       ", BG),
+            s("◆", NODE_BRIGHT),
+            s("──────", EDGE),
+            s("◇", NODE_DIM),
         ]),
         Line::from(vec![
-            Span::styled("░░░░░▒▒▒▒▒▒▒▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▒▒▒▒▒▒▒░░░░░", Style::default().fg(SUN_GLOW).bg(BG)),
+            s("                      ", BG),
+            s("╲", EDGE),
+            s(" ", BG),
+            s("·", NODE_DIM),
+            s(" ", BG),
+            s("╱", EDGE),
+        ]),
+        Line::from(vec![
+            s("                        ", BG),
+            s("◇", NODE_DIM),
         ]),
     ]
 }
@@ -109,12 +150,10 @@ fn title_line() -> Line<'static> {
 }
 
 fn version_line() -> Line<'static> {
-    Line::from(vec![
-        Span::styled(
-            format!("v{}", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(DIM).bg(BG),
-        ),
-    ])
+    Line::from(vec![Span::styled(
+        format!("v{}", env!("CARGO_PKG_VERSION")),
+        Style::default().fg(DIM).bg(BG),
+    )])
 }
 
 // ── Wizard state ────────────────────────────────────────────────────────────
@@ -125,13 +164,15 @@ pub struct WizardResult {
     pub provider_name: String,
     pub base_url: String,
     pub api_key: String,
-    pub model: String,
+    pub models: Vec<String>,
+    pub primary_model: String,
     pub constitution: String,
+    pub persona: String,
     pub enable_telegram: bool,
     pub telegram_token: String,
     pub enable_web: bool,
     pub web_password: String,
-    pub starter_agent: Option<String>,
+    pub selected_agents: Vec<String>,
     pub download_webbert: bool,
 }
 
@@ -141,6 +182,8 @@ enum Step {
     Provider,
     ApiKeyModel,
     Constitution,
+    Persona,
+    Agents,
     Channels,
     Summary,
 }
@@ -152,30 +195,31 @@ impl Step {
             Self::Provider => 1,
             Self::ApiKeyModel => 2,
             Self::Constitution => 3,
-            Self::Channels => 4,
-            Self::Summary => 5,
+            Self::Persona => 4,
+            Self::Agents => 5,
+            Self::Channels => 6,
+            Self::Summary => 7,
         }
     }
 
+    #[allow(dead_code)]
     fn label(&self) -> &'static str {
         match self {
             Self::Welcome => "Welcome",
             Self::Provider => "Provider",
-            Self::ApiKeyModel => "API & Model",
-            Self::Constitution => "Constitution",
+            Self::ApiKeyModel => "Models",
+            Self::Constitution => "Rules",
+            Self::Persona => "Style",
+            Self::Agents => "Agents",
             Self::Channels => "Channels",
-            Self::Summary => "Summary",
+            Self::Summary => "Done",
         }
     }
 
     fn all() -> &'static [Step] {
         &[
-            Step::Welcome,
-            Step::Provider,
-            Step::ApiKeyModel,
-            Step::Constitution,
-            Step::Channels,
-            Step::Summary,
+            Step::Welcome, Step::Provider, Step::ApiKeyModel, Step::Constitution,
+            Step::Persona, Step::Agents, Step::Channels, Step::Summary,
         ]
     }
 
@@ -185,7 +229,9 @@ impl Step {
             Self::Welcome => Self::Provider,
             Self::Provider => Self::ApiKeyModel,
             Self::ApiKeyModel => Self::Constitution,
-            Self::Constitution => Self::Channels,
+            Self::Constitution => Self::Persona,
+            Self::Persona => Self::Agents,
+            Self::Agents => Self::Channels,
             Self::Channels => Self::Summary,
             Self::Summary => Self::Summary,
         }
@@ -197,7 +243,9 @@ impl Step {
             Self::Provider => Self::Welcome,
             Self::ApiKeyModel => Self::Provider,
             Self::Constitution => Self::ApiKeyModel,
-            Self::Channels => Self::Constitution,
+            Self::Persona => Self::Constitution,
+            Self::Agents => Self::Persona,
+            Self::Channels => Self::Agents,
             Self::Summary => Self::Channels,
         }
     }
@@ -218,6 +266,19 @@ enum BgMessage {
     ModelsError(String),
 }
 
+struct AgentItem {
+    name: String,
+    category: String,
+    description: String,
+    selected: bool,
+}
+
+struct PersonaItem {
+    id: String,
+    name: String,
+    description: String,
+}
+
 struct WizardState {
     step: Step,
     should_quit: bool,
@@ -232,8 +293,9 @@ struct WizardState {
     api_key_cursor: usize,
     show_api_key: bool,
 
-    // Model selection
+    // Model selection — multi-select
     models: Vec<String>,
+    model_selected: Vec<bool>,
     model_state: ListState,
     models_loading: bool,
     models_error: Option<String>,
@@ -244,22 +306,31 @@ struct WizardState {
     selected_provider_id: String,
     selected_provider_name: String,
     selected_base_url: String,
-    selected_model: String,
+    primary_model: String,
 
     // Constitution
     constitution_items: Vec<(String, String)>,
     constitution_state: ListState,
     selected_constitution: String,
 
+    // Persona
+    persona_items: Vec<PersonaItem>,
+    persona_state: ListState,
+    selected_persona: String,
+
+    // Agents
+    agent_items: Vec<AgentItem>,
+    agent_state: ListState,
+    agent_search: String,
+
     // Channels
-    channel_focus: usize, // 0=telegram, 1=web, 2=agent, 3=webbert
+    channel_focus: usize,
     telegram_enabled: bool,
     telegram_token: String,
     telegram_editing: bool,
     web_enabled: bool,
     web_password: String,
     web_editing: bool,
-    starter_agent: Option<String>,
     download_webbert: bool,
 
     // Animation
@@ -285,7 +356,7 @@ impl WizardState {
         }
 
         // Aggregators
-        provider_items.push(SelectItem { id: String::new(), label: "Aggregators".into(), hint: "use any model through a single API".into(), is_header: true, base_url: String::new() });
+        provider_items.push(SelectItem { id: String::new(), label: "Aggregators".into(), hint: "any model through a single API".into(), is_header: true, base_url: String::new() });
         for (id, name, hint) in &[
             ("openrouter", "OpenRouter", "any model via unified API"),
             ("nanogpt", "NanoGPT", "pay-per-token, no subscription"),
@@ -332,7 +403,6 @@ impl WizardState {
             }
         }
 
-        // Select first non-header item
         let mut provider_state = ListState::default();
         if let Some(idx) = provider_items.iter().position(|i| !i.is_header) {
             provider_state.select(Some(idx));
@@ -365,6 +435,64 @@ impl WizardState {
         let mut constitution_state = ListState::default();
         constitution_state.select(Some(0));
 
+        // Personas
+        let persona_items = vec![
+            PersonaItem { id: "default".into(), name: "Nyaya".into(), description: "Balanced, adaptive assistant (default)".into() },
+            PersonaItem { id: "sherlock".into(), name: "Sherlock".into(), description: "Formal, deductive, domain expert".into() },
+            PersonaItem { id: "ironman".into(), name: "J.A.R.V.I.S.".into(), description: "Witty, sardonic, technically brilliant".into() },
+            PersonaItem { id: "gandhi".into(), name: "Gandhi".into(), description: "Formal, principled, uses parables".into() },
+            PersonaItem { id: "ambedkar".into(), name: "Ambedkar".into(), description: "Scholarly, justice-focused, analytical".into() },
+            PersonaItem { id: "bhagat_singh".into(), name: "Bhagat Singh".into(), description: "Passionate, revolutionary, bold".into() },
+            PersonaItem { id: "custom".into(), name: "Custom".into(), description: "Import from SillyTavern or create new".into() },
+        ];
+        let mut persona_state = ListState::default();
+        persona_state.select(Some(0));
+
+        // Agents — load from catalog
+        let mut agent_items = Vec::new();
+        let data_dir = std::env::var("NABA_DATA_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::env::var("HOME")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
+                    .join(".nabaos")
+            });
+        let catalog_dir = data_dir.join("catalog");
+        let agent_catalog = crate::agent_os::catalog::AgentCatalog::new(&catalog_dir);
+        if let Ok(entries) = agent_catalog.list() {
+            for entry in entries {
+                agent_items.push(AgentItem {
+                    name: entry.name,
+                    category: entry.category,
+                    description: entry.description,
+                    selected: false,
+                });
+            }
+        }
+        // Fallback starter agents if catalog is empty
+        if agent_items.is_empty() {
+            for (name, cat, desc) in &[
+                ("morning-briefing", "Daily Productivity", "Calendar, weather, news summary"),
+                ("email-assistant", "Email & Communication", "Smart email triage and drafting"),
+                ("dev-helper", "Developer & DevOps", "Git, CI status, PR summaries"),
+                ("research-digest", "Research & Analysis", "Summarize papers and articles"),
+                ("budget-tracker", "Finance & Budgeting", "Track expenses and budgets"),
+                ("social-scheduler", "Social Media", "Schedule and manage posts"),
+            ] {
+                agent_items.push(AgentItem {
+                    name: name.to_string(),
+                    category: cat.to_string(),
+                    description: desc.to_string(),
+                    selected: false,
+                });
+            }
+        }
+        let mut agent_state = ListState::default();
+        if !agent_items.is_empty() {
+            agent_state.select(Some(0));
+        }
+
         Self {
             step: Step::Welcome,
             should_quit: false,
@@ -375,6 +503,7 @@ impl WizardState {
             api_key_cursor: 0,
             show_api_key: false,
             models: Vec::new(),
+            model_selected: Vec::new(),
             model_state: ListState::default(),
             models_loading: false,
             models_error: None,
@@ -383,10 +512,16 @@ impl WizardState {
             selected_provider_id: String::new(),
             selected_provider_name: String::new(),
             selected_base_url: String::new(),
-            selected_model: String::new(),
+            primary_model: String::new(),
             constitution_items,
             constitution_state,
             selected_constitution: "default".into(),
+            persona_items,
+            persona_state,
+            selected_persona: "default".into(),
+            agent_items,
+            agent_state,
+            agent_search: String::new(),
             channel_focus: 0,
             telegram_enabled: false,
             telegram_token: String::new(),
@@ -394,7 +529,6 @@ impl WizardState {
             web_enabled: false,
             web_password: String::new(),
             web_editing: false,
-            starter_agent: None,
             download_webbert: true,
             start_time: Instant::now(),
         }
@@ -405,37 +539,30 @@ impl WizardState {
             || self.selected_base_url.starts_with("http://127.")
     }
 
-    /// Lock in the provider selection and move to API key step.
     fn confirm_provider(&mut self) {
         if let Some(idx) = self.provider_state.selected() {
             let item = &self.provider_items[idx];
-            if item.is_header {
-                return;
-            }
+            if item.is_header { return; }
             self.selected_provider_id = item.id.clone();
             self.selected_provider_name = item.label.clone();
             self.selected_base_url = item.base_url.clone();
 
-            // Pre-fill model from catalog default
             let catalog = crate::providers::catalog::builtin_providers();
             if let Some(p) = catalog.iter().find(|p| p.id == self.selected_provider_id) {
                 if !p.default_model.is_empty() {
-                    self.selected_model = p.default_model.clone();
+                    self.primary_model = p.default_model.clone();
                 }
             }
-
             self.step = Step::ApiKeyModel;
         }
     }
 
-    /// Start background model discovery.
     fn discover_models(&mut self) {
-        if self.selected_base_url.is_empty() {
-            return;
-        }
+        if self.selected_base_url.is_empty() { return; }
         self.models_loading = true;
         self.models_error = None;
         self.models.clear();
+        self.model_selected.clear();
 
         let tx = self.bg_tx.clone();
         let base_url = self.selected_base_url.clone();
@@ -443,30 +570,32 @@ impl WizardState {
 
         std::thread::spawn(move || {
             match crate::providers::discovery::fetch_available_models(&base_url, &api_key) {
-                Ok(models) if !models.is_empty() => {
-                    tx.send(BgMessage::ModelsFound(models)).ok();
-                }
-                Ok(_) => {
-                    tx.send(BgMessage::ModelsError("No models found".into())).ok();
-                }
-                Err(e) => {
-                    tx.send(BgMessage::ModelsError(e.to_string())).ok();
-                }
+                Ok(models) if !models.is_empty() => { tx.send(BgMessage::ModelsFound(models)).ok(); }
+                Ok(_) => { tx.send(BgMessage::ModelsError("No models listed on this endpoint".into())).ok(); }
+                Err(e) => { tx.send(BgMessage::ModelsError(e.to_string())).ok(); }
             }
         });
     }
 
-    /// Poll background messages.
     fn poll_bg(&mut self) {
         while let Ok(msg) = self.bg_rx.try_recv() {
             match msg {
                 BgMessage::ModelsFound(m) => {
                     self.models_loading = false;
-                    self.models = m;
-                    if !self.models.is_empty() {
-                        self.model_state.select(Some(0));
-                        self.selected_model = self.models[0].clone();
+                    self.model_selected = vec![false; m.len()];
+                    // Auto-select the primary/default model
+                    if !self.primary_model.is_empty() {
+                        if let Some(idx) = m.iter().position(|x| x == &self.primary_model) {
+                            self.model_selected[idx] = true;
+                        }
                     }
+                    // If no default matched, select first
+                    if self.model_selected.iter().all(|s| !s) && !m.is_empty() {
+                        self.model_selected[0] = true;
+                        self.primary_model = m[0].clone();
+                    }
+                    self.models = m;
+                    self.model_state.select(Some(0));
                 }
                 BgMessage::ModelsError(e) => {
                     self.models_loading = false;
@@ -482,9 +611,7 @@ impl WizardState {
         let mut i = self.provider_state.selected().unwrap_or(0);
         loop {
             i = if i == 0 { len - 1 } else { i - 1 };
-            if !self.provider_items[i].is_header {
-                break;
-            }
+            if !self.provider_items[i].is_header { break; }
         }
         self.provider_state.select(Some(i));
     }
@@ -495,26 +622,65 @@ impl WizardState {
         let mut i = self.provider_state.selected().unwrap_or(0);
         loop {
             i = (i + 1) % len;
-            if !self.provider_items[i].is_header {
-                break;
-            }
+            if !self.provider_items[i].is_header { break; }
         }
         self.provider_state.select(Some(i));
     }
 
+    fn selected_models(&self) -> Vec<String> {
+        self.models.iter().zip(self.model_selected.iter())
+            .filter(|(_, sel)| **sel)
+            .map(|(m, _)| m.clone())
+            .collect()
+    }
+
+    fn selected_agents(&self) -> Vec<String> {
+        self.agent_items.iter()
+            .filter(|a| a.selected)
+            .map(|a| a.name.clone())
+            .collect()
+    }
+
+    fn filtered_agent_indices(&self) -> Vec<usize> {
+        if self.agent_search.is_empty() {
+            (0..self.agent_items.len()).collect()
+        } else {
+            let q = self.agent_search.to_lowercase();
+            self.agent_items.iter().enumerate()
+                .filter(|(_, a)| {
+                    a.name.to_lowercase().contains(&q)
+                        || a.category.to_lowercase().contains(&q)
+                        || a.description.to_lowercase().contains(&q)
+                })
+                .map(|(i, _)| i)
+                .collect()
+        }
+    }
+
     fn into_result(self) -> WizardResult {
+        let models = self.selected_models();
+        let agents = self.selected_agents();
+        let primary = if !self.primary_model.is_empty() {
+            self.primary_model.clone()
+        } else if let Some(first) = models.first() {
+            first.clone()
+        } else {
+            String::new()
+        };
         WizardResult {
             provider_id: self.selected_provider_id,
             provider_name: self.selected_provider_name,
             base_url: self.selected_base_url,
             api_key: self.api_key_input,
-            model: self.selected_model,
+            models,
+            primary_model: primary,
             constitution: self.selected_constitution,
+            persona: self.selected_persona,
             enable_telegram: self.telegram_enabled,
             telegram_token: self.telegram_token,
             enable_web: self.web_enabled,
             web_password: self.web_password,
-            starter_agent: self.starter_agent,
+            selected_agents: agents,
             download_webbert: self.download_webbert,
         }
     }
@@ -522,7 +688,6 @@ impl WizardState {
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
-/// Run the interactive setup wizard. Returns `None` if the user quits.
 pub fn run_wizard() -> crate::core::error::Result<Option<WizardResult>> {
     enable_raw_mode().map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?;
     io::stdout()
@@ -552,12 +717,8 @@ pub fn run_wizard() -> crate::core::error::Result<Option<WizardResult>> {
             }
         }
 
-        if state.should_quit {
-            break Ok(None);
-        }
-        if state.confirmed {
-            break Ok(Some(state.into_result()));
-        }
+        if state.should_quit { break Ok(None); }
+        if state.confirmed { break Ok(Some(state.into_result())); }
     };
 
     disable_raw_mode().ok();
@@ -569,19 +730,16 @@ pub fn run_wizard() -> crate::core::error::Result<Option<WizardResult>> {
 // ── Key handling ────────────────────────────────────────────────────────────
 
 fn handle_key(state: &mut WizardState, key: crossterm::event::KeyEvent) {
-    // Global: Ctrl+C or Esc to quit
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         state.should_quit = true;
         return;
     }
     if key.code == KeyCode::Esc {
-        if state.step == Step::Welcome {
-            state.should_quit = true;
-        } else if state.step == Step::ApiKeyModel && state.telegram_editing {
-            // noop
-        } else {
-            state.step = state.step.prev();
-        }
+        // If editing a text field, just cancel editing
+        if state.telegram_editing { state.telegram_editing = false; return; }
+        if state.web_editing { state.web_editing = false; return; }
+        if state.step == Step::Welcome { state.should_quit = true; }
+        else { state.step = state.step.prev(); }
         return;
     }
 
@@ -593,93 +751,110 @@ fn handle_key(state: &mut WizardState, key: crossterm::event::KeyEvent) {
                 state.should_quit = true;
             }
         }
-        Step::Provider => {
-            match key.code {
-                KeyCode::Up | KeyCode::Char('k') => state.move_provider_up(),
-                KeyCode::Down | KeyCode::Char('j') => state.move_provider_down(),
-                KeyCode::Enter => state.confirm_provider(),
-                KeyCode::Char('q') => state.should_quit = true,
-                _ => {}
+        Step::Provider => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => state.move_provider_up(),
+            KeyCode::Down | KeyCode::Char('j') => state.move_provider_down(),
+            KeyCode::Enter => state.confirm_provider(),
+            KeyCode::Char('q') => state.should_quit = true,
+            _ => {}
+        },
+        Step::ApiKeyModel => handle_api_key_model(state, key),
+        Step::Constitution => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                let len = state.constitution_items.len();
+                if len > 0 {
+                    let i = state.constitution_state.selected().unwrap_or(0);
+                    state.constitution_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+                }
             }
-        }
-        Step::ApiKeyModel => {
-            handle_api_key_model(state, key);
-        }
-        Step::Constitution => {
-            match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    let len = state.constitution_items.len();
-                    if len > 0 {
-                        let i = state.constitution_state.selected().unwrap_or(0);
-                        state.constitution_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
-                    }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let len = state.constitution_items.len();
+                if len > 0 {
+                    let i = state.constitution_state.selected().unwrap_or(0);
+                    state.constitution_state.select(Some((i + 1) % len));
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    let len = state.constitution_items.len();
-                    if len > 0 {
-                        let i = state.constitution_state.selected().unwrap_or(0);
-                        state.constitution_state.select(Some((i + 1) % len));
-                    }
-                }
-                KeyCode::Enter => {
-                    if let Some(idx) = state.constitution_state.selected() {
-                        state.selected_constitution = state.constitution_items[idx].0.clone();
-                        state.step = Step::Channels;
-                    }
-                }
-                _ => {}
             }
-        }
-        Step::Channels => {
-            handle_channels(state, key);
-        }
-        Step::Summary => {
-            match key.code {
-                KeyCode::Enter => {
-                    state.confirmed = true;
+            KeyCode::Enter => {
+                if let Some(idx) = state.constitution_state.selected() {
+                    state.selected_constitution = state.constitution_items[idx].0.clone();
+                    state.step = Step::Persona;
                 }
-                KeyCode::Char('b') | KeyCode::Backspace => {
-                    state.step = Step::Channels;
-                }
-                _ => {}
             }
-        }
+            _ => {}
+        },
+        Step::Persona => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                let len = state.persona_items.len();
+                if len > 0 {
+                    let i = state.persona_state.selected().unwrap_or(0);
+                    state.persona_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let len = state.persona_items.len();
+                if len > 0 {
+                    let i = state.persona_state.selected().unwrap_or(0);
+                    state.persona_state.select(Some((i + 1) % len));
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(idx) = state.persona_state.selected() {
+                    state.selected_persona = state.persona_items[idx].id.clone();
+                    state.step = Step::Agents;
+                }
+            }
+            _ => {}
+        },
+        Step::Agents => handle_agents(state, key),
+        Step::Channels => handle_channels(state, key),
+        Step::Summary => match key.code {
+            KeyCode::Enter => { state.confirmed = true; }
+            KeyCode::Char('b') | KeyCode::Backspace => { state.step = Step::Channels; }
+            _ => {}
+        },
     }
 }
 
 fn handle_api_key_model(state: &mut WizardState, key: crossterm::event::KeyEvent) {
     let is_local = state.is_local_provider();
 
-    // If models are loaded and we're in model selection mode
-    if !state.models.is_empty() && !state.api_key_input.is_empty() || (is_local && !state.models.is_empty()) {
+    // If models are loaded — multi-select mode
+    if !state.models.is_empty() {
         match key.code {
-            KeyCode::Tab => {
-                state.show_api_key = !state.show_api_key;
-            }
-            KeyCode::Up | KeyCode::Char('k') if !state.models.is_empty() => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 let len = state.models.len();
                 let i = state.model_state.selected().unwrap_or(0);
                 state.model_state.select(Some(if i == 0 { len - 1 } else { i - 1 }));
-                state.selected_model = state.models[state.model_state.selected().unwrap_or(0)].clone();
             }
-            KeyCode::Down | KeyCode::Char('j') if !state.models.is_empty() => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 let len = state.models.len();
                 let i = state.model_state.selected().unwrap_or(0);
                 state.model_state.select(Some((i + 1) % len));
-                state.selected_model = state.models[state.model_state.selected().unwrap_or(0)].clone();
             }
-            KeyCode::Enter => {
+            KeyCode::Char(' ') => {
+                // Toggle selection
                 if let Some(idx) = state.model_state.selected() {
-                    if idx < state.models.len() {
-                        state.selected_model = state.models[idx].clone();
+                    if idx < state.model_selected.len() {
+                        state.model_selected[idx] = !state.model_selected[idx];
+                        // Update primary model to first selected
+                        if let Some(first) = state.models.iter().zip(state.model_selected.iter())
+                            .find(|(_, s)| **s).map(|(m, _)| m.clone()) {
+                            state.primary_model = first;
+                        }
                     }
                 }
-                state.step = Step::Constitution;
             }
-            KeyCode::Char('s') => {
-                // Skip model selection
-                state.step = Step::Constitution;
+            KeyCode::Char('p') => {
+                // Set as primary
+                if let Some(idx) = state.model_state.selected() {
+                    if idx < state.models.len() {
+                        state.model_selected[idx] = true;
+                        state.primary_model = state.models[idx].clone();
+                    }
+                }
             }
+            KeyCode::Tab => { state.show_api_key = !state.show_api_key; }
+            KeyCode::Enter => { state.step = Step::Constitution; }
             _ => {}
         }
         return;
@@ -688,7 +863,7 @@ fn handle_api_key_model(state: &mut WizardState, key: crossterm::event::KeyEvent
     // API key text input mode
     if !is_local {
         match key.code {
-            KeyCode::Char(c) => {
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 state.api_key_input.insert(state.api_key_cursor, c);
                 state.api_key_cursor += 1;
             }
@@ -698,27 +873,19 @@ fn handle_api_key_model(state: &mut WizardState, key: crossterm::event::KeyEvent
                     state.api_key_input.remove(state.api_key_cursor);
                 }
             }
-            KeyCode::Left => {
-                state.api_key_cursor = state.api_key_cursor.saturating_sub(1);
-            }
-            KeyCode::Right => {
-                state.api_key_cursor = (state.api_key_cursor + 1).min(state.api_key_input.len());
-            }
-            KeyCode::Tab => {
-                state.show_api_key = !state.show_api_key;
-            }
+            KeyCode::Left => { state.api_key_cursor = state.api_key_cursor.saturating_sub(1); }
+            KeyCode::Right => { state.api_key_cursor = (state.api_key_cursor + 1).min(state.api_key_input.len()); }
+            KeyCode::Tab => { state.show_api_key = !state.show_api_key; }
             KeyCode::Enter => {
                 if !state.api_key_input.is_empty() {
                     state.discover_models();
                 } else {
-                    // Skip with no API key
                     state.step = Step::Constitution;
                 }
             }
             _ => {}
         }
     } else {
-        // Local provider — auto-discover on enter
         match key.code {
             KeyCode::Enter => {
                 if state.models.is_empty() && !state.models_loading {
@@ -732,13 +899,80 @@ fn handle_api_key_model(state: &mut WizardState, key: crossterm::event::KeyEvent
     }
 }
 
+fn handle_agents(state: &mut WizardState, key: crossterm::event::KeyEvent) {
+    let filtered = state.filtered_agent_indices();
+
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') if state.agent_search.is_empty() => {
+            if !filtered.is_empty() {
+                let i = state.agent_state.selected().unwrap_or(0);
+                state.agent_state.select(Some(if i == 0 { filtered.len() - 1 } else { i - 1 }));
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') if state.agent_search.is_empty() => {
+            if !filtered.is_empty() {
+                let i = state.agent_state.selected().unwrap_or(0);
+                state.agent_state.select(Some((i + 1) % filtered.len()));
+            }
+        }
+        KeyCode::Up => {
+            if !filtered.is_empty() {
+                let i = state.agent_state.selected().unwrap_or(0);
+                state.agent_state.select(Some(if i == 0 { filtered.len() - 1 } else { i - 1 }));
+            }
+        }
+        KeyCode::Down => {
+            if !filtered.is_empty() {
+                let i = state.agent_state.selected().unwrap_or(0);
+                state.agent_state.select(Some((i + 1) % filtered.len()));
+            }
+        }
+        KeyCode::Char(' ') => {
+            if let Some(view_idx) = state.agent_state.selected() {
+                if view_idx < filtered.len() {
+                    let real_idx = filtered[view_idx];
+                    state.agent_items[real_idx].selected = !state.agent_items[real_idx].selected;
+                }
+            }
+        }
+        KeyCode::Char('a') if state.agent_search.is_empty() => {
+            // Select all visible
+            for &idx in &filtered {
+                state.agent_items[idx].selected = true;
+            }
+        }
+        KeyCode::Char('n') if state.agent_search.is_empty() => {
+            // Select none
+            for &idx in &filtered {
+                state.agent_items[idx].selected = false;
+            }
+        }
+        KeyCode::Enter => {
+            state.step = Step::Channels;
+        }
+        KeyCode::Backspace => {
+            if !state.agent_search.is_empty() {
+                state.agent_search.pop();
+                state.agent_state.select(Some(0));
+            }
+        }
+        KeyCode::Char(c) if !state.agent_search.is_empty() || (c != 'k' && c != 'j' && c != 'a' && c != 'n') => {
+            // Search mode — any letter starts filtering
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                state.agent_search.push(c);
+                state.agent_state.select(Some(0));
+            }
+        }
+        _ => {}
+    }
+}
+
 fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
-    // If editing a text field
     if state.telegram_editing {
         match key.code {
             KeyCode::Char(c) => { state.telegram_token.push(c); }
             KeyCode::Backspace => { state.telegram_token.pop(); }
-            KeyCode::Enter | KeyCode::Esc => { state.telegram_editing = false; }
+            KeyCode::Enter => { state.telegram_editing = false; }
             _ => {}
         }
         return;
@@ -747,7 +981,7 @@ fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
         match key.code {
             KeyCode::Char(c) => { state.web_password.push(c); }
             KeyCode::Backspace => { state.web_password.pop(); }
-            KeyCode::Enter | KeyCode::Esc => { state.web_editing = false; }
+            KeyCode::Enter => { state.web_editing = false; }
             _ => {}
         }
         return;
@@ -758,9 +992,9 @@ fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
             state.channel_focus = state.channel_focus.saturating_sub(1);
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            state.channel_focus = (state.channel_focus + 1).min(3);
+            state.channel_focus = (state.channel_focus + 1).min(2);
         }
-        KeyCode::Char(' ') | KeyCode::Enter => {
+        KeyCode::Char(' ') | KeyCode::Enter if key.code == KeyCode::Char(' ') => {
             match state.channel_focus {
                 0 => {
                     state.telegram_enabled = !state.telegram_enabled;
@@ -775,24 +1009,15 @@ fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
                     }
                 }
                 2 => {
-                    // Cycle starter agent
-                    state.starter_agent = match &state.starter_agent {
-                        None => Some("morning-briefing".into()),
-                        Some(a) if a == "morning-briefing" => Some("email-assistant".into()),
-                        Some(a) if a == "email-assistant" => Some("dev-helper".into()),
-                        _ => None,
-                    };
-                }
-                3 => {
                     state.download_webbert = !state.download_webbert;
                 }
                 _ => {}
             }
         }
-        KeyCode::Tab => {
+        KeyCode::Enter => {
             state.step = Step::Summary;
         }
-        KeyCode::Char('n') => {
+        KeyCode::Tab | KeyCode::Char('n') => {
             state.step = Step::Summary;
         }
         _ => {}
@@ -803,12 +1028,9 @@ fn handle_channels(state: &mut WizardState, key: crossterm::event::KeyEvent) {
 
 fn draw_wizard(frame: &mut ratatui::Frame, state: &WizardState) {
     let size = frame.area();
-
-    // Fill background
     let bg_block = Block::default().style(Style::default().bg(BG));
     frame.render_widget(bg_block, size);
 
-    // Outer frame with rounded borders
     let outer = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -818,10 +1040,12 @@ fn draw_wizard(frame: &mut ratatui::Frame, state: &WizardState) {
     frame.render_widget(outer, size);
 
     match state.step {
-        Step::Welcome => draw_welcome(frame, inner, state),
+        Step::Welcome => draw_welcome(frame, inner),
         Step::Provider => draw_provider(frame, inner, state),
         Step::ApiKeyModel => draw_api_key_model(frame, inner, state),
         Step::Constitution => draw_constitution(frame, inner, state),
+        Step::Persona => draw_persona(frame, inner, state),
+        Step::Agents => draw_agents(frame, inner, state),
         Step::Channels => draw_channels(frame, inner, state),
         Step::Summary => draw_summary(frame, inner, state),
     }
@@ -832,36 +1056,17 @@ fn draw_step_indicator(frame: &mut ratatui::Frame, area: Rect, current: Step) {
     let mut spans = Vec::new();
 
     for (i, step) in steps.iter().enumerate() {
-        let color = if step.index() < current.index() {
-            STEP_DONE
-        } else if *step == current {
-            STEP_ACTIVE
-        } else {
-            STEP_TODO
-        };
+        let color = if step.index() < current.index() { STEP_DONE }
+            else if *step == current { STEP_ACTIVE }
+            else { STEP_TODO };
 
-        let symbol = if step.index() < current.index() {
-            "●"
-        } else if *step == current {
-            "◉"
-        } else {
-            "○"
-        };
+        let symbol = if step.index() < current.index() { "●" }
+            else if *step == current { "◉" }
+            else { "○" };
 
-        spans.push(Span::styled(
-            format!(" {} ", symbol),
-            Style::default().fg(color).bg(BG),
-        ));
-        spans.push(Span::styled(
-            step.label(),
-            Style::default().fg(if *step == current { ACCENT } else { DIM }).bg(BG),
-        ));
-
+        spans.push(Span::styled(format!("{}", symbol), Style::default().fg(color).bg(BG)));
         if i < steps.len() - 1 {
-            spans.push(Span::styled(
-                " ── ",
-                Style::default().fg(STEP_TODO).bg(BG),
-            ));
+            spans.push(Span::styled("──", Style::default().fg(STEP_TODO).bg(BG)));
         }
     }
 
@@ -874,188 +1079,107 @@ fn draw_step_indicator(frame: &mut ratatui::Frame, area: Rect, current: Step) {
 fn draw_hint_bar(frame: &mut ratatui::Frame, area: Rect, hints: &[(&str, &str)]) {
     let mut spans = Vec::new();
     for (i, (key, desc)) in hints.iter().enumerate() {
-        spans.push(Span::styled(
-            format!(" {} ", key),
-            Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(
-            desc.to_string(),
-            Style::default().fg(DIM).bg(BG),
-        ));
+        spans.push(Span::styled(format!(" {} ", key), Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(desc.to_string(), Style::default().fg(DIM).bg(BG)));
         if i < hints.len() - 1 {
             spans.push(Span::styled(" · ", Style::default().fg(STEP_TODO).bg(BG)));
         }
     }
-    let p = Paragraph::new(Line::from(spans))
-        .alignment(Alignment::Center)
-        .style(Style::default().bg(BG));
-    frame.render_widget(p, area);
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).alignment(Alignment::Center).style(Style::default().bg(BG)),
+        area,
+    );
 }
 
-// ── Welcome screen ──────────────────────────────────────────────────────────
-
-fn draw_welcome(frame: &mut ratatui::Frame, area: Rect, _state: &WizardState) {
+fn draw_welcome(frame: &mut ratatui::Frame, area: Rect) {
     let chunks = Layout::vertical([
-        Constraint::Percentage(15),
-        Constraint::Length(8),   // ASCII art
-        Constraint::Length(1),   // title
-        Constraint::Length(1),   // version
-        Constraint::Length(3),   // spacer
-        Constraint::Length(3),   // tagline
-        Constraint::Length(2),   // spacer
-        Constraint::Length(1),   // hint
+        Constraint::Percentage(12),
+        Constraint::Length(9),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Length(2),
+        Constraint::Length(1),
         Constraint::Min(0),
     ]).split(area);
 
-    // Sun art
-    let art = sun_art();
-    let art_p = Paragraph::new(art)
-        .alignment(Alignment::Center)
-        .style(Style::default().bg(BG));
-    frame.render_widget(art_p, chunks[1]);
+    frame.render_widget(Paragraph::new(logo_art()).alignment(Alignment::Center).style(Style::default().bg(BG)), chunks[1]);
+    frame.render_widget(Paragraph::new(title_line()).alignment(Alignment::Center).style(Style::default().bg(BG)), chunks[2]);
+    frame.render_widget(Paragraph::new(version_line()).alignment(Alignment::Center).style(Style::default().bg(BG)), chunks[3]);
 
-    // Title
-    let title = Paragraph::new(title_line())
-        .alignment(Alignment::Center)
-        .style(Style::default().bg(BG));
-    frame.render_widget(title, chunks[2]);
-
-    // Version
-    let ver = Paragraph::new(version_line())
-        .alignment(Alignment::Center)
-        .style(Style::default().bg(BG));
-    frame.render_widget(ver, chunks[3]);
-
-    // Tagline
     let tagline = Paragraph::new(vec![
         Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "The agent that uses all agents",
-                Style::default().fg(FG).bg(BG),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(
-                "cached when possible · autonomous when needed · independent always",
-                Style::default().fg(DIM).bg(BG),
-            ),
-        ]),
-    ])
-    .alignment(Alignment::Center)
-    .style(Style::default().bg(BG));
+        Line::from(vec![Span::styled("The agent that uses all agents", Style::default().fg(FG).bg(BG))]),
+        Line::from(vec![Span::styled("cached when possible · autonomous when needed · independent always", Style::default().fg(DIM).bg(BG))]),
+    ]).alignment(Alignment::Center).style(Style::default().bg(BG));
     frame.render_widget(tagline, chunks[5]);
 
-    // Hint
-    draw_hint_bar(frame, chunks[7], &[
-        ("Enter", "begin setup"),
-        ("Esc", "quit"),
-    ]);
+    draw_hint_bar(frame, chunks[7], &[("Enter", "begin setup"), ("Esc", "quit")]);
 }
-
-// ── Provider selection ──────────────────────────────────────────────────────
 
 fn draw_provider(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     let chunks = Layout::vertical([
-        Constraint::Length(1),  // step indicator
-        Constraint::Length(1),  // spacer
-        Constraint::Min(8),    // provider list
-        Constraint::Length(1),  // hint bar
+        Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
     ]).split(area);
 
     draw_step_indicator(frame, chunks[0], Step::Provider);
 
-    // Provider list in a centered box
     let list_area = centered_rect(60, 90, chunks[2]);
 
     let items: Vec<ListItem> = state.provider_items.iter().map(|item| {
         if item.is_header {
             let mut spans = vec![
-                Span::styled(
-                    format!("  {} ", item.label),
-                    Style::default().fg(HEADING).bg(BG).add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(format!("  {} ", item.label), Style::default().fg(HEADING).bg(BG).add_modifier(Modifier::BOLD)),
             ];
             if !item.hint.is_empty() {
-                spans.push(Span::styled(
-                    format!("  {}", item.hint),
-                    Style::default().fg(DIM).bg(BG),
-                ));
+                spans.push(Span::styled(format!("  {}", item.hint), Style::default().fg(DIM).bg(BG)));
             }
             ListItem::new(Line::from(spans)).style(Style::default().bg(BG))
         } else {
             ListItem::new(Line::from(vec![
                 Span::styled("    ", Style::default().bg(BG)),
-                Span::styled(
-                    format!("{:<22}", item.label),
-                    Style::default().fg(FG).bg(BG),
-                ),
-                Span::styled(
-                    item.hint.clone(),
-                    Style::default().fg(DIM).bg(BG),
-                ),
+                Span::styled(format!("{:<22}", item.label), Style::default().fg(FG).bg(BG)),
+                Span::styled(item.hint.clone(), Style::default().fg(DIM).bg(BG)),
             ])).style(Style::default().bg(BG))
         }
     }).collect();
 
     let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .borders(Borders::ALL).border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BORDER))
         .title(Line::from(vec![
             Span::styled(" ", Style::default().bg(BG)),
             Span::styled("LLM Provider", Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
             Span::styled(" ", Style::default().bg(BG)),
-        ]))
-        .style(Style::default().bg(BG));
+        ])).style(Style::default().bg(BG));
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(
-            Style::default()
-                .bg(HIGHLIGHT_BG)
-                .fg(ACCENT)
-                .add_modifier(Modifier::BOLD),
-        )
+    let list = List::new(items).block(block)
+        .highlight_style(Style::default().bg(HIGHLIGHT_BG).fg(ACCENT).add_modifier(Modifier::BOLD))
         .highlight_symbol("  ▸ ");
 
     frame.render_stateful_widget(list, list_area, &mut state.provider_state.clone());
-
-    draw_hint_bar(frame, chunks[3], &[
-        ("↑↓", "navigate"),
-        ("Enter", "select"),
-        ("Esc", "back"),
-    ]);
+    draw_hint_bar(frame, chunks[3], &[("↑↓", "navigate"), ("Enter", "select"), ("Esc", "back")]);
 }
-
-// ── API Key + Model ─────────────────────────────────────────────────────────
 
 fn draw_api_key_model(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     let chunks = Layout::vertical([
-        Constraint::Length(1),  // step indicator
-        Constraint::Length(1),  // spacer
-        Constraint::Min(8),    // content
-        Constraint::Length(1),  // hint bar
+        Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
     ]).split(area);
 
     draw_step_indicator(frame, chunks[0], Step::ApiKeyModel);
 
-    let content_area = centered_rect(60, 80, chunks[2]);
+    let content_area = centered_rect(60, 85, chunks[2]);
     let is_local = state.is_local_provider();
 
     let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .borders(Borders::ALL).border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BORDER))
         .title(Line::from(vec![
             Span::styled(" ", Style::default().bg(BG)),
-            Span::styled(
-                format!("{} · API & Model", state.selected_provider_name),
-                Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(format!("{} · API & Models", state.selected_provider_name), Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
             Span::styled(" ", Style::default().bg(BG)),
-        ]))
-        .style(Style::default().bg(BG));
+        ])).style(Style::default().bg(BG));
 
     let block_inner = block.inner(content_area);
     frame.render_widget(block, content_area);
@@ -1064,7 +1188,6 @@ fn draw_api_key_model(frame: &mut ratatui::Frame, area: Rect, state: &WizardStat
     lines.push(Line::from(""));
 
     if !is_local {
-        // API key input
         lines.push(Line::from(vec![
             Span::styled("  API Key", Style::default().fg(HEADING).bg(BG).add_modifier(Modifier::BOLD)),
         ]));
@@ -1078,39 +1201,23 @@ fn draw_api_key_model(frame: &mut ratatui::Frame, area: Rect, state: &WizardStat
             format!("  {}", mask_key(&state.api_key_input))
         };
 
-        let key_color = if state.api_key_input.is_empty() { DIM } else { FG };
         lines.push(Line::from(vec![
-            Span::styled(display_key, Style::default().fg(key_color).bg(BG)),
+            Span::styled(display_key, Style::default().fg(if state.api_key_input.is_empty() { DIM } else { FG }).bg(BG)),
         ]));
-
-        if !state.api_key_input.is_empty() {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    "  Tab to show/hide · Enter to discover models",
-                    Style::default().fg(DIM).bg(BG),
-                ),
-            ]));
-        } else {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    "  Enter with empty field to skip",
-                    Style::default().fg(DIM).bg(BG),
-                ),
-            ]));
-        }
-
+        lines.push(Line::from(vec![
+            Span::styled(
+                if state.api_key_input.is_empty() { "  Enter with empty to skip" } else { "  Tab show/hide · Enter to discover models" },
+                Style::default().fg(DIM).bg(BG),
+            ),
+        ]));
         lines.push(Line::from(""));
     } else {
         lines.push(Line::from(vec![
             Span::styled("  Local mode", Style::default().fg(GREEN).bg(BG).add_modifier(Modifier::BOLD)),
             Span::styled(" — no API key needed", Style::default().fg(DIM).bg(BG)),
         ]));
-        lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled(
-                format!("  Server: {}", state.selected_base_url),
-                Style::default().fg(FG).bg(BG),
-            ),
+            Span::styled(format!("  Server: {}", state.selected_base_url), Style::default().fg(FG).bg(BG)),
         ]));
         lines.push(Line::from(""));
     }
@@ -1120,22 +1227,16 @@ fn draw_api_key_model(frame: &mut ratatui::Frame, area: Rect, state: &WizardStat
         let spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let idx = (state.start_time.elapsed().as_millis() / 100) as usize % spinner.len();
         lines.push(Line::from(vec![
-            Span::styled(
-                format!("  {} Discovering models...", spinner[idx]),
-                Style::default().fg(ACCENT).bg(BG),
-            ),
+            Span::styled(format!("  {} Discovering models...", spinner[idx]), Style::default().fg(ACCENT).bg(BG)),
         ]));
     } else if let Some(ref err) = state.models_error {
         lines.push(Line::from(vec![
             Span::styled("  ▲ ", Style::default().fg(ACCENT2).bg(BG)),
             Span::styled(err.as_str(), Style::default().fg(DIM).bg(BG)),
         ]));
-        if !state.selected_model.is_empty() {
+        if !state.primary_model.is_empty() {
             lines.push(Line::from(vec![
-                Span::styled(
-                    format!("  Default: {}", state.selected_model),
-                    Style::default().fg(FG).bg(BG),
-                ),
+                Span::styled(format!("  Default: {}", state.primary_model), Style::default().fg(FG).bg(BG)),
             ]));
         }
         lines.push(Line::from(""));
@@ -1147,46 +1248,43 @@ fn draw_api_key_model(frame: &mut ratatui::Frame, area: Rect, state: &WizardStat
     let text_p = Paragraph::new(lines).style(Style::default().bg(BG));
     frame.render_widget(text_p, block_inner);
 
-    // If models are loaded, show them as a list below
+    // Model list with multi-select
     if !state.models.is_empty() && !state.models_loading {
-        let model_lines_start = if is_local { 4 } else { 7 };
+        let header_y = if is_local { 4 } else { 7 };
         let model_area = Rect::new(
-            block_inner.x + 2,
-            block_inner.y + model_lines_start,
-            block_inner.width.saturating_sub(4),
-            block_inner.height.saturating_sub(model_lines_start + 2),
+            block_inner.x + 1,
+            block_inner.y + header_y,
+            block_inner.width.saturating_sub(2),
+            block_inner.height.saturating_sub(header_y + 1),
         );
 
-        let model_header = Line::from(vec![
-            Span::styled(
-                format!("  Models ({})", state.models.len()),
-                Style::default().fg(HEADING).bg(BG).add_modifier(Modifier::BOLD),
-            ),
+        let header = Line::from(vec![
+            Span::styled(format!("  Models ({}) ", state.models.len()), Style::default().fg(HEADING).bg(BG).add_modifier(Modifier::BOLD)),
+            Span::styled("Space=toggle  p=primary  Enter=confirm", Style::default().fg(DIM).bg(BG)),
         ]);
         let header_area = Rect::new(model_area.x, model_area.y.saturating_sub(1), model_area.width, 1);
-        frame.render_widget(Paragraph::new(model_header).style(Style::default().bg(BG)), header_area);
+        frame.render_widget(Paragraph::new(header).style(Style::default().bg(BG)), header_area);
 
-        let model_items: Vec<ListItem> = state.models.iter().map(|m| {
+        let model_items: Vec<ListItem> = state.models.iter().enumerate().map(|(i, m)| {
+            let selected = state.model_selected.get(i).copied().unwrap_or(false);
+            let is_primary = m == &state.primary_model;
+            let check = if is_primary { "★" } else if selected { "◆" } else { "◇" };
+            let check_color = if is_primary { ACCENT } else if selected { GREEN } else { DIM };
             ListItem::new(Line::from(vec![
-                Span::styled("  ", Style::default().bg(BG)),
+                Span::styled(format!("  {} ", check), Style::default().fg(check_color).bg(BG)),
                 Span::styled(m.clone(), Style::default().fg(FG).bg(BG)),
             ])).style(Style::default().bg(BG))
         }).collect();
 
         let model_list = List::new(model_items)
-            .highlight_style(
-                Style::default()
-                    .bg(HIGHLIGHT_BG)
-                    .fg(ACCENT)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .highlight_style(Style::default().bg(HIGHLIGHT_BG).fg(ACCENT).add_modifier(Modifier::BOLD))
             .highlight_symbol("▸ ");
 
         frame.render_stateful_widget(model_list, model_area, &mut state.model_state.clone());
     }
 
     let hints: Vec<(&str, &str)> = if !state.models.is_empty() {
-        vec![("↑↓", "select model"), ("Enter", "confirm"), ("s", "skip"), ("Esc", "back")]
+        vec![("↑↓", "navigate"), ("Space", "toggle"), ("p", "primary"), ("Enter", "next")]
     } else if is_local {
         vec![("Enter", "discover models"), ("Esc", "back")]
     } else {
@@ -1195,224 +1293,189 @@ fn draw_api_key_model(frame: &mut ratatui::Frame, area: Rect, state: &WizardStat
     draw_hint_bar(frame, chunks[3], &hints);
 }
 
-// ── Constitution ────────────────────────────────────────────────────────────
-
 fn draw_constitution(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     let chunks = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(8),
-        Constraint::Length(1),
+        Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
     ]).split(area);
-
     draw_step_indicator(frame, chunks[0], Step::Constitution);
 
     let list_area = centered_rect(60, 90, chunks[2]);
-
     let items: Vec<ListItem> = state.constitution_items.iter().map(|(name, desc)| {
         ListItem::new(Line::from(vec![
             Span::styled("  ", Style::default().bg(BG)),
-            Span::styled(
-                format!("{:<20}", name),
-                Style::default().fg(FG).bg(BG),
-            ),
-            Span::styled(
-                desc.clone(),
-                Style::default().fg(DIM).bg(BG),
-            ),
+            Span::styled(format!("{:<20}", name), Style::default().fg(FG).bg(BG)),
+            Span::styled(desc.clone(), Style::default().fg(DIM).bg(BG)),
         ])).style(Style::default().bg(BG))
     }).collect();
 
     let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .borders(Borders::ALL).border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BORDER))
         .title(Line::from(vec![
             Span::styled(" ", Style::default().bg(BG)),
-            Span::styled(
-                "Constitution Template",
-                Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("Constitution Template", Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
             Span::styled(" ", Style::default().bg(BG)),
         ]))
         .title_bottom(Line::from(vec![
-            Span::styled(
-                " Safety rules that govern what your agent can and cannot do ",
-                Style::default().fg(DIM).bg(BG),
-            ),
-        ]))
-        .style(Style::default().bg(BG));
+            Span::styled(" Safety rules that govern agent behavior ", Style::default().fg(DIM).bg(BG)),
+        ])).style(Style::default().bg(BG));
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(
-            Style::default()
-                .bg(HIGHLIGHT_BG)
-                .fg(ACCENT)
-                .add_modifier(Modifier::BOLD),
-        )
+    let list = List::new(items).block(block)
+        .highlight_style(Style::default().bg(HIGHLIGHT_BG).fg(ACCENT).add_modifier(Modifier::BOLD))
         .highlight_symbol("  ▸ ");
-
     frame.render_stateful_widget(list, list_area, &mut state.constitution_state.clone());
-
-    draw_hint_bar(frame, chunks[3], &[
-        ("↑↓", "navigate"),
-        ("Enter", "select"),
-        ("Esc", "back"),
-    ]);
+    draw_hint_bar(frame, chunks[3], &[("↑↓", "navigate"), ("Enter", "select"), ("Esc", "back")]);
 }
 
-// ── Channels ────────────────────────────────────────────────────────────────
-
-fn draw_channels(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
+fn draw_persona(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     let chunks = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(8),
-        Constraint::Length(1),
+        Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
     ]).split(area);
+    draw_step_indicator(frame, chunks[0], Step::Persona);
 
-    draw_step_indicator(frame, chunks[0], Step::Channels);
-
-    let content_area = centered_rect(55, 60, chunks[2]);
+    let list_area = centered_rect(55, 70, chunks[2]);
+    let items: Vec<ListItem> = state.persona_items.iter().map(|p| {
+        ListItem::new(Line::from(vec![
+            Span::styled("  ", Style::default().bg(BG)),
+            Span::styled(format!("{:<16}", p.name), Style::default().fg(FG).bg(BG).add_modifier(Modifier::BOLD)),
+            Span::styled(p.description.clone(), Style::default().fg(DIM).bg(BG)),
+        ])).style(Style::default().bg(BG))
+    }).collect();
 
     let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .borders(Borders::ALL).border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BORDER))
         .title(Line::from(vec![
             Span::styled(" ", Style::default().bg(BG)),
-            Span::styled(
-                "Channels & Extras",
-                Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("Persona & Style", Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
             Span::styled(" ", Style::default().bg(BG)),
         ]))
-        .style(Style::default().bg(BG));
+        .title_bottom(Line::from(vec![
+            Span::styled(" Choose your agent's personality and voice ", Style::default().fg(DIM).bg(BG)),
+        ])).style(Style::default().bg(BG));
+
+    let list = List::new(items).block(block)
+        .highlight_style(Style::default().bg(HIGHLIGHT_BG).fg(ACCENT).add_modifier(Modifier::BOLD))
+        .highlight_symbol("  ▸ ");
+    frame.render_stateful_widget(list, list_area, &mut state.persona_state.clone());
+    draw_hint_bar(frame, chunks[3], &[("↑↓", "navigate"), ("Enter", "select"), ("Esc", "back")]);
+}
+
+fn draw_agents(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
+    let chunks = Layout::vertical([
+        Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
+    ]).split(area);
+    draw_step_indicator(frame, chunks[0], Step::Agents);
+
+    let list_area = centered_rect(70, 90, chunks[2]);
+    let filtered = state.filtered_agent_indices();
+    let selected_count = state.agent_items.iter().filter(|a| a.selected).count();
+
+    let items: Vec<ListItem> = filtered.iter().map(|&idx| {
+        let a = &state.agent_items[idx];
+        let check = if a.selected { "◆" } else { "◇" };
+        let check_color = if a.selected { GREEN } else { DIM };
+        ListItem::new(Line::from(vec![
+            Span::styled(format!(" {} ", check), Style::default().fg(check_color).bg(BG)),
+            Span::styled(format!("{:<24}", a.name), Style::default().fg(FG).bg(BG)),
+            Span::styled(format!("{:<16}", a.category), Style::default().fg(HEADING).bg(BG)),
+            Span::styled(a.description.clone(), Style::default().fg(DIM).bg(BG)),
+        ])).style(Style::default().bg(BG))
+    }).collect();
+
+    let title_text = if state.agent_search.is_empty() {
+        format!("Agents ({}) · {} selected", state.agent_items.len(), selected_count)
+    } else {
+        format!("Search: {} · {} found · {} selected", state.agent_search, filtered.len(), selected_count)
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL).border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default().bg(BG)),
+            Span::styled(title_text, Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
+            Span::styled(" ", Style::default().bg(BG)),
+        ])).style(Style::default().bg(BG));
+
+    let list = List::new(items).block(block)
+        .highlight_style(Style::default().bg(HIGHLIGHT_BG).fg(ACCENT).add_modifier(Modifier::BOLD))
+        .highlight_symbol("▸ ");
+    frame.render_stateful_widget(list, list_area, &mut state.agent_state.clone());
+    draw_hint_bar(frame, chunks[3], &[("↑↓", "navigate"), ("Space", "toggle"), ("a", "all"), ("n", "none"), ("type", "search"), ("Enter", "next")]);
+}
+
+fn draw_channels(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
+    let chunks = Layout::vertical([
+        Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
+    ]).split(area);
+    draw_step_indicator(frame, chunks[0], Step::Channels);
+
+    let content_area = centered_rect(55, 50, chunks[2]);
+    let block = Block::default()
+        .borders(Borders::ALL).border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default().bg(BG)),
+            Span::styled("Channels & Extras", Style::default().fg(ACCENT).bg(BG).add_modifier(Modifier::BOLD)),
+            Span::styled(" ", Style::default().bg(BG)),
+        ])).style(Style::default().bg(BG));
 
     let block_inner = block.inner(content_area);
     frame.render_widget(block, content_area);
 
-    let items = vec![
-        (0, "Telegram Bot", state.telegram_enabled, &state.telegram_token, state.telegram_editing),
-        (1, "Web Dashboard", state.web_enabled, &state.web_password, state.web_editing),
+    let channel_items: Vec<(usize, &str, bool, &str, bool)> = vec![
+        (0, "Telegram Bot", state.telegram_enabled, if state.telegram_editing { &state.telegram_token } else { &state.telegram_token }, state.telegram_editing),
+        (1, "Web Dashboard", state.web_enabled, if state.web_editing { &state.web_password } else { &state.web_password }, state.web_editing),
+        (2, "WebBERT Model", state.download_webbert, "", false),
     ];
 
     let mut lines = Vec::new();
     lines.push(Line::from(""));
 
-    for (idx, label, enabled, token, editing) in &items {
+    for (idx, label, enabled, token, editing) in &channel_items {
         let focused = state.channel_focus == *idx;
         let marker = if focused { "▸" } else { " " };
         let check = if *enabled { "◆" } else { "◇" };
         let check_color = if *enabled { GREEN } else { DIM };
-
         let bg = if focused { HIGHLIGHT_BG } else { BG };
-        lines.push(Line::from(vec![
+
+        let mut spans = vec![
             Span::styled(format!("  {} ", marker), Style::default().fg(ACCENT).bg(bg)),
             Span::styled(format!("{} ", check), Style::default().fg(check_color).bg(bg)),
-            Span::styled(
-                format!("{:<18}", label),
-                Style::default().fg(if focused { ACCENT } else { FG }).bg(bg).add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() }),
-            ),
-            Span::styled(
-                if *editing {
-                    format!("{}_", token)
-                } else if token.is_empty() && *enabled {
-                    "enter token...".to_string()
-                } else if !token.is_empty() {
-                    mask_key(token)
-                } else {
-                    String::new()
-                },
-                Style::default().fg(if *editing { ACCENT } else { DIM }).bg(bg),
-            ),
-        ]));
+            Span::styled(format!("{:<18}", label), Style::default().fg(if focused { ACCENT } else { FG }).bg(bg).add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() })),
+        ];
+
+        if *idx == 2 {
+            spans.push(Span::styled("~256MB local classifier", Style::default().fg(DIM).bg(bg)));
+        } else if *editing {
+            spans.push(Span::styled(format!("{}_", token), Style::default().fg(ACCENT).bg(bg)));
+        } else if !token.is_empty() {
+            spans.push(Span::styled(mask_key(token), Style::default().fg(DIM).bg(bg)));
+        }
+
+        lines.push(Line::from(spans));
     }
 
-    lines.push(Line::from(""));
-
-    // Starter agent
-    {
-        let focused = state.channel_focus == 2;
-        let marker = if focused { "▸" } else { " " };
-        let bg = if focused { HIGHLIGHT_BG } else { BG };
-        let agent_label = match &state.starter_agent {
-            Some(a) => format!("◆ {}", a),
-            None => "◇ none".to_string(),
-        };
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {} ", marker), Style::default().fg(ACCENT).bg(bg)),
-            Span::styled(
-                "Starter Agent     ",
-                Style::default().fg(if focused { ACCENT } else { FG }).bg(bg).add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() }),
-            ),
-            Span::styled(
-                agent_label,
-                Style::default().fg(if state.starter_agent.is_some() { GREEN } else { DIM }).bg(bg),
-            ),
-        ]));
-    }
-
-    // WebBERT
-    {
-        let focused = state.channel_focus == 3;
-        let marker = if focused { "▸" } else { " " };
-        let check = if state.download_webbert { "◆" } else { "◇" };
-        let check_color = if state.download_webbert { GREEN } else { DIM };
-        let bg = if focused { HIGHLIGHT_BG } else { BG };
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {} ", marker), Style::default().fg(ACCENT).bg(bg)),
-            Span::styled(format!("{} ", check), Style::default().fg(check_color).bg(bg)),
-            Span::styled(
-                "WebBERT Model     ",
-                Style::default().fg(if focused { ACCENT } else { FG }).bg(bg).add_modifier(if focused { Modifier::BOLD } else { Modifier::empty() }),
-            ),
-            Span::styled(
-                "~256MB · local browser classifier",
-                Style::default().fg(DIM).bg(bg),
-            ),
-        ]));
-    }
-
-    let p = Paragraph::new(lines).style(Style::default().bg(BG));
-    frame.render_widget(p, block_inner);
-
-    draw_hint_bar(frame, chunks[3], &[
-        ("↑↓", "navigate"),
-        ("Space", "toggle"),
-        ("n/Tab", "next"),
-        ("Esc", "back"),
-    ]);
+    frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), block_inner);
+    draw_hint_bar(frame, chunks[3], &[("↑↓", "navigate"), ("Space", "toggle"), ("Enter", "next"), ("Esc", "back")]);
 }
-
-// ── Summary ─────────────────────────────────────────────────────────────────
 
 fn draw_summary(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     let chunks = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(8),
-        Constraint::Length(1),
+        Constraint::Length(1), Constraint::Length(1), Constraint::Min(8), Constraint::Length(1),
     ]).split(area);
-
     draw_step_indicator(frame, chunks[0], Step::Summary);
 
-    let content_area = centered_rect(55, 70, chunks[2]);
-
+    let content_area = centered_rect(55, 75, chunks[2]);
     let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .borders(Borders::ALL).border_type(BorderType::Rounded)
         .border_style(Style::default().fg(GREEN))
         .title(Line::from(vec![
             Span::styled(" ", Style::default().bg(BG)),
-            Span::styled(
-                "Ready to Go",
-                Style::default().fg(GREEN).bg(BG).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("Ready to Go", Style::default().fg(GREEN).bg(BG).add_modifier(Modifier::BOLD)),
             Span::styled(" ", Style::default().bg(BG)),
-        ]))
-        .style(Style::default().bg(BG));
+        ])).style(Style::default().bg(BG));
 
     let block_inner = block.inner(content_area);
     frame.render_widget(block, content_area);
@@ -1428,81 +1491,63 @@ fn draw_summary(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     };
 
     lines.push(row("Provider", &state.selected_provider_name, FG));
-    if !state.selected_model.is_empty() {
-        lines.push(row("Model", &state.selected_model, FG));
+
+    let selected_models = state.selected_models();
+    if !selected_models.is_empty() {
+        lines.push(row("Primary Model", &state.primary_model, FG));
+        if selected_models.len() > 1 {
+            lines.push(row("Extra Models", &format!("{} more", selected_models.len() - 1), DIM));
+        }
     }
+
     if !state.api_key_input.is_empty() {
         lines.push(row("API Key", &mask_key(&state.api_key_input), GREEN));
     }
     lines.push(row("Constitution", &state.selected_constitution, FG));
+    lines.push(row("Persona", &state.selected_persona, FG));
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled("    Channels", Style::default().fg(HEADING).bg(BG).add_modifier(Modifier::BOLD)),
-    ]));
-
-    let check = |enabled: bool| if enabled { format!("◆") } else { format!("◇") };
-    let check_color = |enabled: bool| if enabled { GREEN } else { DIM };
-
-    lines.push(Line::from(vec![
-        Span::styled("      ", Style::default().bg(BG)),
-        Span::styled(check(state.telegram_enabled), Style::default().fg(check_color(state.telegram_enabled)).bg(BG)),
-        Span::styled(" Telegram", Style::default().fg(FG).bg(BG)),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("      ", Style::default().bg(BG)),
-        Span::styled(check(state.web_enabled), Style::default().fg(check_color(state.web_enabled)).bg(BG)),
-        Span::styled(" Web Dashboard", Style::default().fg(FG).bg(BG)),
-    ]));
-
-    if let Some(ref agent) = state.starter_agent {
-        lines.push(Line::from(vec![
-            Span::styled("      ", Style::default().bg(BG)),
-            Span::styled("◆", Style::default().fg(GREEN).bg(BG)),
-            Span::styled(format!(" Agent: {}", agent), Style::default().fg(FG).bg(BG)),
-        ]));
+    let selected_agents = state.selected_agents();
+    if !selected_agents.is_empty() {
+        lines.push(row("Agents", &format!("{} selected", selected_agents.len()), FG));
     }
 
+    lines.push(Line::from(""));
+
+    let ck = |on: bool| if on { "◆" } else { "◇" };
+    let cc = |on: bool| if on { GREEN } else { DIM };
+
     lines.push(Line::from(vec![
         Span::styled("      ", Style::default().bg(BG)),
-        Span::styled(check(state.download_webbert), Style::default().fg(check_color(state.download_webbert)).bg(BG)),
-        Span::styled(" WebBERT (local ML)", Style::default().fg(FG).bg(BG)),
+        Span::styled(ck(state.telegram_enabled), Style::default().fg(cc(state.telegram_enabled)).bg(BG)),
+        Span::styled(" Telegram  ", Style::default().fg(FG).bg(BG)),
+        Span::styled(ck(state.web_enabled), Style::default().fg(cc(state.web_enabled)).bg(BG)),
+        Span::styled(" Web  ", Style::default().fg(FG).bg(BG)),
+        Span::styled(ck(state.download_webbert), Style::default().fg(cc(state.download_webbert)).bg(BG)),
+        Span::styled(" WebBERT", Style::default().fg(FG).bg(BG)),
     ]));
 
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled(
-            "    Press Enter to write configuration",
-            Style::default().fg(ACCENT).bg(BG),
-        ),
+        Span::styled("    Press Enter to write configuration", Style::default().fg(ACCENT).bg(BG)),
     ]));
 
-    let p = Paragraph::new(lines).style(Style::default().bg(BG));
-    frame.render_widget(p, block_inner);
-
-    draw_hint_bar(frame, chunks[3], &[
-        ("Enter", "confirm & write"),
-        ("b", "go back"),
-        ("Esc", "back"),
-    ]);
+    frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), block_inner);
+    draw_hint_bar(frame, chunks[3], &[("Enter", "confirm & write"), ("b", "go back"), ("Esc", "back")]);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/// Create a centered rect using percentage of parent.
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let [_, center_v, _] = Layout::vertical([
         Constraint::Percentage((100 - percent_y) / 2),
         Constraint::Percentage(percent_y),
         Constraint::Percentage((100 - percent_y) / 2),
     ]).areas(area);
-
     let [_, center, _] = Layout::horizontal([
         Constraint::Percentage((100 - percent_x) / 2),
         Constraint::Percentage(percent_x),
         Constraint::Percentage((100 - percent_x) / 2),
     ]).areas(center_v);
-
     center
 }
 
@@ -1531,6 +1576,9 @@ mod tests {
     fn test_step_navigation() {
         assert_eq!(Step::Welcome.next(), Step::Provider);
         assert_eq!(Step::Provider.next(), Step::ApiKeyModel);
+        assert_eq!(Step::ApiKeyModel.next(), Step::Constitution);
+        assert_eq!(Step::Constitution.next(), Step::Persona);
+        assert_eq!(Step::Persona.next(), Step::Agents);
         assert_eq!(Step::Summary.prev(), Step::Channels);
         assert_eq!(Step::Welcome.prev(), Step::Welcome);
     }
@@ -1541,6 +1589,7 @@ mod tests {
         assert_eq!(state.step, Step::Welcome);
         assert!(!state.provider_items.is_empty());
         assert!(!state.constitution_items.is_empty());
+        assert!(!state.persona_items.is_empty());
         assert!(!state.should_quit);
         assert!(!state.confirmed);
     }

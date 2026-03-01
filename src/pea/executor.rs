@@ -219,9 +219,9 @@ mod tests {
     #[test]
     fn test_capability_check_media_missing() {
         // Clear the relevant env vars to ensure Missing result.
-        std::env::remove_var("NABA_FAL_API_KEY");
-        std::env::remove_var("NABA_LLM_API_KEY");
-        std::env::remove_var("NABA_COMFYUI_URL");
+        unsafe { std::env::remove_var("NABA_FAL_API_KEY"); }
+        unsafe { std::env::remove_var("NABA_LLM_API_KEY"); }
+        unsafe { std::env::remove_var("NABA_COMFYUI_URL"); }
 
         let status = check_capability(&TaskRoute::Media, Some("media_engine"));
         match status {

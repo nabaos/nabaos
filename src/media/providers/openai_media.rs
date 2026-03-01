@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_from_env_missing_key() {
-        std::env::remove_var("NABA_LLM_API_KEY");
+        unsafe { std::env::remove_var("NABA_LLM_API_KEY"); }
         assert!(OpenAiMediaClient::from_env().is_none());
     }
 }

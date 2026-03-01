@@ -222,16 +222,16 @@ mod tests {
 
     #[test]
     fn test_imap_channel_not_configured() {
-        std::env::remove_var("NABA_IMAP_HOST");
-        std::env::remove_var("NABA_IMAP_USER");
-        std::env::remove_var("NABA_IMAP_PASS");
+        unsafe { std::env::remove_var("NABA_IMAP_HOST"); }
+        unsafe { std::env::remove_var("NABA_IMAP_USER"); }
+        unsafe { std::env::remove_var("NABA_IMAP_PASS"); }
         let channel = ImapChannel::from_env();
         assert!(!channel.is_configured());
     }
 
     #[tokio::test]
     async fn test_fetch_unseen_not_configured_returns_error() {
-        std::env::remove_var("NABA_IMAP_HOST");
+        unsafe { std::env::remove_var("NABA_IMAP_HOST"); }
         let channel = ImapChannel::from_env();
         let result = channel.fetch_unseen().await;
         assert!(result.is_err());

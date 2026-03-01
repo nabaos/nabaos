@@ -20,7 +20,7 @@ pub fn fetch_available_models(base_url: &str, api_key: &str) -> Result<Vec<Strin
 
     let resp = req
         .send()
-        .map_err(|e| NyayaError::Config(format!("Model discovery request failed: {}", e)))?;
+        .map_err(|e| NyayaError::Config(format!("Model discovery request failed ({}): {}", url, e)))?;
 
     if !resp.status().is_success() {
         let status = resp.status();

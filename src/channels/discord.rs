@@ -106,14 +106,14 @@ mod tests {
 
     #[test]
     fn test_discord_not_configured_without_env() {
-        std::env::remove_var("NABA_DISCORD_BOT_TOKEN");
+        unsafe { std::env::remove_var("NABA_DISCORD_BOT_TOKEN"); }
         let channel = DiscordChannel::new();
         assert!(!channel.is_configured());
     }
 
     #[tokio::test]
     async fn test_send_message_without_token_returns_error() {
-        std::env::remove_var("NABA_DISCORD_BOT_TOKEN");
+        unsafe { std::env::remove_var("NABA_DISCORD_BOT_TOKEN"); }
         let channel = DiscordChannel::new();
         let result = channel.send_message("123456", "test").await;
         assert!(result.is_err());

@@ -183,7 +183,7 @@ pub fn builtin_providers() -> Vec<ProviderDef> {
     providers.push(openai_compat(
         "nanogpt",
         "NanoGPT",
-        "https://api.nanogpt.com",
+        "https://nano-gpt.com/api",
     ));
     providers.push(openai_compat(
         "featherless",

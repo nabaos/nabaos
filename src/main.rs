@@ -3146,10 +3146,16 @@ fn cmd_setup(
                     if !result.api_key.is_empty() {
                         env_lines.push(format!("NABA_LLM_API_KEY={}", result.api_key));
                     }
-                    if !result.model.is_empty() {
-                        env_lines.push(format!("NABA_LLM_MODEL={}", result.model));
+                    if !result.primary_model.is_empty() {
+                        env_lines.push(format!("NABA_LLM_MODEL={}", result.primary_model));
+                    }
+                    if result.models.len() > 1 {
+                        env_lines.push(format!("NABA_LLM_MODELS={}", result.models.join(",")));
                     }
                     env_lines.push(format!("NABA_CONSTITUTION={}", result.constitution));
+                    if result.persona != "default" {
+                        env_lines.push(format!("NABA_PERSONA={}", result.persona));
+                    }
                     if result.enable_telegram {
                         env_lines.push("NABA_TELEGRAM_ENABLED=true".to_string());
                         if !result.telegram_token.is_empty() {
@@ -3207,13 +3213,33 @@ fn cmd_setup(
                         println!();
                     }
 
+                    // Install selected agents
+                    if !result.selected_agents.is_empty() {
+                        println!("  {}●{} Installing {} agents...", cy, r, result.selected_agents.len());
+                        let catalog_dir = config.data_dir.join("catalog");
+                        for agent_name in &result.selected_agents {
+                            let agent_dir = catalog_dir.join(agent_name);
+                            if agent_dir.exists() {
+                                println!("  {}✓{} {}", gr, r, agent_name);
+                            }
+                        }
+                        println!();
+                    }
+
                     // Summary
                     println!("{}", fmt::header_line("Setup Complete"));
                     println!("{}", fmt::ok(&format!("Provider: {} ({})", result.provider_name, result.provider_id)));
-                    if !result.model.is_empty() {
-                        println!("{}", fmt::ok(&format!("Model: {}", result.model)));
+                    if !result.primary_model.is_empty() {
+                        println!("{}", fmt::ok(&format!("Model: {}", result.primary_model)));
+                    }
+                    if result.models.len() > 1 {
+                        println!("{}", fmt::ok(&format!("Extra models: {}", result.models.len() - 1)));
                     }
                     println!("{}", fmt::ok(&format!("Constitution: {}", result.constitution)));
+                    println!("{}", fmt::ok(&format!("Persona: {}", result.persona)));
+                    if !result.selected_agents.is_empty() {
+                        println!("{}", fmt::ok(&format!("Agents: {} installed", result.selected_agents.len())));
+                    }
                     if result.enable_telegram {
                         println!("{}", fmt::ok("Telegram: enabled"));
                     }

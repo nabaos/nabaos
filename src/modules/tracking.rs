@@ -591,7 +591,7 @@ mod tests {
     fn test_check_tracking_no_api_key() {
         // Temporarily unset env var if present
         let prev = std::env::var("NABA_TRACKING_API_KEY").ok();
-        std::env::remove_var("NABA_TRACKING_API_KEY");
+        unsafe { std::env::remove_var("NABA_TRACKING_API_KEY"); }
 
         let result = check_tracking("1Z12345E0205271688", None, None).unwrap();
         assert_eq!(result.carrier, "UPS");
@@ -601,21 +601,21 @@ mod tests {
 
         // Restore env var
         if let Some(val) = prev {
-            std::env::set_var("NABA_TRACKING_API_KEY", val);
+            unsafe { std::env::set_var("NABA_TRACKING_API_KEY", val); }
         }
     }
 
     #[test]
     fn test_check_tracking_with_carrier_override() {
         let prev = std::env::var("NABA_TRACKING_API_KEY").ok();
-        std::env::remove_var("NABA_TRACKING_API_KEY");
+        unsafe { std::env::remove_var("NABA_TRACKING_API_KEY"); }
 
         let result = check_tracking("ABCDE12345", Some("DHL"), None).unwrap();
         assert_eq!(result.carrier, "DHL");
         assert!(result.raw_response.as_ref().unwrap().contains("dhl.com"));
 
         if let Some(val) = prev {
-            std::env::set_var("NABA_TRACKING_API_KEY", val);
+            unsafe { std::env::set_var("NABA_TRACKING_API_KEY", val); }
         }
     }
 

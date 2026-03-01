@@ -311,8 +311,8 @@ mod tests {
     #[test]
     fn test_build_prompt_contains_digest() {
         let index = sample_index();
-        let gen = WorkflowGenerator::new(&index);
-        let prompt = gen.build_prompt("process a new order");
+        let wgen = WorkflowGenerator::new(&index);
+        let prompt = wgen.build_prompt("process a new order");
 
         // The digest text should be embedded in the prompt.
         assert!(
@@ -336,8 +336,8 @@ mod tests {
     #[test]
     fn test_build_prompt_contains_rules() {
         let index = sample_index();
-        let gen = WorkflowGenerator::new(&index);
-        let prompt = gen.build_prompt("anything");
+        let wgen = WorkflowGenerator::new(&index);
+        let prompt = wgen.build_prompt("anything");
 
         assert!(
             prompt.contains("RULES:"),
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn test_validate_workflow_valid() {
         let index = sample_index();
-        let gen = WorkflowGenerator::new(&index);
+        let wgen = WorkflowGenerator::new(&index);
 
         // Build a workflow that references only known abilities.
         let def = WorkflowDef {
@@ -407,7 +407,7 @@ mod tests {
         };
 
         assert!(
-            gen.validate_workflow(&def).is_ok(),
+            wgen.validate_workflow(&def).is_ok(),
             "Workflow referencing known abilities should pass validation"
         );
     }
@@ -415,7 +415,7 @@ mod tests {
     #[test]
     fn test_validate_workflow_unknown_ability() {
         let index = sample_index();
-        let gen = WorkflowGenerator::new(&index);
+        let wgen = WorkflowGenerator::new(&index);
 
         let def = WorkflowDef {
             id: "bad".into(),
@@ -440,7 +440,7 @@ mod tests {
             channel_permissions: None,
         };
 
-        let result = gen.validate_workflow(&def);
+        let result = wgen.validate_workflow(&def);
         assert!(result.is_err(), "Should fail for unknown ability");
         let err = result.unwrap_err();
         assert!(
@@ -454,13 +454,13 @@ mod tests {
     fn test_generate_uses_template_first() {
         // Build an index with a dummy ability (doesn't matter for template matching).
         let index = sample_index();
-        let gen = WorkflowGenerator::new(&index);
+        let wgen = WorkflowGenerator::new(&index);
 
         // TemplateLibrary::new() loads the 5 builtin demo workflows.
         let templates = TemplateLibrary::new();
 
         // Use keywords that match the shopify_dropship template.
-        let result = gen.generate("shopify order fulfillment shipping dropship", &templates);
+        let result = wgen.generate("shopify order fulfillment shipping dropship", &templates);
         assert!(
             result.is_ok(),
             "Template match should succeed without API key: {:?}",

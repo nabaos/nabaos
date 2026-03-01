@@ -210,8 +210,8 @@ mod tests {
                 },
             ],
         };
-        let gen = SlideGenerator::new(None);
-        let html = gen.render_html(&deck).unwrap();
+        let generator = SlideGenerator::new(None);
+        let html = generator.render_html(&deck).unwrap();
         assert!(html.contains("reveal"));
         assert!(html.contains("Hello"));
         assert!(html.contains("Point 1"));
@@ -224,8 +224,8 @@ mod tests {
             theme: SlideTheme::Light,
             slides: vec![],
         };
-        let gen = SlideGenerator::new(None);
-        let result = gen.export(&deck, ExportFormat::Pptx, Path::new("/tmp/test"));
+        let generator = SlideGenerator::new(None);
+        let result = generator.export(&deck, ExportFormat::Pptx, Path::new("/tmp/test"));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("pandoc"));

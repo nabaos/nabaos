@@ -1117,9 +1117,9 @@ impl WorkflowEngine {
                     let now = chrono::Utc::now().timestamp();
                     let next = now + poll_interval_secs as i64;
 
-                    if let Some(ref mut spec) = inst.wait_spec {
+                    if let Some(spec) = &mut inst.wait_spec {
                         if let WaitSpec::Poll {
-                            ref mut next_poll_at,
+                            next_poll_at,
                             ..
                         } = spec
                         {
@@ -1150,9 +1150,9 @@ impl WorkflowEngine {
                 let mut inst = self.load_instance(&inst.instance_id)?;
                 let now = chrono::Utc::now().timestamp();
                 let next = now + poll_interval_secs as i64;
-                if let Some(ref mut spec) = inst.wait_spec {
+                if let Some(spec) = &mut inst.wait_spec {
                     if let WaitSpec::Poll {
-                        ref mut next_poll_at,
+                        next_poll_at,
                         ..
                     } = spec
                     {

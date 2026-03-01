@@ -2174,7 +2174,7 @@ mod tests {
 
     #[test]
     fn test_command_routing() {
-        std::env::set_var("NABA_ALLOWED_CHAT_IDS", "0");
+        unsafe { std::env::set_var("NABA_ALLOWED_CHAT_IDS", "0"); }
         let mut orch = test_orch();
         assert!(handle_message(&mut orch, "/help", 0).contains("/status"));
         assert!(handle_message(&mut orch, "/status", 0).contains("Everything OK?"));
@@ -2220,7 +2220,7 @@ mod tests {
     #[test]
     fn test_2fa_password_blocks_until_authenticated() {
         // Use chat_id 0 to match the OnceLock-cached NABA_ALLOWED_CHAT_IDS="0"
-        std::env::set_var("NABA_ALLOWED_CHAT_IDS", "0");
+        unsafe { std::env::set_var("NABA_ALLOWED_CHAT_IDS", "0"); }
         let mut orch = make_test_orch();
         let hash = TwoFactorAuth::hash_password("bot_password");
         let two_fa = TwoFactorAuth::new(TwoFactorMethod::Password { hash });
@@ -2261,7 +2261,7 @@ mod tests {
     #[test]
     fn test_2fa_logout() {
         // Use chat_id 0 to match the OnceLock-cached NABA_ALLOWED_CHAT_IDS="0"
-        std::env::set_var("NABA_ALLOWED_CHAT_IDS", "0");
+        unsafe { std::env::set_var("NABA_ALLOWED_CHAT_IDS", "0"); }
         let mut orch = make_test_orch();
         let hash = TwoFactorAuth::hash_password("secret");
         let two_fa = TwoFactorAuth::new(TwoFactorMethod::Password { hash });
@@ -2444,7 +2444,7 @@ mod tests {
 
     #[test]
     fn test_streaming_response_for_llm_tier() {
-        std::env::set_var("NABA_ALLOWED_CHAT_IDS", "0");
+        unsafe { std::env::set_var("NABA_ALLOWED_CHAT_IDS", "0"); }
         let mut orch = test_orch();
         // Send a novel query that will hit CheapLlm or higher tier
         let resp = handle_query_rich(&mut orch, "what is the meaning of life?", 0);
@@ -2568,7 +2568,7 @@ mod tests {
 
         // Set NABA_DATA_DIR to a temp directory so DB operations work
         let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("NABA_DATA_DIR", tmp.path().to_str().unwrap());
+        unsafe { std::env::set_var("NABA_DATA_DIR", tmp.path().to_str().unwrap()); }
 
         // Test "list" subcommand (default)
         let msg = handle_permissions_command(&orch, "/permissions");

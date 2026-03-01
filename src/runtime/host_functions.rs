@@ -7831,7 +7831,7 @@ startxref
     fn test_tracking_check_valid_ups() {
         // Ensure no API key so we get the manual-check path
         let prev = std::env::var("NABA_TRACKING_API_KEY").ok();
-        std::env::remove_var("NABA_TRACKING_API_KEY");
+        unsafe { std::env::remove_var("NABA_TRACKING_API_KEY"); }
 
         let input = serde_json::json!({"tracking_id": "1Z12345E0205271688"});
         let (output, _, facts) = exec_tracking_check(&input).unwrap();
@@ -7842,14 +7842,14 @@ startxref
         assert_eq!(facts.get("carrier").unwrap(), "UPS");
 
         if let Some(val) = prev {
-            std::env::set_var("NABA_TRACKING_API_KEY", val);
+            unsafe { std::env::set_var("NABA_TRACKING_API_KEY", val); }
         }
     }
 
     #[test]
     fn test_tracking_check_with_carrier_override() {
         let prev = std::env::var("NABA_TRACKING_API_KEY").ok();
-        std::env::remove_var("NABA_TRACKING_API_KEY");
+        unsafe { std::env::remove_var("NABA_TRACKING_API_KEY"); }
 
         let input = serde_json::json!({"tracking_id": "ABCDE12345", "carrier": "DHL"});
         let (output, _, facts) = exec_tracking_check(&input).unwrap();
@@ -7858,7 +7858,7 @@ startxref
         assert_eq!(facts.get("carrier").unwrap(), "DHL");
 
         if let Some(val) = prev {
-            std::env::set_var("NABA_TRACKING_API_KEY", val);
+            unsafe { std::env::set_var("NABA_TRACKING_API_KEY", val); }
         }
     }
 

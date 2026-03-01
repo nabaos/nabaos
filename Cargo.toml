@@ -1,10 +1,10 @@
 [package]
 name = "nabaos"
 version = "0.1.3"
-edition = "2021"
-description = "The agent that uses all agents — cached when possible, autonomous when needed, independent always"
+edition = "2024"
+description = "Autonomous agent runtime with 130+ agents, intent caching, constitutional safety, and multi-provider LLM orchestration"
 license = "MIT"
-rust-version = "1.80"
+rust-version = "1.85"
 
 [features]
 default = ["bert", "tui"]

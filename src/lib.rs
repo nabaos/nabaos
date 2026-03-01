@@ -1,4 +1,4 @@
-#![deny(unsafe_code)]
+#![cfg_attr(not(test), deny(unsafe_code))]
 #![allow(
     clippy::too_many_arguments,
     clippy::type_complexity,
