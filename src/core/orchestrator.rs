@@ -329,9 +329,13 @@ impl Orchestrator {
 
         // Fix 14: Cache SetFit classifier (graceful degradation)
         #[cfg(feature = "bert")]
-        let setfit_classifier = resolve_model_path(&config.model_path)
-            .ok()
-            .and_then(|p| W5H2Classifier::load(&p).ok());
+        let setfit_classifier = if !bert_classifier::ort_available() {
+            None
+        } else {
+            resolve_model_path(&config.model_path)
+                .ok()
+                .and_then(|p| W5H2Classifier::load(&p).ok())
+        };
 
         // Fix 29: Semantic cache (optional)
         let semantic_cache = SemanticCache::open(&config.data_dir).ok();
@@ -1106,10 +1110,19 @@ impl Orchestrator {
         {
             intent = if let Some(ref mut cached) = self.setfit_classifier {
                 cached.classify(safe_query)?
-            } else {
+            } else if bert_classifier::ort_available() {
                 let model_path = resolve_model_path(&self.config.model_path)?;
                 let mut classifier = W5H2Classifier::load(&model_path)?;
                 classifier.classify(safe_query)?
+            } else {
+                // ONNX runtime unavailable — return a low-confidence fallback intent
+                // that will cascade to higher tiers (Tier 3/4)
+                crate::w5h2::types::W5H2Intent {
+                    action: crate::w5h2::types::Action::Check,
+                    target: crate::w5h2::types::Target::Weather,
+                    confidence: 0.0,
+                    params: std::collections::HashMap::new(),
+                }
             };
             intent_key_obj = intent.key();
             intent_key = intent_key_obj.to_string();

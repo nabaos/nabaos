@@ -14,9 +14,43 @@
 //!   Tier 4: Deep agent (~minutes)
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::core::error::{NyayaError, Result};
 use crate::w5h2::types::{parse_label, W5H2Intent};
+
+/// Check whether the ONNX runtime dynamic library can be loaded.
+/// Probes once (via `catch_unwind` on ort's init) and caches the result.
+/// Returns `true` if ort is usable, `false` if the dylib is missing.
+///
+/// Uses an atomic flag with compare-exchange to guarantee exactly one probe.
+/// This avoids `Once`/`OnceLock` which propagate panics to waiting threads.
+pub fn ort_available() -> bool {
+    // 0 = not probed yet, 1 = available, 2 = unavailable
+    static STATE: AtomicU8 = AtomicU8::new(0);
+
+    loop {
+        match STATE.load(Ordering::Acquire) {
+            1 => return true,
+            2 => return false,
+            _ => {} // 0 = not probed yet
+        }
+        // Try to claim the probe slot (0 -> 255 = "probing")
+        if STATE.compare_exchange(0, 255, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            let ok = std::panic::catch_unwind(ort::api).is_ok();
+            STATE.store(if ok { 1 } else { 2 }, Ordering::Release);
+            if !ok {
+                eprintln!(
+                    "[nabaos] ONNX runtime not available (libonnxruntime.so not found) — \
+                     BERT/ONNX features disabled"
+                );
+            }
+            return ok;
+        }
+        // Another thread is probing — spin briefly
+        std::hint::spin_loop();
+    }
+}
 
 /// BERT classification result with confidence for cascade decision.
 #[derive(Debug, Clone)]
@@ -195,6 +229,9 @@ impl BertClassifier {
 /// Try to load the BERT classifier. Returns None if model files don't exist.
 /// This allows graceful degradation — if BERT isn't available, skip Tier 1.
 pub fn try_load_bert(model_dir: &Path) -> Option<BertClassifier> {
+    if !ort_available() {
+        return None;
+    }
     let onnx_path = model_dir.join("bert_model.onnx");
     if !onnx_path.exists() {
         tracing::debug!(
