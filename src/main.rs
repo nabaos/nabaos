@@ -3131,7 +3131,129 @@ fn cmd_setup(
     ];
 
     if run_interactive {
-        // ── Banner ──────────────────────────────────────────────────────
+        #[cfg(feature = "tui")]
+        {
+            // Launch full-screen interactive wizard
+            match nabaos::tui::wizard::run_wizard() {
+                Ok(Some(result)) => {
+                    // Write .env file from wizard results
+                    let env_path = config.data_dir.join(".env");
+                    let mut env_lines: Vec<String> = Vec::new();
+                    env_lines.push(format!("NABA_LLM_PROVIDER={}", result.provider_id));
+                    if !result.base_url.is_empty() && result.provider_id != "anthropic" && result.provider_id != "openai" {
+                        env_lines.push(format!("NABA_LLM_BASE_URL={}", result.base_url));
+                    }
+                    if !result.api_key.is_empty() {
+                        env_lines.push(format!("NABA_LLM_API_KEY={}", result.api_key));
+                    }
+                    if !result.model.is_empty() {
+                        env_lines.push(format!("NABA_LLM_MODEL={}", result.model));
+                    }
+                    env_lines.push(format!("NABA_CONSTITUTION={}", result.constitution));
+                    if result.enable_telegram {
+                        env_lines.push("NABA_TELEGRAM_ENABLED=true".to_string());
+                        if !result.telegram_token.is_empty() {
+                            env_lines.push(format!("NABA_TELEGRAM_BOT_TOKEN={}", result.telegram_token));
+                        }
+                    }
+                    if result.enable_web {
+                        env_lines.push("NABA_WEB_ENABLED=true".to_string());
+                        if !result.web_password.is_empty() {
+                            env_lines.push(format!("NABA_WEB_PASSWORD={}", result.web_password));
+                        }
+                    }
+                    env_lines.push(String::new());
+
+                    std::fs::create_dir_all(&config.data_dir).ok();
+                    std::fs::write(&env_path, env_lines.join("\n"))?;
+
+                    // Hardware scan + profile
+                    println!();
+                    println!("  {}●{} Scanning hardware...", cy, r);
+                    let hw = HardwareInfo::scan();
+                    println!("{}", hw.display_report());
+                    println!();
+
+                    let profile = hw.suggest_profile();
+                    let profile_path = ModuleProfile::profile_path(&config.data_dir);
+                    profile.save_to(&profile_path)?;
+
+                    // Download WebBERT if requested
+                    if result.download_webbert {
+                        println!("  {}●{} Downloading WebBERT model...", cy, r);
+                        let model_dir = &config.model_path;
+                        std::fs::create_dir_all(model_dir).ok();
+                        let status = std::process::Command::new("hf")
+                            .args([
+                                "download",
+                                "biztiger/webbert-action-classifier",
+                                "--local-dir",
+                                &model_dir.to_string_lossy(),
+                            ])
+                            .args(["--include", "webbert*"])
+                            .status();
+                        match status {
+                            Ok(s) if s.success() => {
+                                println!("  {}✓{} Downloaded to {}", gr, r, model_dir.display());
+                            }
+                            _ => {
+                                println!("  {}▲{} Auto-download failed — run manually:", yl, r);
+                                println!(
+                                    "  {}hf download biztiger/webbert-action-classifier --local-dir {}{}",
+                                    d, model_dir.display(), r,
+                                );
+                            }
+                        }
+                        println!();
+                    }
+
+                    // Summary
+                    println!("{}", fmt::header_line("Setup Complete"));
+                    println!("{}", fmt::ok(&format!("Provider: {} ({})", result.provider_name, result.provider_id)));
+                    if !result.model.is_empty() {
+                        println!("{}", fmt::ok(&format!("Model: {}", result.model)));
+                    }
+                    println!("{}", fmt::ok(&format!("Constitution: {}", result.constitution)));
+                    if result.enable_telegram {
+                        println!("{}", fmt::ok("Telegram: enabled"));
+                    }
+                    if result.enable_web {
+                        println!("{}", fmt::ok("Web dashboard: enabled"));
+                    }
+                    println!("{}", fmt::ok(&format!("Config saved to {}", env_path.display())));
+                    println!("{}", fmt::separator());
+                    println!("{}", fmt::row_raw(&format!("  {}Next:{}", b, r)));
+                    println!(
+                        "{}",
+                        fmt::row_raw(&format!(
+                            "  {}nabaos check{}   {}verify everything works{}",
+                            cy, r, d, r,
+                        ))
+                    );
+                    println!(
+                        "{}",
+                        fmt::row_raw(&format!(
+                            "  {}nabaos ask \"hello\"{}  {}send your first query{}",
+                            cy, r, d, r,
+                        ))
+                    );
+                    println!("{}", fmt::footer());
+                    println!();
+
+                    return Ok(());
+                }
+                Ok(None) => {
+                    println!("  Setup cancelled.");
+                    return Ok(());
+                }
+                Err(e) => {
+                    eprintln!("  Wizard error: {}. Falling back to text mode.", e);
+                    // Fall through to text-mode wizard below
+                }
+            }
+        }
+
+        // Text-mode fallback (used when tui feature is disabled or wizard errors)
         println!();
         println!("  {}{}nabaos setup{}", b, mg, r);
         println!("  {}Configure your agent runtime in 5 steps{}", d, r);

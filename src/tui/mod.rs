@@ -7,3 +7,6 @@ pub mod app;
 
 #[cfg(feature = "tui")]
 pub mod tabs;
+
+#[cfg(feature = "tui")]
+pub mod wizard;
