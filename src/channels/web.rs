@@ -16,6 +16,10 @@ use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use tokio_stream::wrappers::ReceiverStream;
 
+#[derive(rust_embed::Embed)]
+#[folder = "nabaos-web/dist/"]
+struct WebAssets;
+
 use crate::agent_os::triggers::TriggerEngine;
 use crate::chain::workflow_engine::WorkflowEngine;
 use crate::core::config::NyayaConfig;
@@ -2963,14 +2967,29 @@ pub fn create_router(state: AppState) -> Router {
         .route("/oauth/callback", get(oauth_callback))
         .with_state(state);
 
-    // Serve static files from nabaos-web/dist if the directory exists,
-    // otherwise use the fallback HTML.
-    let static_dir = std::path::Path::new("nabaos-web/dist");
-    if static_dir.is_dir() {
-        let serve_dir = tower_http::services::ServeDir::new(static_dir).not_found_service(
-            tower_http::services::ServeFile::new(static_dir.join("index.html")),
-        );
-        api.fallback_service(serve_dir)
+    // Serve embedded static files (compiled into the binary via rust-embed),
+    // with SPA fallback to index.html for client-side routing.
+    if WebAssets::get("index.html").is_some() {
+        api.fallback(|uri: axum::http::Uri| async move {
+            let path = uri.path().trim_start_matches('/');
+            if let Some(file) = WebAssets::get(path) {
+                let mime = mime_guess::from_path(path).first_or_octet_stream();
+                (
+                    [(axum::http::header::CONTENT_TYPE, mime.as_ref().to_string())],
+                    file.data.to_vec(),
+                )
+                    .into_response()
+            } else if let Some(index) = WebAssets::get("index.html") {
+                // SPA fallback — serve index.html for client-side routing
+                (
+                    [(axum::http::header::CONTENT_TYPE, "text/html".to_string())],
+                    index.data.to_vec(),
+                )
+                    .into_response()
+            } else {
+                StatusCode::NOT_FOUND.into_response()
+            }
+        })
     } else {
         api.fallback(fallback_html)
     }
