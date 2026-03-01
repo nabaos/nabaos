@@ -1,5 +1,5 @@
 <script lang="ts">
-  let theme = $state(localStorage.getItem('nyaya-theme') || 'system');
+  let theme = $state(localStorage.getItem('nabaos-theme') || 'system');
 
   function getSystemTheme(): 'light' | 'dark' {
     return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
@@ -14,7 +14,7 @@
     const order = ['dark', 'light', 'system'];
     const idx = order.indexOf(theme);
     theme = order[(idx + 1) % order.length];
-    localStorage.setItem('nyaya-theme', theme);
+    localStorage.setItem('nabaos-theme', theme);
     applyTheme(theme);
   }
 

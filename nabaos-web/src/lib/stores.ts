@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 
-export type Page = 'dashboard' | 'chat' | 'workflows' | 'settings';
+export type Page = 'chat' | 'dashboard' | 'pea' | 'workflows' | 'watcher' | 'settings';
 
 export const currentPage = writable<Page>('chat');
 export const authenticated = writable(false);

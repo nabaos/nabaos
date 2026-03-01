@@ -6,14 +6,10 @@ export interface AuthStatus {
 }
 
 export interface DashboardData {
-  workflow_count: number;
-  scheduled_jobs: number;
-  ability_count: number;
-  total_spent_usd: number;
-  total_saved_usd: number;
-  savings_percent: number;
-  total_llm_calls: number;
-  total_cache_hits: number;
+  total_workflows: number;
+  total_scheduled_jobs: number;
+  total_abilities: number;
+  costs: CostData;
 }
 
 export interface SecurityInfo {
@@ -97,7 +93,7 @@ export interface Rules {
 
 // ── Token Management ───────────────────────────────────────────────────
 
-const TOKEN_KEY = 'nyaya_token';
+const TOKEN_KEY = 'nabaos_token';
 
 function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -341,7 +337,7 @@ export interface Tool {
 }
 
 export async function getToolServers(): Promise<{ servers: ToolServer[] }> {
-  return request<{ servers: ToolServer[] }>('GET', '/api/v1/tools');
+  return request<{ servers: ToolServer[] }>('GET', '/api/v1/tools/servers');
 }
 
 export async function getTools(serverId: string): Promise<{ tools: Tool[] }> {
@@ -354,4 +350,68 @@ export async function storeToolSecret(secretName: string, secretValue: string): 
 
 export async function discoverTools(serverId: string): Promise<{ discovered: boolean; tools?: Tool[] }> {
   return request<{ discovered: boolean; tools?: Tool[] }>('POST', '/api/v1/tools/discover', { server_id: serverId });
+}
+
+// ── System Status ─────────────────────────────────────────────────────
+export interface SystemStatus {
+  version: string;
+  uptime_secs: number;
+  channels: string[];
+  watcher_enabled: boolean;
+  watcher_alerts: number;
+  watcher_paused: number;
+}
+
+export async function getSystemStatus(): Promise<SystemStatus> {
+  try {
+    return await request<SystemStatus>('GET', '/api/v1/status');
+  } catch {
+    return { version: '0.2.3', uptime_secs: 0, channels: [], watcher_enabled: false, watcher_alerts: 0, watcher_paused: 0 };
+  }
+}
+
+// ── Costs Dashboard ───────────────────────────────────────────────────
+export interface CostsDashboard {
+  daily: { total_cost: number; total_calls: number; cache_hit_rate: number; cache_hits: number; total_saved: number };
+  weekly: { total_cost: number; total_calls: number; cache_hits: number; total_saved: number };
+  monthly: { total_cost: number; total_calls: number; cache_hits: number; total_saved: number };
+  all_time: { total_cost: number; total_calls: number; cache_hits: number; total_saved: number };
+}
+
+export async function getCostsDashboard(): Promise<CostsDashboard> {
+  try {
+    return await request<CostsDashboard>('GET', '/api/v1/costs/dashboard');
+  } catch {
+    const zero = { total_cost: 0, total_calls: 0, cache_hits: 0, total_saved: 0, cache_hit_rate: 0 };
+    return { daily: zero, weekly: zero, monthly: zero, all_time: zero };
+  }
+}
+
+// ── Skills ────────────────────────────────────────────────────────────
+export interface SkillInfo {
+  name: string;
+  description: string;
+}
+
+export async function getSkills(): Promise<SkillInfo[]> {
+  try {
+    return await request<SkillInfo[]>('GET', '/api/v1/skills');
+  } catch {
+    return [];
+  }
+}
+
+// ── Resources ─────────────────────────────────────────────────────────
+export interface ResourceInfo {
+  id: string;
+  resource_type: string;
+  status: string;
+}
+
+export async function getResources(): Promise<ResourceInfo[]> {
+  try {
+    return await request<ResourceInfo[]>('GET', '/api/v1/resources');
+  } catch {
+    return [];
+  }
 }

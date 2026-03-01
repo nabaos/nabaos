@@ -49,11 +49,11 @@
   }
 
   // ── Appearance ───────────────────────────────────────────────────────
-  let currentTheme = $state(localStorage.getItem('nyaya-theme') || 'system');
+  let currentTheme = $state(localStorage.getItem('nabaos-theme') || 'system');
 
   function setTheme(t: string) {
     currentTheme = t;
-    localStorage.setItem('nyaya-theme', t);
+    localStorage.setItem('nabaos-theme', t);
     const resolved = t === 'system'
       ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
       : t;
@@ -484,7 +484,7 @@
       {#if !collapsed.system}
         <Card>
           <div class="system-info">
-            <div class="info-row"><span class="info-label">Version</span><span class="mono">0.1.0</span></div>
+            <div class="info-row"><span class="info-label">Version</span><span class="mono">0.2.3</span></div>
             <div class="info-row"><span class="info-label">Runtime</span><span>Rust + Tokio</span></div>
             <div class="info-row"><span class="info-label">Frontend</span><span>Svelte 5 + Vite</span></div>
           </div>
