@@ -1,6 +1,6 @@
 [package]
 name = "nabaos"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "The agent that uses all agents — cached when possible, autonomous when needed, independent always"
 license = "MIT"
