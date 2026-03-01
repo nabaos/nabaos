@@ -6,6 +6,9 @@ pub mod fmt;
 pub mod app;
 
 #[cfg(feature = "tui")]
+pub mod log_layer;
+
+#[cfg(feature = "tui")]
 pub mod tabs;
 
 #[cfg(feature = "tui")]

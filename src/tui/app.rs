@@ -7,8 +7,10 @@
 //! - Help overlay
 //! - Agents loaded from catalog, objectives from PEA engine
 
+use std::collections::VecDeque;
 use std::io;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -31,6 +33,16 @@ use super::tabs::history::{HistoryEntry, HistoryTab};
 use super::tabs::settings::{ConfigEntry, SettingsTab};
 use super::tabs::tasks::{ObjectiveSummary, TasksTab};
 use super::tabs::{Tab, TabId};
+
+// ── Wizard-matching color palette ───────────────────────────────────────────
+const BG: Color = Color::Rgb(22, 22, 30);
+const FG: Color = Color::Rgb(200, 200, 210);
+const ACCENT: Color = Color::Rgb(255, 175, 95);
+const GREEN: Color = Color::Rgb(130, 200, 130);
+const DIM: Color = Color::Rgb(100, 100, 120);
+const HEADING: Color = Color::Rgb(170, 170, 190);
+const BORDER: Color = Color::Rgb(60, 60, 80);
+const HIGHLIGHT_BG: Color = Color::Rgb(35, 35, 50);
 
 /// Messages from background processing threads.
 enum AppMessage {
@@ -59,13 +71,16 @@ pub struct App {
     pub stats_saved: f64,
     pub stats_spent: f64,
     pub stats_cache_pct: f64,
+    pub show_logs: bool,
+    log_buffer: Arc<Mutex<VecDeque<String>>>,
+    start_time: Instant,
     config: NyayaConfig,
     rx: mpsc::Receiver<AppMessage>,
     tx: mpsc::Sender<AppMessage>,
 }
 
 impl App {
-    pub fn new(config: NyayaConfig) -> Self {
+    pub fn new(config: NyayaConfig, log_buffer: Arc<Mutex<VecDeque<String>>>) -> Self {
         let (tx, rx) = mpsc::channel();
 
         let mut settings = SettingsTab::new();
@@ -114,6 +129,9 @@ impl App {
             history: HistoryTab::new(),
             should_quit: false,
             show_help: false,
+            show_logs: true,
+            log_buffer,
+            start_time: Instant::now(),
             stats_queries: 0,
             stats_saved: 0.0,
             stats_spent: 0.0,
@@ -273,6 +291,25 @@ impl App {
 
 /// Launch the interactive TUI.
 pub fn run_tui(config: NyayaConfig) -> Result<()> {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    // Set up ring-buffer log capture + file appender BEFORE entering the TUI
+    let (layer, log_buffer) = super::log_layer::RingBufferLayer::new(500);
+    let log_dir = config.data_dir.join("logs");
+    std::fs::create_dir_all(&log_dir).ok();
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "nabaos.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let subscriber = tracing_subscriber::registry()
+        .with(layer)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking)
+                .with_target(false),
+        );
+    // set_global_default may fail if already set — that's OK in TUI mode
+    let _ = tracing::subscriber::set_global_default(subscriber);
+
     // Setup terminal
     enable_raw_mode().map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?;
     io::stdout()
@@ -283,7 +320,7 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
     let mut terminal = Terminal::new(backend)
         .map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?;
 
-    let mut app = App::new(config);
+    let mut app = App::new(config, log_buffer);
     let mut last_refresh = Instant::now();
     let refresh_interval = Duration::from_secs(3);
 
@@ -330,6 +367,12 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
                                 && app.active_tab != TabId::Agents =>
                         {
                             app.show_help = !app.show_help;
+                        }
+                        KeyCode::Char('l') | KeyCode::Char('L')
+                            if app.active_tab != TabId::Chat
+                                && app.active_tab != TabId::Agents =>
+                        {
+                            app.show_logs = !app.show_logs;
                         }
                         KeyCode::Tab => {
                             app.active_tab = app.active_tab.next();
@@ -398,6 +441,9 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
 fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
     let size = frame.area();
 
+    // Fill entire background
+    frame.render_widget(Block::default().style(Style::default().bg(BG)), size);
+
     // Build live stats for title bar
     let stats_text = format!(
         " saved {} · cache {:.0}% · {} queries ",
@@ -409,26 +455,30 @@ fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
     // Outer block with stats in bottom border
     let outer = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(BORDER))
+        .style(Style::default().bg(BG))
         .title(Line::from(vec![Span::styled(
             format!(" NabaOS v{} ", env!("CARGO_PKG_VERSION")),
             Style::default()
-                .fg(Color::Cyan)
+                .fg(ACCENT)
+                .bg(BG)
                 .add_modifier(Modifier::BOLD),
         )]))
         .title_bottom(Line::from(vec![Span::styled(
             stats_text,
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(GREEN).bg(BG),
         )]));
 
     let inner = outer.inner(size);
     frame.render_widget(outer, size);
 
-    // Layout: tab bar + content + keybinding hints
+    // Layout: tab bar + content + logs (optional) + status bar
+    let log_height = if app.show_logs { 8 } else { 0 };
     let chunks = Layout::vertical([
-        Constraint::Length(2), // tab bar
-        Constraint::Min(5),   // content
-        Constraint::Length(1), // keybinding hints
+        Constraint::Length(2),          // tab bar
+        Constraint::Min(5),             // content
+        Constraint::Length(log_height), // logs panel
+        Constraint::Length(1),          // status bar
     ])
     .split(inner);
 
@@ -444,28 +494,58 @@ fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
         TabId::History => app.history.render(frame, chunks[1]),
     }
 
-    // Keybinding hints
-    let hints = build_hints(app.active_tab);
-    let hint_spans: Vec<Span> = hints
-        .iter()
-        .enumerate()
-        .flat_map(|(i, (k, v))| {
-            let mut spans = vec![
-                Span::styled(
-                    format!(" {} ", k),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!("{}", v), Style::default().fg(Color::DarkGray)),
-            ];
-            if i < hints.len() - 1 {
-                spans.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
-            }
-            spans
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(Line::from(hint_spans)), chunks[2]);
+    // Logs panel
+    if app.show_logs {
+        if let Ok(logs) = app.log_buffer.lock() {
+            let log_lines: Vec<Line> = logs
+                .iter()
+                .rev()
+                .take(7)
+                .rev()
+                .map(|l| Line::from(Span::styled(l.as_str(), Style::default().fg(DIM).bg(BG))))
+                .collect();
+            let log_block = Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(BORDER))
+                .title(Span::styled(
+                    " Logs (L to toggle) ",
+                    Style::default().fg(HEADING).bg(BG),
+                ));
+            frame.render_widget(
+                Paragraph::new(log_lines)
+                    .block(log_block)
+                    .style(Style::default().bg(BG)),
+                chunks[2],
+            );
+        }
+    }
+
+    // Status bar
+    let uptime = app.start_time.elapsed();
+    let uptime_str = if uptime.as_secs() >= 3600 {
+        format!(
+            "{}h {}m",
+            uptime.as_secs() / 3600,
+            (uptime.as_secs() % 3600) / 60
+        )
+    } else {
+        format!("{}m {}s", uptime.as_secs() / 60, uptime.as_secs() % 60)
+    };
+    let status = Line::from(vec![
+        Span::styled(
+            format!(" Up: {} ", uptime_str),
+            Style::default().fg(DIM).bg(BG),
+        ),
+        Span::styled("\u{2502} ", Style::default().fg(BORDER).bg(BG)),
+        Span::styled(
+            "?: help  L: logs  Ctrl+C: quit ",
+            Style::default().fg(DIM).bg(BG),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(vec![status]).style(Style::default().bg(BG)),
+        chunks[3],
+    );
 
     // Help overlay
     if app.show_help {
@@ -497,47 +577,22 @@ fn draw_tab_bar(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, app: &A
 
     let tabs = Tabs::new(titles)
         .select(app.active_tab.index())
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(DIM).bg(BG))
         .highlight_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(ACCENT)
+                .bg(HIGHLIGHT_BG)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         )
-        .divider("│");
+        .divider("\u{2502}");
 
     frame.render_widget(tabs, area);
-}
-
-/// Build context-sensitive keybinding hints.
-fn build_hints(tab: TabId) -> Vec<(&'static str, &'static str)> {
-    match tab {
-        TabId::Chat => vec![
-            ("Enter", "send"),
-            ("↑↓", "history"),
-            ("PgUp/Dn", "scroll"),
-            ("Tab", "switch"),
-            ("^C", "quit"),
-        ],
-        TabId::Agents => vec![
-            ("↑↓", "navigate"),
-            ("type", "search"),
-            ("Tab", "switch"),
-            ("^C", "quit"),
-        ],
-        _ => vec![
-            ("↑↓/jk", "navigate"),
-            ("Tab", "switch"),
-            ("1-5", "jump"),
-            ("?", "help"),
-            ("q", "quit"),
-        ],
-    }
 }
 
 /// Draw the help overlay centered on screen.
 fn draw_help_overlay(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
     let w = 50.min(area.width.saturating_sub(4));
-    let h = 16.min(area.height.saturating_sub(4));
+    let h = 17.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(w)) / 2 + area.x;
     let y = (area.height.saturating_sub(h)) / 2 + area.y;
     let help_area = ratatui::layout::Rect::new(x, y, w, h);
@@ -549,7 +604,7 @@ fn draw_help_overlay(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
         Line::from(vec![Span::styled(
             "  Keyboard Shortcuts",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(ACCENT)
                 .add_modifier(Modifier::BOLD),
         )]),
         Line::from(""),
@@ -558,27 +613,33 @@ fn draw_help_overlay(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
         help_row("↑ ↓ / j k", "Navigate lists"),
         help_row("Enter", "Send query (Chat)"),
         help_row("PgUp / PgDn", "Scroll messages"),
+        help_row("L", "Toggle logs"),
         help_row("q", "Quit"),
         help_row("Ctrl+C", "Force quit"),
         help_row("?", "Toggle this help"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "  Press any key to close",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(DIM),
         )]),
     ];
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(Style::default().fg(ACCENT).bg(BG))
+        .style(Style::default().bg(BG))
         .title(Line::from(vec![Span::styled(
             " Help ",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(ACCENT)
+                .bg(BG)
                 .add_modifier(Modifier::BOLD),
         )]));
 
-    frame.render_widget(Paragraph::new(help_lines).block(block), help_area);
+    frame.render_widget(
+        Paragraph::new(help_lines).block(block).style(Style::default().bg(BG)),
+        help_area,
+    );
 }
 
 fn help_row<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
@@ -586,10 +647,10 @@ fn help_row<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
         Span::styled(
             format!("  {:<19}", key),
             Style::default()
-                .fg(Color::White)
+                .fg(FG)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(desc, Style::default().fg(Color::DarkGray)),
+        Span::styled(desc, Style::default().fg(DIM)),
     ])
 }
 
