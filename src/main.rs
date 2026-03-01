@@ -3024,46 +3024,47 @@ fn cmd_setup(
 ) -> Result<()> {
     use nabaos::modules::hardware::HardwareInfo;
     use nabaos::modules::profile::ModuleProfile;
+    use nabaos::providers::catalog::builtin_providers;
     use std::io::Write;
 
-    // Helper: read a line from stdin
-    fn prompt(msg: &str) -> String {
-        print!("{}", msg);
+    let b = fmt::c(fmt::BOLD);
+    let d = fmt::c(fmt::DIM);
+    let r = fmt::c(fmt::RESET);
+    let cy = fmt::c(fmt::CYAN);
+    let gr = fmt::c(fmt::GREEN);
+    let mg = fmt::c(fmt::MAGENTA);
+    let yl = fmt::c(fmt::YELLOW);
+
+    // Helper: read a line from stdin with a styled prompt
+    fn prompt(label: &str) -> String {
+        let cy = fmt::c(fmt::CYAN);
+        let r = fmt::c(fmt::RESET);
+        print!("  {}>{} {} ", cy, r, label);
         std::io::stdout().flush().unwrap_or_default();
         let mut buf = String::new();
         std::io::stdin().read_line(&mut buf).unwrap_or_default();
         buf.trim().to_string()
     }
 
-    // Helper: step header inside the wizard box
-    fn step(n: u8, total: u8, title: &str) {
-        println!("{}", fmt::separator());
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  {}{}/{}{} {}{}{}",
-                fmt::c(fmt::MAGENTA),
-                n,
-                total,
-                fmt::c(fmt::RESET),
-                fmt::c(fmt::BOLD),
-                title,
-                fmt::c(fmt::RESET),
-            ))
-        );
-        println!("{}", fmt::row_empty());
+    fn mask_key(key: &str) -> String {
+        if key.len() > 8 {
+            format!("{}...{}", &key[..4], &key[key.len() - 4..])
+        } else {
+            "••••".to_string()
+        }
     }
 
     // Handle --download-models flag
     if download_models {
-        println!("{}", fmt::header_line("Download Models"));
-        println!("{}", fmt::active("Downloading ONNX models for local inference"));
-        println!("{}", fmt::row_empty());
-        println!("{}", fmt::row("WebBERT", "~256 MB — browser action classifier"));
-        println!("{}", fmt::row("SetFit", "~23 MB — W5H2 intent classifier"));
-        println!("{}", fmt::row("MiniLM", "~23 MB — sentence embeddings"));
-        println!("{}", fmt::separator());
-        println!("{}", fmt::active("Downloading WebBERT from HuggingFace..."));
+        println!();
+        println!("  {}{}Download Models{}", b, mg, r);
+        println!("  {}Downloading ONNX models for local inference{}", d, r);
+        println!();
+        println!("  {}WebBERT{}  ~256 MB  browser action classifier", b, r);
+        println!("  {}SetFit{}   ~23 MB   W5H2 intent classifier", b, r);
+        println!("  {}MiniLM{}   ~23 MB   sentence embeddings", b, r);
+        println!();
+        println!("  {}●{} Downloading WebBERT from HuggingFace...", cy, r);
         let model_dir = &config.model_path;
         let status = std::process::Command::new("hf")
             .args([
@@ -3076,187 +3077,257 @@ fn cmd_setup(
             .status();
         match status {
             Ok(s) if s.success() => {
-                println!("{}", fmt::ok(&format!("Downloaded to {}", model_dir.display())));
+                println!("  {}✓{} Downloaded to {}", gr, r, model_dir.display());
             }
             _ => {
-                println!("{}", fmt::warn("Could not download automatically"));
+                println!("  {}▲{} Could not download automatically", yl, r);
                 println!(
-                    "{}",
-                    fmt::row_raw(&format!(
-                        "  Run: hf download biztiger/webbert-action-classifier --local-dir {}",
-                        model_dir.display()
-                    ))
+                    "  {}Run: hf download biztiger/webbert-action-classifier --local-dir {}{}",
+                    d, model_dir.display(), r,
                 );
             }
         }
-        println!("{}", fmt::footer());
+        println!();
         return Ok(());
     }
 
     // Determine mode
     let run_interactive = interactive || !non_interactive;
 
+    // Load provider catalog for the wizard
+    let all_providers = builtin_providers();
+
+    // Categorize providers for display
+    let popular: Vec<(&str, &str, &str)> = vec![
+        ("anthropic", "Anthropic", "Claude Sonnet 4.6"),
+        ("openai", "OpenAI", "GPT-4o"),
+        ("google", "Google", "Gemini 2.0 Flash"),
+        ("deepseek", "DeepSeek", "deepseek-chat"),
+        ("groq", "Groq", "fast inference"),
+    ];
+    let aggregators: Vec<(&str, &str, &str)> = vec![
+        ("openrouter", "OpenRouter", "any model via unified API"),
+        ("nanogpt", "NanoGPT", "pay-per-token, no subscription"),
+        ("together", "Together AI", "open-source models"),
+        ("fireworks", "Fireworks AI", "fast open-source models"),
+        ("mistral", "Mistral AI", "Mistral & Mixtral"),
+        ("cerebras", "Cerebras", "fastest inference"),
+        ("perplexity", "Perplexity", "search-augmented LLM"),
+        ("replicate", "Replicate", "run any model via API"),
+        ("deepinfra", "DeepInfra", "serverless GPU inference"),
+        ("huggingface", "Hugging Face", "inference API"),
+    ];
+    let selfhosted: Vec<(&str, &str, &str)> = vec![
+        ("ollama", "Ollama", "localhost:11434"),
+        ("lmstudio", "LM Studio", "localhost:1234"),
+        ("llamacpp", "llama.cpp", "localhost:8080"),
+        ("jan", "Jan", "localhost:1337"),
+        ("localai", "LocalAI", "localhost:8080"),
+        ("litellm", "LiteLLM", "localhost:4000"),
+    ];
+    let enterprise: Vec<(&str, &str, &str)> = vec![
+        ("bedrock", "AWS Bedrock", "Claude via AWS"),
+        ("azure_openai", "Azure OpenAI", "GPT via Azure"),
+    ];
+
     if run_interactive {
-        // ---- Interactive guided wizard ----
-        println!("{}", fmt::header_line("NabaOS Setup"));
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  {}Configure your agent runtime in 5 steps{}",
-                fmt::c(fmt::DIM),
-                fmt::c(fmt::RESET),
-            ))
-        );
+        // ── Banner ──────────────────────────────────────────────────────
+        println!();
+        println!("  {}{}nabaos setup{}", b, mg, r);
+        println!("  {}Configure your agent runtime in 5 steps{}", d, r);
+        println!();
 
-        // -- Step 1/5: LLM Provider --
-        step(1, 5, "LLM Provider");
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  {}1{} anthropic         {}Claude{}",
-                fmt::c(fmt::CYAN), fmt::c(fmt::RESET),
-                fmt::c(fmt::DIM), fmt::c(fmt::RESET),
-            ))
-        );
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  {}2{} openai            {}GPT{}",
-                fmt::c(fmt::CYAN), fmt::c(fmt::RESET),
-                fmt::c(fmt::DIM), fmt::c(fmt::RESET),
-            ))
-        );
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  {}3{} openai-compatible  {}nano-gpt, OpenRouter, etc.{}",
-                fmt::c(fmt::CYAN), fmt::c(fmt::RESET),
-                fmt::c(fmt::DIM), fmt::c(fmt::RESET),
-            ))
-        );
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  {}4{} local             {}Ollama / llama.cpp{}",
-                fmt::c(fmt::CYAN), fmt::c(fmt::RESET),
-                fmt::c(fmt::DIM), fmt::c(fmt::RESET),
-            ))
-        );
-        println!("{}", fmt::row_empty());
-        println!("{}", fmt::footer());
+        // ── Step 1/5: LLM Provider ─────────────────────────────────────
+        println!("  {}Step 1 of 5{} · {}LLM Provider{}", mg, r, b, r);
+        println!("  {}{}{}", d, "─".repeat(40), r);
+        println!();
 
-        let provider_input = prompt(&format!(
-            "  {}Choose [1-4]{} (default: 1): ",
-            fmt::c(fmt::CYAN),
-            fmt::c(fmt::RESET),
-        ));
-        let provider = match provider_input.as_str() {
-            "2" => "openai",
-            "3" => "openai-compatible",
-            "4" => "local",
-            _ => "anthropic",
+        let mut num = 1usize;
+        // Popular
+        println!("  {}Popular{}", b, r);
+        for &(_, name, hint) in &popular {
+            println!("  {}{:>3}{} {:<20} {}{}{}", cy, num, r, name, d, hint, r);
+            num += 1;
+        }
+        println!();
+
+        // Aggregators
+        println!("  {}Aggregators{} {}(use any model through a single API){}", b, r, d, r);
+        for &(_, name, hint) in &aggregators {
+            println!("  {}{:>3}{} {:<20} {}{}{}", cy, num, r, name, d, hint, r);
+            num += 1;
+        }
+        println!();
+
+        // Self-hosted
+        println!("  {}Self-hosted{} {}(no API key needed){}", b, r, d, r);
+        for &(_, name, hint) in &selfhosted {
+            println!("  {}{:>3}{} {:<20} {}{}{}", cy, num, r, name, d, hint, r);
+            num += 1;
+        }
+        println!();
+
+        // Enterprise
+        println!("  {}Enterprise{}", b, r);
+        for &(_, name, hint) in &enterprise {
+            println!("  {}{:>3}{} {:<20} {}{}{}", cy, num, r, name, d, hint, r);
+            num += 1;
+        }
+        println!();
+
+        let total_shown = popular.len() + aggregators.len() + selfhosted.len() + enterprise.len();
+        let remaining = all_providers.len() - total_shown;
+        if remaining > 0 {
+            println!("  {}  a{} Show all {} providers", cy, r, all_providers.len());
+        }
+        println!("  {}  c{} Custom provider (enter URL manually)", cy, r);
+        println!();
+
+        // Build a flat lookup for numbered options
+        let mut numbered: Vec<(&str, &str)> = Vec::new(); // (id, display_name)
+        for &(id, name, _) in popular.iter().chain(aggregators.iter()).chain(selfhosted.iter()).chain(enterprise.iter()) {
+            numbered.push((id, name));
+        }
+
+        let provider_input = prompt("Choose [1-23, a, c] (default: 1):");
+        let (provider_id, provider_name, provider_base_url) = if provider_input == "a" {
+            // Show ALL providers
+            println!();
+            println!("  {}All {} providers:{}", b, all_providers.len(), r);
+            for (i, p) in all_providers.iter().enumerate() {
+                let local = p.base_url.starts_with("http://localhost");
+                let hint = if local {
+                    p.base_url.clone()
+                } else if !p.models.is_empty() {
+                    p.default_model.clone()
+                } else {
+                    p.base_url.replace("https://", "")
+                };
+                println!("  {}{:>3}{} {:<22} {}{}{}", cy, i + 1, r, p.display_name, d, hint, r);
+            }
+            println!();
+            let all_input = prompt(&format!("Choose [1-{}]:", all_providers.len()));
+            let idx = all_input.parse::<usize>().unwrap_or(1).saturating_sub(1).min(all_providers.len() - 1);
+            let p = &all_providers[idx];
+            (p.id.clone(), p.display_name.clone(), p.base_url.clone())
+        } else if provider_input == "c" {
+            // Custom provider
+            let base_url = prompt("Base URL (e.g. https://api.example.com/v1):");
+            let name = prompt("Provider name (e.g. MyProvider):");
+            let name = if name.is_empty() { "custom".to_string() } else { name };
+            ("openai-compatible".to_string(), name, base_url)
+        } else {
+            let idx = provider_input.parse::<usize>().unwrap_or(1).saturating_sub(1);
+            if idx < numbered.len() {
+                let (id, name) = numbered[idx];
+                let base = all_providers.iter().find(|p| p.id == id).map(|p| p.base_url.as_str()).unwrap_or("");
+                (id.to_string(), name.to_string(), base.to_string())
+            } else {
+                let (id, name) = numbered[0];
+                let base = all_providers.iter().find(|p| p.id == id).map(|p| p.base_url.as_str()).unwrap_or("");
+                (id.to_string(), name.to_string(), base.to_string())
+            }
         };
 
-        if provider != "local" {
-            if provider == "openai-compatible" {
-                let base_url = prompt(&format!(
-                    "  {}Base URL{} (e.g. https://nano-gpt.com/api/v1): ",
-                    fmt::c(fmt::CYAN),
-                    fmt::c(fmt::RESET),
-                ));
-                if base_url.is_empty() {
-                    println!("  {}○{} Set NABA_LLM_BASE_URL later", fmt::c(fmt::DIM), fmt::c(fmt::RESET));
-                } else {
-                    println!("  {}✓{} {}", fmt::c(fmt::GREEN), fmt::c(fmt::RESET), base_url);
-                }
+        println!("  {}✓{} {}{}{}", gr, r, b, provider_name, r);
+        if !provider_base_url.is_empty() {
+            println!("    {}URL: {}{}", d, provider_base_url, r);
+        }
+        println!();
 
-                let api_key = prompt(&format!(
-                    "  {}API key{}: ",
-                    fmt::c(fmt::CYAN),
-                    fmt::c(fmt::RESET),
-                ));
-                if api_key.is_empty() {
-                    println!("  {}○{} Set NABA_LLM_API_KEY later", fmt::c(fmt::DIM), fmt::c(fmt::RESET));
-                } else {
-                    let masked = if api_key.len() > 8 {
-                        format!("{}...{}", &api_key[..4], &api_key[api_key.len() - 4..])
-                    } else {
-                        "****".to_string()
-                    };
-                    println!("  {}✓{} Key recorded ({})", fmt::c(fmt::GREEN), fmt::c(fmt::RESET), masked);
-                }
+        // API key + model discovery
+        let is_local = provider_base_url.starts_with("http://localhost") || provider_base_url.starts_with("http://127.");
+        let mut chosen_model = String::new();
+        let mut api_key_val = String::new();
 
-                // Model discovery
-                if !base_url.is_empty() && !api_key.is_empty() {
-                    println!();
-                    println!("  {}●{} Discovering models...", fmt::c(fmt::CYAN), fmt::c(fmt::RESET));
-                    match nabaos::providers::discovery::fetch_available_models(&base_url, &api_key) {
-                        Ok(models) if !models.is_empty() => {
-                            println!("  {}✓{} Found {} models", fmt::c(fmt::GREEN), fmt::c(fmt::RESET), models.len());
-                            let show = models.len().min(10);
-                            for (i, m) in models.iter().take(show).enumerate() {
-                                println!(
-                                    "    {}{:>2}{} {}",
-                                    fmt::c(fmt::CYAN),
-                                    i + 1,
-                                    fmt::c(fmt::RESET),
-                                    m
-                                );
-                            }
-                            if models.len() > show {
-                                println!(
-                                    "    {}... and {} more{}",
-                                    fmt::c(fmt::DIM),
-                                    models.len() - show,
-                                    fmt::c(fmt::RESET),
-                                );
-                            }
-                            let model_choice = prompt(&format!(
-                                "  {}Model{} (default: 1): ",
-                                fmt::c(fmt::CYAN),
-                                fmt::c(fmt::RESET),
-                            ));
-                            let idx = model_choice
-                                .parse::<usize>()
-                                .unwrap_or(1)
-                                .saturating_sub(1);
-                            let chosen = models.get(idx).unwrap_or(&models[0]);
-                            println!("  {}✓{} Model: {}", fmt::c(fmt::GREEN), fmt::c(fmt::RESET), chosen);
+        if !is_local {
+            let key_input = prompt(&format!("{} API key:", provider_name));
+            if key_input.is_empty() {
+                println!("  {}○{} Set NABA_LLM_API_KEY later", d, r);
+            } else {
+                api_key_val = key_input.clone();
+                println!("  {}✓{} Key recorded ({})", gr, r, mask_key(&key_input));
+            }
+            println!();
+
+            // Model discovery
+            if !api_key_val.is_empty() && !provider_base_url.is_empty() {
+                println!("  {}●{} Discovering available models...", cy, r);
+                match nabaos::providers::discovery::fetch_available_models(&provider_base_url, &api_key_val) {
+                    Ok(models) if !models.is_empty() => {
+                        println!("  {}✓{} Found {} models", gr, r, models.len());
+                        println!();
+                        let show = models.len().min(15);
+                        for (i, m) in models.iter().take(show).enumerate() {
+                            println!("  {}{:>3}{} {}", cy, i + 1, r, m);
                         }
-                        Ok(_) => {
-                            println!("  {}○{} No models found. Set NABA_LLM_MODEL later", fmt::c(fmt::DIM), fmt::c(fmt::RESET));
+                        if models.len() > show {
+                            println!("  {}    ... and {} more{}", d, models.len() - show, r);
                         }
-                        Err(e) => {
-                            println!("  {}○{} Could not fetch models: {}", fmt::c(fmt::DIM), fmt::c(fmt::RESET), e);
+                        println!();
+                        let model_input = prompt(&format!("Model [1-{}] (default: 1):", models.len()));
+                        let idx = model_input.parse::<usize>().unwrap_or(1).saturating_sub(1).min(models.len() - 1);
+                        chosen_model = models[idx].clone();
+                        println!("  {}✓{} Model: {}{}{}", gr, r, b, chosen_model, r);
+                    }
+                    Ok(_) => {
+                        println!("  {}○{} No models listed. Set NABA_LLM_MODEL later", d, r);
+                    }
+                    Err(e) => {
+                        println!("  {}○{} Could not discover models: {}", d, r, e);
+                        // For providers with known defaults, suggest it
+                        let def = all_providers.iter().find(|p| p.id == provider_id);
+                        if let Some(p) = def {
+                            if !p.default_model.is_empty() {
+                                println!("  {}  Default model: {}{}", d, p.default_model, r);
+                                chosen_model = p.default_model.clone();
+                            }
                         }
                     }
                 }
-            } else {
-                let api_key = prompt(&format!(
-                    "  {}{} API key{}: ",
-                    fmt::c(fmt::CYAN),
-                    provider,
-                    fmt::c(fmt::RESET),
-                ));
-                if api_key.is_empty() {
-                    println!("  {}○{} Set NABA_LLM_API_KEY later", fmt::c(fmt::DIM), fmt::c(fmt::RESET));
-                } else {
-                    let masked = if api_key.len() > 8 {
-                        format!("{}...{}", &api_key[..4], &api_key[api_key.len() - 4..])
-                    } else {
-                        "****".to_string()
-                    };
-                    println!("  {}✓{} Key recorded ({})", fmt::c(fmt::GREEN), fmt::c(fmt::RESET), masked);
+            } else if api_key_val.is_empty() {
+                // Check for known default model
+                let def = all_providers.iter().find(|p| p.id == provider_id);
+                if let Some(p) = def {
+                    if !p.default_model.is_empty() {
+                        chosen_model = p.default_model.clone();
+                        println!("  {}Default model: {}{}", d, chosen_model, r);
+                    }
                 }
             }
         } else {
-            println!("  {}○{} Local mode — no API key needed", fmt::c(fmt::DIM), fmt::c(fmt::RESET));
+            println!("  {}○{} Local mode — no API key needed", d, r);
+            // Try to discover local models
+            println!("  {}●{} Checking for running models...", cy, r);
+            match nabaos::providers::discovery::fetch_available_models(&provider_base_url, "") {
+                Ok(models) if !models.is_empty() => {
+                    println!("  {}✓{} Found {} models", gr, r, models.len());
+                    let show = models.len().min(10);
+                    for (i, m) in models.iter().take(show).enumerate() {
+                        println!("  {}{:>3}{} {}", cy, i + 1, r, m);
+                    }
+                    if models.len() > show {
+                        println!("  {}    ... and {} more{}", d, models.len() - show, r);
+                    }
+                    println!();
+                    let model_input = prompt(&format!("Model [1-{}] (default: 1):", models.len().min(show)));
+                    let idx = model_input.parse::<usize>().unwrap_or(1).saturating_sub(1).min(models.len() - 1);
+                    chosen_model = models[idx].clone();
+                    println!("  {}✓{} Model: {}{}{}", gr, r, b, chosen_model, r);
+                }
+                _ => {
+                    println!("  {}○{} No models found locally. Start your local server first.", d, r);
+                }
+            }
         }
-        println!("  {}✓{} Provider: {}{}{}", fmt::c(fmt::GREEN), fmt::c(fmt::RESET), fmt::c(fmt::BOLD), provider, fmt::c(fmt::RESET));
         println!();
 
-        // -- Step 2/5: Constitution --
-        println!("{}", fmt::header_line("Constitution"));
+        // ── Step 2/5: Constitution ──────────────────────────────────────
+        println!("  {}Step 2 of 5{} · {}Constitution{}", mg, r, b, r);
+        println!("  {}{}{}", d, "─".repeat(40), r);
+        println!();
+        println!("  {}Safety rules that govern what your agent can and cannot do.{}", d, r);
+        println!();
 
         let template_names = [
             ("default", "General-purpose with sensible defaults"),
@@ -3283,28 +3354,11 @@ fn cmd_setup(
         ];
 
         for (i, (name, desc)) in template_names.iter().enumerate() {
-            println!(
-                "{}",
-                fmt::row_raw(&format!(
-                    "  {}{:>2}{} {:<20}{}{}{}",
-                    fmt::c(fmt::CYAN),
-                    i + 1,
-                    fmt::c(fmt::RESET),
-                    name,
-                    fmt::c(fmt::DIM),
-                    desc,
-                    fmt::c(fmt::RESET),
-                ))
-            );
+            println!("  {}{:>3}{} {:<20} {}{}{}", cy, i + 1, r, name, d, desc, r);
         }
-        println!("{}", fmt::footer());
+        println!();
 
-        let const_input = prompt(&format!(
-            "  {}Template{} [1-{}] (default: 1): ",
-            fmt::c(fmt::CYAN),
-            fmt::c(fmt::RESET),
-            template_names.len(),
-        ));
+        let const_input = prompt(&format!("Template [1-{}] (default: 1):", template_names.len()));
         let const_idx: usize = const_input.parse().unwrap_or(1);
         let const_idx = if const_idx >= 1 && const_idx <= template_names.len() {
             const_idx - 1
@@ -3312,144 +3366,81 @@ fn cmd_setup(
             0
         };
         let chosen_template = template_names[const_idx].0;
-        println!(
-            "  {}✓{} Selected: {}{}{}",
-            fmt::c(fmt::GREEN),
-            fmt::c(fmt::RESET),
-            fmt::c(fmt::BOLD),
-            chosen_template,
-            fmt::c(fmt::RESET),
-        );
+        println!("  {}✓{} Constitution: {}{}{}", gr, r, b, chosen_template, r);
         println!();
 
-        // -- Step 3/5: Channels --
-        println!("{}", fmt::header_line("Channels"));
-        println!("{}", fmt::row_raw(&format!("  {}Configure communication channels{}", fmt::c(fmt::DIM), fmt::c(fmt::RESET))));
-        println!("{}", fmt::footer());
+        // ── Step 3/5: Channels ──────────────────────────────────────────
+        println!("  {}Step 3 of 5{} · {}Channels{}", mg, r, b, r);
+        println!("  {}{}{}", d, "─".repeat(40), r);
+        println!();
 
         // Telegram
-        let tg_input = prompt(&format!(
-            "  {}Telegram bot?{} [Y/n]: ",
-            fmt::c(fmt::CYAN),
-            fmt::c(fmt::RESET),
-        ));
+        let tg_input = prompt("Enable Telegram bot? [Y/n]:");
         let enable_telegram = !tg_input.eq_ignore_ascii_case("n");
 
         if enable_telegram {
-            let tg_token = prompt(&format!(
-                "  {}Bot token{}: ",
-                fmt::c(fmt::CYAN),
-                fmt::c(fmt::RESET),
-            ));
+            let tg_token = prompt("Telegram bot token:");
             if tg_token.is_empty() {
-                println!("  {}○{} Set NABA_TELEGRAM_BOT_TOKEN later", fmt::c(fmt::DIM), fmt::c(fmt::RESET));
+                println!("  {}○{} Set NABA_TELEGRAM_BOT_TOKEN later", d, r);
             } else {
-                println!("  {}✓{} Telegram token recorded", fmt::c(fmt::GREEN), fmt::c(fmt::RESET));
+                println!("  {}✓{} Telegram configured", gr, r);
             }
         } else {
-            println!("  {}○{} Telegram skipped", fmt::c(fmt::DIM), fmt::c(fmt::RESET));
+            println!("  {}○{} Telegram skipped", d, r);
         }
 
         // Web Dashboard
-        let web_input = prompt(&format!(
-            "  {}Web dashboard?{} [Y/n]: ",
-            fmt::c(fmt::CYAN),
-            fmt::c(fmt::RESET),
-        ));
+        let web_input = prompt("Enable web dashboard? [Y/n]:");
         let enable_web = !web_input.eq_ignore_ascii_case("n");
 
         if enable_web {
-            let web_pass = prompt(&format!(
-                "  {}Dashboard password{}: ",
-                fmt::c(fmt::CYAN),
-                fmt::c(fmt::RESET),
-            ));
+            let web_pass = prompt("Dashboard password:");
             if web_pass.is_empty() {
-                println!("  {}○{} Set NABA_WEB_PASSWORD later", fmt::c(fmt::DIM), fmt::c(fmt::RESET));
+                println!("  {}○{} Set NABA_WEB_PASSWORD later", d, r);
             } else {
-                println!("  {}✓{} Password recorded", fmt::c(fmt::GREEN), fmt::c(fmt::RESET));
+                println!("  {}✓{} Web dashboard configured", gr, r);
             }
         } else {
-            println!("  {}○{} Web dashboard skipped", fmt::c(fmt::DIM), fmt::c(fmt::RESET));
+            println!("  {}○{} Web dashboard skipped", d, r);
         }
         println!();
 
-        // -- Step 4/5: First Agent --
-        println!("{}", fmt::header_line("Starter Agent"));
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  {}1{} morning-briefing   {}Calendar, weather, news summary{}",
-                fmt::c(fmt::CYAN), fmt::c(fmt::RESET),
-                fmt::c(fmt::DIM), fmt::c(fmt::RESET),
-            ))
-        );
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  {}2{} email-assistant    {}Smart email triage and drafting{}",
-                fmt::c(fmt::CYAN), fmt::c(fmt::RESET),
-                fmt::c(fmt::DIM), fmt::c(fmt::RESET),
-            ))
-        );
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  {}3{} dev-helper         {}Git, CI status, PR summaries{}",
-                fmt::c(fmt::CYAN), fmt::c(fmt::RESET),
-                fmt::c(fmt::DIM), fmt::c(fmt::RESET),
-            ))
-        );
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  {}4{} skip",
-                fmt::c(fmt::DIM), fmt::c(fmt::RESET),
-            ))
-        );
-        println!("{}", fmt::footer());
+        // ── Step 4/5: First Agent ───────────────────────────────────────
+        println!("  {}Step 4 of 5{} · {}Starter Agent{}", mg, r, b, r);
+        println!("  {}{}{}", d, "─".repeat(40), r);
+        println!();
+        println!("  {}Optional: install a pre-built agent to get started quickly.{}", d, r);
+        println!();
+        println!("  {}  1{} morning-briefing     {}Calendar, weather, news summary{}", cy, r, d, r);
+        println!("  {}  2{} email-assistant      {}Smart email triage and drafting{}", cy, r, d, r);
+        println!("  {}  3{} dev-helper           {}Git, CI status, PR summaries{}", cy, r, d, r);
+        println!("  {}  4{} skip", d, r);
+        println!();
 
-        let agent_input = prompt(&format!(
-            "  {}Agent{} [1-4] (default: 4): ",
-            fmt::c(fmt::CYAN),
-            fmt::c(fmt::RESET),
-        ));
+        let agent_input = prompt("Agent [1-4] (default: 4):");
         match agent_input.as_str() {
-            "1" => println!("  {}✓{} Queued: morning-briefing", fmt::c(fmt::GREEN), fmt::c(fmt::RESET)),
-            "2" => println!("  {}✓{} Queued: email-assistant", fmt::c(fmt::GREEN), fmt::c(fmt::RESET)),
-            "3" => println!("  {}✓{} Queued: dev-helper", fmt::c(fmt::GREEN), fmt::c(fmt::RESET)),
-            _ => println!("  {}○{} Skipped", fmt::c(fmt::DIM), fmt::c(fmt::RESET)),
+            "1" => println!("  {}✓{} Queued: morning-briefing", gr, r),
+            "2" => println!("  {}✓{} Queued: email-assistant", gr, r),
+            "3" => println!("  {}✓{} Queued: dev-helper", gr, r),
+            _ => println!("  {}○{} Skipped", d, r),
         }
         println!();
 
-        // -- Step 5/5: WebBERT Model --
-        println!("{}", fmt::header_line("Local Models"));
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  WebBERT — local browser action classifier {}(~256 MB){}",
-                fmt::c(fmt::DIM), fmt::c(fmt::RESET),
-            ))
-        );
-        println!(
-            "{}",
-            fmt::row_raw(&format!(
-                "  ~5ms inference, $0 cost per classification",
-            ))
-        );
-        println!("{}", fmt::footer());
+        // ── Step 5/5: WebBERT Model ────────────────────────────────────
+        println!("  {}Step 5 of 5{} · {}Local Models{}", mg, r, b, r);
+        println!("  {}{}{}", d, "─".repeat(40), r);
+        println!();
+        println!("  {}WebBERT{} — local browser action classifier", b, r);
+        println!("  {}~256 MB download · ~5ms inference · $0 per classification{}", d, r);
+        println!();
 
-        let webbert_input = prompt(&format!(
-            "  {}Download WebBERT?{} [Y/n]: ",
-            fmt::c(fmt::CYAN),
-            fmt::c(fmt::RESET),
-        ));
+        let webbert_input = prompt("Download WebBERT? [Y/n]:");
         let want_webbert = !webbert_input.eq_ignore_ascii_case("n");
 
         if want_webbert {
             let model_dir = &config.model_path;
             std::fs::create_dir_all(model_dir).ok();
-            println!("  {}●{} Downloading from HuggingFace...", fmt::c(fmt::CYAN), fmt::c(fmt::RESET));
+            println!("  {}●{} Downloading from HuggingFace...", cy, r);
             let status = std::process::Command::new("hf")
                 .args([
                     "download",
@@ -3461,30 +3452,23 @@ fn cmd_setup(
                 .status();
             match status {
                 Ok(s) if s.success() => {
-                    println!(
-                        "  {}✓{} Downloaded to {}",
-                        fmt::c(fmt::GREEN),
-                        fmt::c(fmt::RESET),
-                        model_dir.display()
-                    );
+                    println!("  {}✓{} Downloaded to {}", gr, r, model_dir.display());
                 }
                 _ => {
-                    println!("  {}▲{} Auto-download failed", fmt::c(fmt::YELLOW), fmt::c(fmt::RESET));
+                    println!("  {}▲{} Auto-download failed", yl, r);
                     println!(
                         "  {}Run: hf download biztiger/webbert-action-classifier --local-dir {}{}",
-                        fmt::c(fmt::DIM),
-                        model_dir.display(),
-                        fmt::c(fmt::RESET),
+                        d, model_dir.display(), r,
                     );
                 }
             }
         } else {
-            println!("  {}○{} Skipped — browser actions use LLM fallback", fmt::c(fmt::DIM), fmt::c(fmt::RESET));
+            println!("  {}○{} Skipped — browser actions use LLM fallback", d, r);
         }
         println!();
 
-        // -- Hardware scan & profile save --
-        println!("  {}●{} Scanning hardware...", fmt::c(fmt::CYAN), fmt::c(fmt::RESET));
+        // ── Hardware scan ───────────────────────────────────────────────
+        println!("  {}●{} Scanning hardware...", cy, r);
         let hw = HardwareInfo::scan();
         println!("{}", hw.display_report());
         println!();
@@ -3492,17 +3476,40 @@ fn cmd_setup(
         let profile = hw.suggest_profile();
         let profile_path = ModuleProfile::profile_path(&config.data_dir);
         profile.save_to(&profile_path)?;
-        println!(
-            "  {}✓{} Profile saved to {}",
-            fmt::c(fmt::GREEN),
-            fmt::c(fmt::RESET),
-            profile_path.display(),
-        );
+        println!("  {}✓{} Profile saved to {}", gr, r, profile_path.display());
         println!();
 
-        // -- Final summary --
+        // ── Write .env file ─────────────────────────────────────────────
+        let env_path = config.data_dir.join(".env");
+        let mut env_lines: Vec<String> = Vec::new();
+        env_lines.push(format!("NABA_LLM_PROVIDER={}", provider_id));
+        if !provider_base_url.is_empty() && provider_id != "anthropic" && provider_id != "openai" {
+            env_lines.push(format!("NABA_LLM_BASE_URL={}", provider_base_url));
+        }
+        if !api_key_val.is_empty() {
+            env_lines.push(format!("NABA_LLM_API_KEY={}", api_key_val));
+        }
+        if !chosen_model.is_empty() {
+            env_lines.push(format!("NABA_LLM_MODEL={}", chosen_model));
+        }
+        env_lines.push(format!("NABA_CONSTITUTION={}", chosen_template));
+        if enable_telegram {
+            env_lines.push("NABA_TELEGRAM_ENABLED=true".to_string());
+        }
+        if enable_web {
+            env_lines.push("NABA_WEB_ENABLED=true".to_string());
+        }
+        env_lines.push(String::new()); // trailing newline
+
+        std::fs::create_dir_all(&config.data_dir).ok();
+        std::fs::write(&env_path, env_lines.join("\n"))?;
+
+        // ── Final summary ───────────────────────────────────────────────
         println!("{}", fmt::header_line("Setup Complete"));
-        println!("{}", fmt::ok(&format!("Provider: {}", provider)));
+        println!("{}", fmt::ok(&format!("Provider: {} ({})", provider_name, provider_id)));
+        if !chosen_model.is_empty() {
+            println!("{}", fmt::ok(&format!("Model: {}", chosen_model)));
+        }
         println!("{}", fmt::ok(&format!("Constitution: {}", chosen_template)));
         if enable_telegram {
             println!("{}", fmt::ok("Telegram: enabled"));
@@ -3510,101 +3517,67 @@ fn cmd_setup(
         if enable_web {
             println!("{}", fmt::ok("Web dashboard: enabled"));
         }
+        println!("{}", fmt::ok(&format!("Config saved to {}", env_path.display())));
         println!("{}", fmt::separator());
+        println!("{}", fmt::row_raw(&format!("  {}Next:{}", b, r)));
         println!(
             "{}",
             fmt::row_raw(&format!(
-                "  {}Next steps:{}",
-                fmt::c(fmt::BOLD),
-                fmt::c(fmt::RESET),
+                "  {}source {}{}",
+                cy, env_path.display(), r,
             ))
         );
-        println!("{}", fmt::row_empty());
         println!(
             "{}",
             fmt::row_raw(&format!(
-                "  {}export NABA_LLM_PROVIDER={}{}",
-                fmt::c(fmt::CYAN),
-                provider,
-                fmt::c(fmt::RESET),
+                "  {}nabaos check{}   {}verify everything works{}",
+                cy, r, d, r,
             ))
         );
-        if provider != "local" {
-            println!(
-                "{}",
-                fmt::row_raw(&format!(
-                    "  {}export NABA_LLM_API_KEY=<your-key>{}",
-                    fmt::c(fmt::CYAN),
-                    fmt::c(fmt::RESET),
-                ))
-            );
-        }
-        if enable_telegram {
-            println!(
-                "{}",
-                fmt::row_raw(&format!(
-                    "  {}export NABA_TELEGRAM_BOT_TOKEN=<token>{}",
-                    fmt::c(fmt::CYAN),
-                    fmt::c(fmt::RESET),
-                ))
-            );
-        }
-        if enable_web {
-            println!(
-                "{}",
-                fmt::row_raw(&format!(
-                    "  {}export NABA_WEB_PASSWORD=<password>{}",
-                    fmt::c(fmt::CYAN),
-                    fmt::c(fmt::RESET),
-                ))
-            );
-        }
-        println!("{}", fmt::row_empty());
         println!(
             "{}",
             fmt::row_raw(&format!(
-                "  Then run: {}nabaos start{}",
-                fmt::c(fmt::CYAN),
-                fmt::c(fmt::RESET),
+                "  {}nabaos ask \"hello\"{}  {}send your first query{}",
+                cy, r, d, r,
             ))
         );
         println!("{}", fmt::footer());
         println!();
     } else {
         // ---- Non-interactive mode ----
-        println!("{}", fmt::header_line("Hardware Scan"));
-        println!("{}", fmt::active("Scanning hardware..."));
-        println!("{}", fmt::footer());
         println!();
+        println!("  {}{}nabaos setup{} {}(non-interactive){}", b, mg, r, d, r);
+        println!();
+
+        println!("  {}●{} Scanning hardware...", cy, r);
         let hw = HardwareInfo::scan();
         println!("{}", hw.display_report());
         println!();
 
         let profile = hw.suggest_profile();
 
-        println!("{}", fmt::header_line("Suggested Modules"));
-        let check_icon = |enabled: bool| if enabled { fmt::ok } else { fmt::skip };
-        println!("{}", check_icon(profile.core)("core"));
-        println!("{}", check_icon(profile.web)("web"));
-        println!(
-            "{}",
-            check_icon(profile.voice_enabled())(&format!("voice ({})", profile.voice))
-        );
-        println!("{}", check_icon(profile.browser)("browser"));
-        println!("{}", check_icon(profile.telegram)("telegram"));
-        println!("{}", check_icon(profile.latex)("latex"));
-        println!("{}", check_icon(profile.mobile)("mobile"));
+        println!("  {}Suggested Modules{}", b, r);
+        println!("  {}{}{}", d, "─".repeat(40), r);
+        println!();
+        let icon = |ok: bool| if ok { format!("{}✓{}", gr, r) } else { format!("{}○{}", d, r) };
+        println!("  {} core", icon(profile.core));
+        println!("  {} web", icon(profile.web));
+        println!("  {} voice ({})", icon(profile.voice_enabled()), profile.voice);
+        println!("  {} browser", icon(profile.browser));
+        println!("  {} telegram", icon(profile.telegram));
+        println!("  {} latex", icon(profile.latex));
+        println!("  {} mobile", icon(profile.mobile));
         if !profile.oauth.is_empty() {
-            println!("{}", fmt::ok(&format!("oauth: {}", profile.oauth.join(", "))));
+            println!("  {} oauth: {}", icon(true), profile.oauth.join(", "));
         } else {
-            println!("{}", fmt::skip("oauth"));
+            println!("  {} oauth", icon(false));
         }
-        println!("{}", fmt::footer());
         println!();
 
         let profile_path = ModuleProfile::profile_path(&config.data_dir);
         profile.save_to(&profile_path)?;
-        println!("{}", fmt::ok(&format!("Profile saved to {}", profile_path.display())));
+        println!("  {}✓{} Profile saved to {}", gr, r, profile_path.display());
+        println!();
     }
 
     Ok(())
