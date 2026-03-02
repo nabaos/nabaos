@@ -27,6 +27,12 @@
     };
   }
 
+  // Clone data to strip Svelte 5 $state proxy — Chart.js uses Object.defineProperty
+  // on data objects, which throws state_descriptors_fixed on proxied state.
+  function cloneData(d: any): any {
+    return JSON.parse(JSON.stringify(d));
+  }
+
   onMount(() => {
     const colors = getThemeColors();
     const defaultOptions: any = {
@@ -44,7 +50,7 @@
     }
     chart = new Chart(canvas, {
       type,
-      data,
+      data: cloneData(data),
       options: { ...defaultOptions, ...options },
     });
   });
@@ -53,7 +59,7 @@
 
   $effect(() => {
     if (chart && data) {
-      chart.data = data;
+      chart.data = cloneData(data);
       chart.update();
     }
   });

@@ -6,7 +6,7 @@
     type Workflow, type ScheduledJob
   } from '../lib/api';
   import { Card, Badge, Modal, Button, EmptyState, Skeleton, StatCard } from '../lib/components';
-  import { currentPage } from '../lib/stores';
+  import { navigateTo } from '../lib/stores.svelte';
 
   // ---------- State ----------
   let workflows = $state<Workflow[]>([]);
@@ -52,11 +52,8 @@
   async function loadData() {
     loading = true;
     error = '';
-    try {
-      [workflows, jobs] = await Promise.all([getWorkflows(), getScheduledJobs()]);
-    } catch (e: any) {
-      error = e.message;
-    }
+    try { workflows = await getWorkflows(); } catch (e: any) { error = e.message; workflows = []; }
+    try { jobs = await getScheduledJobs(); } catch { jobs = []; }
     loading = false;
   }
 
@@ -195,7 +192,7 @@
   }
 
   function goToChat() {
-    currentPage.set('chat');
+    navigateTo('chat');
   }
 </script>
 

@@ -9,7 +9,7 @@
     securityScan, type ScanResult,
   } from '../lib/api';
   import { Card, Badge, Modal, Skeleton, StatCard, Button } from '../lib/components';
-  import { showToast } from '../lib/stores';
+  import { showToast } from '../lib/stores.svelte';
 
   // ── Section collapse state ───────────────────────────────────────────
   let collapsed = $state<Record<string, boolean>>({

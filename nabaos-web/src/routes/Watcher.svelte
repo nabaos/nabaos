@@ -18,16 +18,9 @@
   let cacheHitRate = $derived(cacheHits + llmCalls > 0 ? (cacheHits / (cacheHits + llmCalls)) * 100 : 0);
 
   async function fetchData() {
-    try {
-      const [s, c, cd] = await Promise.all([
-        getSystemStatus(),
-        getCosts(),
-        getCostsDashboard(),
-      ]);
-      status = s;
-      costs = c;
-      costsDash = cd;
-    } catch {}
+    try { status = await getSystemStatus(); } catch {}
+    try { costs = await getCosts(); } catch {}
+    try { costsDash = await getCostsDashboard(); } catch {}
     loading = false;
   }
 

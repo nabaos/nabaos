@@ -5,7 +5,7 @@
     type DashboardData, type CostsDashboard, type SystemStatus,
   } from '../lib/api';
   import { StatCard, Card, ChartWrapper, Skeleton, EmptyState, Button } from '../lib/components';
-  import { currentPage } from '../lib/stores';
+  import { navigateTo } from '../lib/stores.svelte';
 
   // ── State ──────────────────────────────────────────────────────────────
 
@@ -89,22 +89,20 @@
 
   async function fetchAll(isRefresh = false) {
     if (isRefresh) refreshing = true;
-    try {
-      const [dash, costs, status] = await Promise.all([
-        getDashboard(),
-        getCostsDashboard(),
-        getSystemStatus(),
-      ]);
-      data = dash;
-      costsDash = costs;
-      system = status;
-      error = '';
-    } catch (e: any) {
-      error = e.message || 'Failed to load dashboard';
-    } finally {
-      loading = false;
-      refreshing = false;
-    }
+    const errors: string[] = [];
+
+    try { data = await getDashboard(); }
+    catch (e: any) { errors.push(e.message); }
+
+    try { costsDash = await getCostsDashboard(); }
+    catch { /* getCostsDashboard already returns safe defaults */ }
+
+    try { system = await getSystemStatus(); }
+    catch { /* getSystemStatus already returns safe defaults */ }
+
+    error = errors.length > 0 ? errors.join('; ') : '';
+    loading = false;
+    refreshing = false;
   }
 
   onMount(() => {
@@ -119,7 +117,7 @@
   // ── Navigation ─────────────────────────────────────────────────────────
 
   function navigate(page: 'chat' | 'pea' | 'workflows' | 'watcher') {
-    currentPage.set(page);
+    navigateTo(page);
   }
 
   // ── Period breakdown helper ────────────────────────────────────────────
@@ -127,11 +125,14 @@
   interface PeriodEntry { label: string; cost: number; calls: number; cacheHits: number; saved: number }
 
   let periods = $derived<PeriodEntry[]>(costsDash ? [
-    { label: 'Daily',   cost: costsDash.daily.total_cost,    calls: costsDash.daily.total_calls,    cacheHits: costsDash.daily.cache_hits,    saved: costsDash.daily.total_saved },
-    { label: 'Weekly',  cost: costsDash.weekly.total_cost,   calls: costsDash.weekly.total_calls,   cacheHits: costsDash.weekly.cache_hits,   saved: costsDash.weekly.total_saved },
-    { label: 'Monthly', cost: costsDash.monthly.total_cost,  calls: costsDash.monthly.total_calls,  cacheHits: costsDash.monthly.cache_hits,  saved: costsDash.monthly.total_saved },
+    { label: 'Daily',    cost: costsDash.daily.total_cost,    calls: costsDash.daily.total_calls,    cacheHits: costsDash.daily.cache_hits,    saved: costsDash.daily.total_saved },
+    { label: 'Weekly',   cost: costsDash.weekly.total_cost,   calls: costsDash.weekly.total_calls,   cacheHits: costsDash.weekly.cache_hits,   saved: costsDash.weekly.total_saved },
+    { label: 'Monthly',  cost: costsDash.monthly.total_cost,  calls: costsDash.monthly.total_calls,  cacheHits: costsDash.monthly.cache_hits,  saved: costsDash.monthly.total_saved },
     { label: 'All Time', cost: costsDash.all_time.total_cost, calls: costsDash.all_time.total_calls, cacheHits: costsDash.all_time.cache_hits, saved: costsDash.all_time.total_saved },
   ] : []);
+
+  // Guard: if data has no costs sub-object (API returned different shape), don't crash
+  let safeCosts = $derived(data?.costs ?? { total_spent_usd: 0, total_saved_usd: 0, total_cache_hits: 0, total_llm_calls: 0, savings_percent: 0, total_input_tokens: 0, total_output_tokens: 0 });
 
   // ── Quick links config ─────────────────────────────────────────────────
 

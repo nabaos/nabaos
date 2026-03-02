@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { getAbilities, type Ability, sendQueryStream } from '../lib/api';
   import { Card, Badge, Button, EmptyState, Skeleton, Modal } from '../lib/components';
-  import { currentPage } from '../lib/stores';
+  import { navigateTo } from '../lib/stores.svelte';
 
   let agents = $state<Ability[]>([]);
   let loading = $state(true);
@@ -38,7 +38,7 @@
   }
 
   function goToChat() {
-    currentPage.set('chat');
+    navigateTo('chat');
   }
 
   function getSourceBadge(source: string): 'success' | 'info' | 'warning' {

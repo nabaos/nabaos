@@ -6,7 +6,7 @@
     getStyle, setStyle, clearStyle,
   } from '../lib/api';
   import { Badge, EmptyState, Modal, Button } from '../lib/components';
-  import { currentPage, showToast } from '../lib/stores';
+  import { navigateTo, showToast } from '../lib/stores.svelte';
 
   interface Message {
     role: 'user' | 'agent';
@@ -598,7 +598,7 @@
     </div>
     <div class="wf-modal-actions">
       {#if workflowDone}
-        <Button onclick={() => { currentPage.set('workflows'); resetWorkflowModal(); }}>View Workflows</Button>
+        <Button onclick={() => { navigateTo('workflows'); resetWorkflowModal(); }}>View Workflows</Button>
         <Button variant="primary" onclick={resetWorkflowModal}>Done</Button>
       {:else}
         <Button disabled={workflowBuilding} onclick={resetWorkflowModal}>Cancel</Button>

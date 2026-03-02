@@ -41,6 +41,18 @@ export interface Workflow {
   created_at: string;
 }
 
+// Raw workflow shape from backend (may only have id + name)
+interface RawWorkflow {
+  id?: string;
+  workflow_id?: string;
+  name: string;
+  description?: string;
+  trust_level?: number;
+  run_count?: number;
+  success_count?: number;
+  created_at?: string;
+}
+
 export interface ScheduledJob {
   id: string;
   workflow_id: string;
@@ -164,7 +176,49 @@ export async function checkAuth(): Promise<AuthStatus> {
 // ── Dashboard ──────────────────────────────────────────────────────────
 
 export async function getDashboard(): Promise<DashboardData> {
-  return request<DashboardData>('GET', '/api/v1/dashboard');
+  try {
+    const raw = await request<any>('GET', '/api/v1/dashboard');
+    // Normalize: the backend may return cost data in varying shapes
+    const costs = raw?.costs ?? raw ?? {};
+    return {
+      total_workflows: raw?.total_workflows ?? 0,
+      total_scheduled_jobs: raw?.total_scheduled_jobs ?? 0,
+      total_abilities: raw?.total_abilities ?? 0,
+      costs: {
+        total_spent_usd: costs?.total_spent_usd ?? 0,
+        total_saved_usd: costs?.total_saved_usd ?? 0,
+        savings_percent: costs?.savings_percent ?? 0,
+        total_llm_calls: costs?.total_llm_calls ?? 0,
+        total_cache_hits: costs?.total_cache_hits ?? 0,
+        total_input_tokens: costs?.total_input_tokens ?? 0,
+        total_output_tokens: costs?.total_output_tokens ?? 0,
+      },
+    };
+  } catch {
+    // If /api/v1/dashboard doesn't exist, build from /api/v1/status
+    try {
+      const status = await request<any>('GET', '/api/v1/status');
+      return {
+        total_workflows: 0,
+        total_scheduled_jobs: 0,
+        total_abilities: 0,
+        costs: {
+          total_spent_usd: status?.total_spent_usd ?? 0,
+          total_saved_usd: status?.total_saved_usd ?? 0,
+          savings_percent: status?.savings_percent ?? 0,
+          total_llm_calls: status?.total_llm_calls ?? 0,
+          total_cache_hits: status?.total_cache_hits ?? 0,
+          total_input_tokens: status?.total_input_tokens ?? 0,
+          total_output_tokens: status?.total_output_tokens ?? 0,
+        },
+      };
+    } catch {
+      return {
+        total_workflows: 0, total_scheduled_jobs: 0, total_abilities: 0,
+        costs: { total_spent_usd: 0, total_saved_usd: 0, savings_percent: 0, total_llm_calls: 0, total_cache_hits: 0, total_input_tokens: 0, total_output_tokens: 0 },
+      };
+    }
+  }
 }
 
 // ── Query ──────────────────────────────────────────────────────────────
@@ -251,11 +305,31 @@ export async function sendQueryStream(query: string, callbacks: StreamCallbacks)
 // ── Workflows ──────────────────────────────────────────────────────────
 
 export async function getWorkflows(): Promise<Workflow[]> {
-  return request<Workflow[]>('GET', '/api/v1/workflows');
+  try {
+    const raw = await request<any>('GET', '/api/v1/workflows');
+    // Backend may return { workflows: [...] } or a flat array
+    const list: RawWorkflow[] = Array.isArray(raw) ? raw : (raw?.workflows ?? []);
+    return list.map((w) => ({
+      workflow_id: w.workflow_id || w.id || '',
+      name: w.name || 'Unnamed',
+      description: w.description || '',
+      trust_level: w.trust_level ?? 0,
+      run_count: w.run_count ?? 0,
+      success_count: w.success_count ?? 0,
+      created_at: w.created_at || '',
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export async function getScheduledJobs(): Promise<ScheduledJob[]> {
-  return request<ScheduledJob[]>('GET', '/api/v1/workflows/schedule');
+  try {
+    const raw = await request<any>('GET', '/api/v1/workflows/schedule');
+    return Array.isArray(raw) ? raw : (raw?.jobs ?? raw?.schedule ?? []);
+  } catch {
+    return [];
+  }
 }
 
 export async function scheduleWorkflow(workflow_id: string, interval: string): Promise<{ job_id: string }> {
@@ -269,8 +343,21 @@ export async function disableJob(id: string): Promise<void> {
 // ── Status ─────────────────────────────────────────────────────────────
 
 export async function getCosts(sinceMs?: number): Promise<CostData> {
-  const path = sinceMs !== undefined ? `/api/v1/status?since=${sinceMs}` : '/api/v1/status';
-  return request<CostData>('GET', path);
+  try {
+    const path = sinceMs !== undefined ? `/api/v1/status?since=${sinceMs}` : '/api/v1/status';
+    const raw = await request<any>('GET', path);
+    return {
+      total_spent_usd: raw?.total_spent_usd ?? 0,
+      total_saved_usd: raw?.total_saved_usd ?? 0,
+      savings_percent: raw?.savings_percent ?? 0,
+      total_llm_calls: raw?.total_llm_calls ?? 0,
+      total_cache_hits: raw?.total_cache_hits ?? 0,
+      total_input_tokens: raw?.total_input_tokens ?? 0,
+      total_output_tokens: raw?.total_output_tokens ?? 0,
+    };
+  } catch {
+    return { total_spent_usd: 0, total_saved_usd: 0, savings_percent: 0, total_llm_calls: 0, total_cache_hits: 0, total_input_tokens: 0, total_output_tokens: 0 };
+  }
 }
 
 // ── Security ───────────────────────────────────────────────────────────
@@ -282,13 +369,23 @@ export async function securityScan(text: string): Promise<ScanResult> {
 // ── Abilities ──────────────────────────────────────────────────────────
 
 export async function getAbilities(): Promise<Ability[]> {
-  return request<Ability[]>('GET', '/api/v1/status/abilities');
+  try {
+    const raw = await request<any>('GET', '/api/v1/status/abilities');
+    return Array.isArray(raw) ? raw : (raw?.abilities ?? []);
+  } catch {
+    return [];
+  }
 }
 
 // ── Rules ──────────────────────────────────────────────────────────────
 
 export async function getRules(): Promise<Rules> {
-  return request<Rules>('GET', '/api/v1/rules');
+  try {
+    const raw = await request<any>('GET', '/api/v1/rules');
+    return { name: raw?.name || '', rules: Array.isArray(raw?.rules) ? raw.rules : [] };
+  } catch {
+    return { name: '', rules: [] };
+  }
 }
 
 // ── Personas ──────────────────────────────────────────────────────────
@@ -299,7 +396,14 @@ export interface PersonaList {
 }
 
 export async function getPersonas(): Promise<PersonaList> {
-  return request<PersonaList>('GET', '/api/v1/personas');
+  try {
+    const raw = await request<any>('GET', '/api/v1/personas');
+    // Backend returns { agents: [...], active: "..." } not { personas: [...] }
+    const list = raw?.personas || raw?.agents || [];
+    return { personas: list, active: raw?.active || '' };
+  } catch {
+    return { personas: [], active: '' };
+  }
 }
 
 export async function setActivePersona(persona_id: string): Promise<{ active: string }> {
@@ -364,26 +468,61 @@ export interface SystemStatus {
 
 export async function getSystemStatus(): Promise<SystemStatus> {
   try {
-    return await request<SystemStatus>('GET', '/api/v1/status');
+    const raw = await request<any>('GET', '/api/v1/status');
+    // Backend may return CostData shape instead of SystemStatus — guard all fields
+    return {
+      version: raw?.version || '',
+      uptime_secs: raw?.uptime_secs ?? 0,
+      channels: Array.isArray(raw?.channels) ? raw.channels : [],
+      watcher_enabled: raw?.watcher_enabled ?? false,
+      watcher_alerts: raw?.watcher_alerts ?? 0,
+      watcher_paused: raw?.watcher_paused ?? 0,
+    };
   } catch {
-    return { version: '0.2.3', uptime_secs: 0, channels: [], watcher_enabled: false, watcher_alerts: 0, watcher_paused: 0 };
+    return { version: '', uptime_secs: 0, channels: [], watcher_enabled: false, watcher_alerts: 0, watcher_paused: 0 };
   }
 }
 
 // ── Costs Dashboard ───────────────────────────────────────────────────
+export interface CostPeriod {
+  total_cost: number;
+  total_calls: number;
+  cache_hits: number;
+  total_saved: number;
+  cache_hit_rate?: number;
+}
+
 export interface CostsDashboard {
-  daily: { total_cost: number; total_calls: number; cache_hit_rate: number; cache_hits: number; total_saved: number };
-  weekly: { total_cost: number; total_calls: number; cache_hits: number; total_saved: number };
-  monthly: { total_cost: number; total_calls: number; cache_hits: number; total_saved: number };
-  all_time: { total_cost: number; total_calls: number; cache_hits: number; total_saved: number };
+  daily: CostPeriod;
+  weekly: CostPeriod;
+  monthly: CostPeriod;
+  all_time: CostPeriod;
+}
+
+const ZERO_PERIOD: CostPeriod = { total_cost: 0, total_calls: 0, cache_hits: 0, total_saved: 0, cache_hit_rate: 0 };
+
+function normPeriod(p: any): CostPeriod {
+  if (!p || typeof p !== 'object') return { ...ZERO_PERIOD };
+  return {
+    total_cost: p.total_cost ?? p.total_spent ?? p.total_spent_usd ?? 0,
+    total_calls: p.total_calls ?? p.total_llm_calls ?? 0,
+    cache_hits: p.cache_hits ?? p.total_cache_hits ?? 0,
+    total_saved: p.total_saved ?? p.total_saved_usd ?? 0,
+    cache_hit_rate: p.cache_hit_rate ?? 0,
+  };
 }
 
 export async function getCostsDashboard(): Promise<CostsDashboard> {
   try {
-    return await request<CostsDashboard>('GET', '/api/v1/costs/dashboard');
+    const raw = await request<any>('GET', '/api/v1/costs/dashboard');
+    return {
+      daily: normPeriod(raw?.daily),
+      weekly: normPeriod(raw?.weekly),
+      monthly: normPeriod(raw?.monthly),
+      all_time: normPeriod(raw?.all_time),
+    };
   } catch {
-    const zero = { total_cost: 0, total_calls: 0, cache_hits: 0, total_saved: 0, cache_hit_rate: 0 };
-    return { daily: zero, weekly: zero, monthly: zero, all_time: zero };
+    return { daily: { ...ZERO_PERIOD }, weekly: { ...ZERO_PERIOD }, monthly: { ...ZERO_PERIOD }, all_time: { ...ZERO_PERIOD } };
   }
 }
 
@@ -408,7 +547,9 @@ export interface StyleInfo {
 
 export async function getStyle(): Promise<StyleInfo> {
   try {
-    return await request<StyleInfo>('GET', '/api/v1/style');
+    const raw = await request<any>('GET', '/api/v1/style');
+    // Backend returns { active_style: "..." } not { style: "..." }
+    return { style: raw?.style || raw?.active_style || '' };
   } catch {
     return { style: '' };
   }
