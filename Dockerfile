@@ -1,9 +1,17 @@
+FROM node:20-slim AS webbuilder
+WORKDIR /web
+COPY nabaos-web/package.json nabaos-web/package-lock.json ./
+RUN npm ci
+COPY nabaos-web/ ./
+RUN npm run build
+
 FROM rust:1-slim-bookworm AS builder
 WORKDIR /build
 # Install build deps
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
+COPY --from=webbuilder /web/dist/ nabaos-web/dist/
 RUN cargo build --release
 
 FROM debian:bookworm-slim
