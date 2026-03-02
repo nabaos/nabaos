@@ -30,6 +30,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Build web frontend
+        run: cd nabaos-web && npm ci && npm run build
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
@@ -39,6 +41,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Build web frontend
+        run: cd nabaos-web && npm ci && npm run build
       - run: cargo test --all-features
 
   docs:

@@ -47,6 +47,12 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Build web frontend
+        run: |
+          cd nabaos-web
+          npm ci
+          npm run build
+
       - name: Build
         env:
           BUILD_TARGET: ${{ matrix.target }}
