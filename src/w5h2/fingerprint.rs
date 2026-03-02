@@ -237,19 +237,203 @@ pub struct FingerprintStats {
     pub total_hits: u64,
 }
 
+/// Canonicalize a query to a normalized form for better cache hit rates.
+/// Applies deterministic text transformations: contractions, filler removal,
+/// question form normalization, number word expansion, punctuation stripping.
+fn canonicalize(query: &str) -> String {
+    let mut q = query.to_lowercase();
+
+    // 1. Expand contractions
+    let contractions = [
+        ("what's", "what is"),
+        ("who's", "who is"),
+        ("where's", "where is"),
+        ("when's", "when is"),
+        ("how's", "how is"),
+        ("it's", "it is"),
+        ("that's", "that is"),
+        ("there's", "there is"),
+        ("can't", "cannot"),
+        ("won't", "will not"),
+        ("don't", "do not"),
+        ("doesn't", "does not"),
+        ("isn't", "is not"),
+        ("aren't", "are not"),
+        ("wasn't", "was not"),
+        ("weren't", "were not"),
+        ("couldn't", "could not"),
+        ("wouldn't", "would not"),
+        ("shouldn't", "should not"),
+        ("hasn't", "has not"),
+        ("haven't", "have not"),
+        ("hadn't", "had not"),
+        ("i'm", "i am"),
+        ("you're", "you are"),
+        ("we're", "we are"),
+        ("they're", "they are"),
+        ("i've", "i have"),
+        ("you've", "you have"),
+        ("we've", "we have"),
+        ("they've", "they have"),
+        ("i'll", "i will"),
+        ("you'll", "you will"),
+        ("he'll", "he will"),
+        ("she'll", "she will"),
+        ("we'll", "we will"),
+        ("they'll", "they will"),
+        ("i'd", "i would"),
+        ("you'd", "you would"),
+        ("he'd", "he would"),
+        ("she'd", "she would"),
+        ("we'd", "we would"),
+        ("they'd", "they would"),
+    ];
+    for (short, long) in &contractions {
+        q = q.replace(short, long);
+    }
+
+    // 2. Remove filler words and question qualifiers
+    // Process multi-word fillers first (longer first to avoid partial matches)
+    let mut fillers = vec![
+        "please",
+        "kindly",
+        "just",
+        "simply",
+        "basically",
+        "actually",
+        "really",
+        "very",
+        "quite",
+        "rather",
+        "exactly",
+        "precisely",
+        "briefly",
+        "quickly",
+        "right now",
+        "for me",
+        "could you",
+        "can you",
+        "would you",
+        "will you",
+        "do you know",
+        "tell me",
+        "i want to know",
+        "i would like to know",
+        "help me",
+        "let me know",
+    ];
+    fillers.sort_by(|a, b| b.len().cmp(&a.len()));
+    for filler in &fillers {
+        q = q.replace(filler, " ");
+    }
+
+    // 3. Normalize question forms to canonical "what is" style
+    let q_forms = [
+        ("explain ", "what is "),
+        ("describe ", "what is "),
+        ("define ", "what is "),
+        ("state the ", "what is the "),
+        ("state ", "what is "),
+        ("list the ", "what are the "),
+        ("list ", "what are "),
+        ("name the ", "what is the "),
+    ];
+    let trimmed = q.trim_start();
+    for (from, to) in &q_forms {
+        if trimmed.starts_with(from) {
+            q = format!("{}{}", to, &trimmed[from.len()..]);
+            break;
+        }
+    }
+
+    // 4. Normalize number words to digits
+    let numbers = [
+        ("zero", "0"),
+        ("one", "1"),
+        ("two", "2"),
+        ("three", "3"),
+        ("four", "4"),
+        ("five", "5"),
+        ("six", "6"),
+        ("seven", "7"),
+        ("eight", "8"),
+        ("nine", "9"),
+        ("ten", "10"),
+        ("hundred", "100"),
+        ("thousand", "1000"),
+        ("million", "1000000"),
+    ];
+    for (word, digit) in &numbers {
+        q = word_boundary_replace(&q, word, digit);
+    }
+
+    // 5. Normalize math phrasing
+    let math = [
+        (" plus ", " + "),
+        (" minus ", " - "),
+        (" times ", " * "),
+        (" divided by ", " / "),
+        (" multiplied by ", " * "),
+        (" equals ", " = "),
+        (" equal ", " = "),
+    ];
+    for (from, to) in &math {
+        q = q.replace(from, to);
+    }
+
+    // 6. Normalize common synonyms
+    let synonyms = [
+        ("how many", "what is the number of"),
+        ("how much", "what is the amount of"),
+        ("vs ", "versus "),
+        ("vs. ", "versus "),
+        (" difference between ", " versus "),
+        (" differences between ", " versus "),
+    ];
+    for (from, to) in &synonyms {
+        q = q.replace(from, to);
+    }
+
+    // 7. Strip trailing punctuation
+    let q = q
+        .trim()
+        .trim_end_matches(|c: char| c == '?' || c == '!' || c == '.')
+        .trim();
+
+    // 8. Collapse whitespace
+    q.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Replace a word only at word boundaries (not inside other words)
+fn word_boundary_replace(text: &str, word: &str, replacement: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some(pos) = remaining.find(word) {
+        let before_ok = pos == 0 || !remaining.as_bytes()[pos - 1].is_ascii_alphanumeric();
+        let after_pos = pos + word.len();
+        let after_ok =
+            after_pos >= remaining.len() || !remaining.as_bytes()[after_pos].is_ascii_alphanumeric();
+        result.push_str(&remaining[..pos]);
+        if before_ok && after_ok {
+            result.push_str(replacement);
+        } else {
+            result.push_str(word);
+        }
+        remaining = &remaining[after_pos..];
+    }
+    result.push_str(remaining);
+    result
+}
+
 /// Normalize query text and compute SHA-256 hash
 fn normalize_and_hash(query: &str) -> String {
     use sha2::{Digest, Sha256};
 
-    // Normalize: lowercase, trim, collapse whitespace
-    let normalized: String = query
-        .to_lowercase()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    // Canonicalize first (includes lowercase + whitespace collapse)
+    let canonical = canonicalize(query);
 
     let mut hasher = Sha256::new();
-    hasher.update(normalized.as_bytes());
+    hasher.update(canonical.as_bytes());
     let result = hasher.finalize();
     hex::encode(result)
 }
@@ -327,5 +511,113 @@ mod tests {
         let stats = cache.stats();
         assert_eq!(stats.total_entries, 1);
         assert_eq!(stats.total_hits, 2);
+    }
+
+    #[test]
+    fn test_canonicalize_contractions() {
+        assert_eq!(
+            canonicalize("what's the capital of France?"),
+            "what is the capital of france"
+        );
+        assert_eq!(canonicalize("who's the president?"), "who is the president");
+    }
+
+    #[test]
+    fn test_canonicalize_fillers() {
+        assert_eq!(
+            canonicalize("can you please tell me what is 2+2?"),
+            canonicalize("what is 2+2")
+        );
+    }
+
+    #[test]
+    fn test_canonicalize_question_forms() {
+        assert_eq!(
+            canonicalize("explain photosynthesis"),
+            canonicalize("what is photosynthesis")
+        );
+        assert_eq!(
+            canonicalize("describe photosynthesis briefly"),
+            canonicalize("what is photosynthesis")
+        );
+    }
+
+    #[test]
+    fn test_canonicalize_numbers() {
+        // Number words become digits
+        assert_eq!(
+            canonicalize("what is two plus two"),
+            canonicalize("what is 2 + 2")
+        );
+        // Word boundaries: "one" not replaced inside "phone"
+        assert!(canonicalize("phone number").contains("phone"));
+    }
+
+    #[test]
+    fn test_canonicalize_math_phrasing() {
+        assert_eq!(
+            canonicalize("what is 2 plus 2"),
+            canonicalize("what is 2 + 2")
+        );
+        assert_eq!(
+            canonicalize("convert 100 celsius to fahrenheit"),
+            canonicalize("convert 100 celsius to fahrenheit") // no change expected
+        );
+    }
+
+    #[test]
+    fn test_canonicalize_synonym_normalization() {
+        // "vs " normalizes to "versus "
+        assert_eq!(
+            canonicalize("TCP vs UDP"),
+            canonicalize("TCP versus UDP")
+        );
+        // "difference between" normalizes to "versus"
+        assert_eq!(
+            canonicalize("what is the difference between TCP and UDP"),
+            canonicalize("what is the versus tcp and udp")
+        );
+    }
+
+    #[test]
+    fn test_rephrased_queries_same_hash() {
+        // Contraction expansion: "what's" == "what is"
+        assert_eq!(
+            normalize_and_hash("what's the capital of France?"),
+            normalize_and_hash("what is the capital of France?")
+        );
+        // Filler removal: "please tell me" stripped
+        assert_eq!(
+            normalize_and_hash("please tell me what is the weather"),
+            normalize_and_hash("what is the weather")
+        );
+        // Question form: "explain X" == "what is X"
+        assert_eq!(
+            normalize_and_hash("explain photosynthesis"),
+            normalize_and_hash("what is photosynthesis")
+        );
+        // Math phrasing: "plus" == "+"
+        assert_eq!(
+            normalize_and_hash("what is 2 plus 2"),
+            normalize_and_hash("what is 2 + 2")
+        );
+        // Number words: "two" == "2"
+        assert_eq!(
+            normalize_and_hash("what is two plus two"),
+            normalize_and_hash("what is 2 + 2")
+        );
+    }
+
+    #[test]
+    fn test_word_boundary_replace() {
+        // "one" should not match inside "phone" or "done"
+        assert_eq!(
+            word_boundary_replace("phone one done", "one", "1"),
+            "phone 1 done"
+        );
+        assert_eq!(
+            word_boundary_replace("one two three", "two", "2"),
+            "one 2 three"
+        );
     }
 }
