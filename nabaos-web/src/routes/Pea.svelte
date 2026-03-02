@@ -145,7 +145,7 @@
     padding: 0.75rem 1.5rem; background: var(--bg-card); border: 1px solid var(--border);
     border-radius: var(--radius-md); min-width: 100px;
   }
-  .stat-pill-value { font-size: 1.5rem; font-weight: 700; font-family: 'SF Mono', monospace; }
+  .stat-pill-value { font-size: 1.5rem; font-weight: 700; font-family: var(--font-mono, 'JetBrains Mono', monospace); }
   .stat-pill-value.success { color: var(--success); }
   .stat-pill-value.accent { color: var(--accent); }
   .stat-pill-label { font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }

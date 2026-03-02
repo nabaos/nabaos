@@ -222,13 +222,22 @@
   .subtitle { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; }
 
   .savings-hero {
-    text-align: center; padding: 2rem; margin-bottom: 1.5rem;
-    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(52, 211, 153, 0.05) 100%);
-    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    text-align: center; padding: 2.5rem 2rem; margin-bottom: 1.5rem;
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(34, 197, 94, 0.04) 50%, var(--bg-card) 100%);
+    border: 1px solid rgba(34, 197, 94, 0.2); border-radius: var(--radius-lg);
+    position: relative; overflow: hidden;
+  }
+  .savings-hero::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--success), transparent);
+    opacity: 0.5;
   }
   .savings-amount {
     font-size: 3rem; font-weight: 800; color: var(--success);
-    font-family: 'SF Mono', 'Fira Code', monospace; font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace); font-variant-numeric: tabular-nums;
   }
   .savings-label { font-size: 1rem; font-weight: 600; color: var(--text); margin-top: 0.25rem; }
   .savings-detail { font-size: 0.88rem; color: var(--text-dim); margin-top: 0.5rem; }

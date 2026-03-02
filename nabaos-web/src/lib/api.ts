@@ -401,6 +401,27 @@ export async function getSkills(): Promise<SkillInfo[]> {
   }
 }
 
+// ── Style ────────────────────────────────────────────────────────
+export interface StyleInfo {
+  style: string;
+}
+
+export async function getStyle(): Promise<StyleInfo> {
+  try {
+    return await request<StyleInfo>('GET', '/api/v1/style');
+  } catch {
+    return { style: '' };
+  }
+}
+
+export async function setStyle(style: string): Promise<void> {
+  await request<void>('POST', '/api/v1/style', { style });
+}
+
+export async function clearStyle(): Promise<void> {
+  await request<void>('DELETE', '/api/v1/style');
+}
+
 // ── Resources ─────────────────────────────────────────────────────────
 export interface ResourceInfo {
   id: string;

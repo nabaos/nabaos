@@ -145,12 +145,18 @@
 
 <!-- ── Header ────────────────────────────────────────────────────────── -->
 <div class="dash-header">
-  <h1>
-    Command Center
-    {#if refreshing}<span class="refresh-dot"></span>{/if}
-  </h1>
+  <div class="dash-header-left">
+    <h1>
+      Command Center
+      {#if refreshing}<span class="refresh-dot"></span>{/if}
+    </h1>
+    <p class="dash-subtitle">Real-time overview of your agent runtime</p>
+  </div>
   {#if system}
-    <span class="version-badge">v{system.version}</span>
+    <div class="dash-header-right">
+      <span class="status-dot"></span>
+      <span class="version-badge">v{system.version}</span>
+    </div>
   {/if}
 </div>
 
@@ -350,11 +356,30 @@
     gap: 0.75rem;
     margin-bottom: 1.5rem;
   }
-  .dash-header h1 {
+  .dash-header-left h1 {
     margin: 0;
     font-size: 1.5rem;
     font-weight: 700;
     color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .dash-subtitle {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    margin-top: 0.15rem;
+  }
+  .dash-header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 6px var(--success);
+    animation: pulse 2s infinite;
   }
   .version-badge {
     font-size: 0.72rem;
@@ -363,7 +388,7 @@
     background: var(--bg-elevated, var(--surface));
     color: var(--text-dim);
     border: 1px solid var(--border);
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
   }
   .refresh-dot {
     display: inline-block;
@@ -395,23 +420,36 @@
 
   .hero-card {
     background: var(--bg-card);
+    background-image: var(--gradient-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-md, 12px);
     padding: 1.25rem 1rem;
     text-align: center;
     box-shadow: var(--shadow-sm);
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    transition: all 0.2s ease;
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
   }
   .hero-card:hover {
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md, 0 4px 12px rgba(0,0,0,0.15));
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--accent-glow, rgba(124, 111, 255, 0.2));
   }
   .hero-saved {
-    border-color: var(--success);
-    border-width: 1.5px;
+    border-color: rgba(34, 197, 94, 0.3);
+    background-image: linear-gradient(135deg, var(--bg-card) 0%, rgba(34, 197, 94, 0.03) 100%);
   }
   .hero-clickable {
     cursor: pointer;
@@ -429,7 +467,7 @@
     font-weight: 500;
   }
   .hero-value {
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
     font-size: 2rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
@@ -489,7 +527,7 @@
   }
   .doughnut-pct {
     display: block;
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
     font-size: 1.4rem;
     font-weight: 700;
     color: var(--success);
@@ -523,12 +561,12 @@
     line-height: 1.6;
   }
   .spent-num {
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
     color: var(--warning);
     font-weight: 700;
   }
   .saved-num {
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
     color: var(--success);
     font-weight: 700;
   }
@@ -559,7 +597,7 @@
   .token-info {
     font-size: 0.8rem;
     color: var(--text-dim);
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
   }
   .token-sep {
     margin: 0 0.35rem;
@@ -605,7 +643,7 @@
     gap: 0.15rem;
   }
   .period-val {
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
     font-size: 1.1rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
@@ -692,7 +730,7 @@
   .sys-item strong {
     color: var(--text);
     font-weight: 600;
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
   }
   .sys-dot {
     display: inline-block;

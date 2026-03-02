@@ -93,8 +93,11 @@
 {:else if !isAuth}
   <div class="login-page">
     <div class="login-box">
+      <div class="login-logo">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      </div>
       <h1>NabaOS</h1>
-      <p>Secure agent runtime — enter password to continue</p>
+      <p>Autonomous agent runtime</p>
       <form onsubmit={(e) => { e.preventDefault(); handleLogin(); }}>
         <input type="password" placeholder="Password" bind:value={password} />
         {#if loginError}
@@ -107,7 +110,10 @@
 {:else}
   <div class="app-layout">
     <aside class="sidebar">
-      <div class="sidebar-logo">NabaOS</div>
+      <div class="sidebar-logo">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        <span>NabaOS</span>
+      </div>
       <nav>
         {#each pages as p}
           <button class={page === p.id ? 'active' : ''} onclick={() => navigate(p.id)}>
@@ -187,6 +193,17 @@
 {/if}
 
 <style>
+  .login-logo {
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent-subtle);
+    border-radius: 16px;
+    margin: 0 auto 1rem;
+  }
+
   .sidebar nav button {
     display: flex;
     align-items: center;
@@ -195,21 +212,24 @@
 
   .sidebar nav button svg {
     flex-shrink: 0;
-    opacity: 0.6;
+    opacity: 0.5;
+    transition: opacity 0.15s;
   }
 
   .sidebar nav button.active svg {
     opacity: 1;
+    color: var(--accent);
   }
 
   .sidebar nav button:hover svg {
-    opacity: 0.85;
+    opacity: 0.8;
   }
 
   .mobile-nav button {
     flex-direction: column;
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     gap: 2px;
+    font-weight: 500;
   }
 
   .mobile-nav button svg {

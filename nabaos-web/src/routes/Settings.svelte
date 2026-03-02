@@ -151,20 +151,32 @@
 
   // ── Load all data on mount ───────────────────────────────────────────
   onMount(async () => {
+    const errors: string[] = [];
+
+    // Load each section independently so one failure doesn't block the rest
     try {
-      const [personaData, vaultData, rulesData, toolData] = await Promise.all([
-        getPersonas(),
-        getVault(),
-        getRules(),
-        getToolServers(),
-      ]);
-      personas = personaData.personas;
-      activePersona = personaData.active;
-      providers = vaultData.providers;
+      const personaData = await getPersonas();
+      personas = personaData.personas || [];
+      activePersona = personaData.active || '';
+    } catch (e: any) { errors.push(`Personas: ${e.message}`); }
+
+    try {
+      const vaultData = await getVault();
+      providers = vaultData.providers || [];
+    } catch (e: any) { errors.push(`Vault: ${e.message}`); }
+
+    try {
+      const rulesData = await getRules();
       rules = rulesData;
-      toolServers = toolData.servers;
-    } catch (e: any) {
-      error = e.message;
+    } catch (e: any) { errors.push(`Rules: ${e.message}`); }
+
+    try {
+      const toolData = await getToolServers();
+      toolServers = (toolData && toolData.servers) ? toolData.servers : [];
+    } catch { toolServers = []; }
+
+    if (errors.length > 0) {
+      error = errors.join('; ');
     }
     loading = false;
   });
@@ -602,7 +614,7 @@
   .persona-name {
     flex: 1;
     font-weight: 600;
-    font-family: 'SF Mono', monospace;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
     font-size: 0.88rem;
   }
 
@@ -646,7 +658,7 @@
     min-width: 0;
   }
   .provider-name { font-weight: 600; font-size: 0.9rem; }
-  .provider-id { font-family: 'SF Mono', monospace; font-size: 0.78rem; color: var(--text-muted); }
+  .provider-id { font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 0.78rem; color: var(--text-muted); }
   .provider-status { flex-shrink: 0; }
 
   .vault-note {
@@ -669,7 +681,7 @@
     border-radius: var(--radius-md);
     color: var(--text);
     font-size: 0.9rem;
-    font-family: 'SF Mono', monospace;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
     box-sizing: border-box;
   }
   .key-input:focus {
@@ -708,7 +720,7 @@
   .tool-count { color: var(--text-dim); font-size: 0.82rem; }
   .tool-list { padding: 0 0 0.75rem 1.5rem; }
   .tool-item { display: flex; gap: 0.75rem; padding: 0.3rem 0; font-size: 0.85rem; }
-  .tool-name { font-family: 'SF Mono', monospace; font-weight: 600; min-width: 150px; }
+  .tool-name { font-family: var(--font-mono, 'JetBrains Mono', monospace); font-weight: 600; min-width: 150px; }
   .tool-desc { color: var(--text-dim); }
 
   /* ── Security Scanner ───────────────────────────────────────────── */
