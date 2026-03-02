@@ -263,6 +263,8 @@ export async function sendQueryStream(query: string, callbacks: StreamCallbacks)
 
   const decoder = new TextDecoder();
   let buffer = '';
+  let currentEvent = '';
+  let dataLines: string[] = [];
 
   while (true) {
     const { done, value } = await reader.read();
@@ -272,31 +274,37 @@ export async function sendQueryStream(query: string, callbacks: StreamCallbacks)
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
 
-    let currentEvent = '';
     for (const line of lines) {
       if (line.startsWith('event:')) {
         currentEvent = line.slice(6).trim();
+        dataLines = [];
       } else if (line.startsWith('data:')) {
-        const data = line.slice(5).trim();
-        switch (currentEvent) {
-          case 'tier':
-            if (callbacks.onTier) {
-              try { callbacks.onTier(JSON.parse(data)); } catch { /* ignore */ }
-            }
-            break;
-          case 'delta':
-            callbacks.onDelta(data);
-            break;
-          case 'done':
-            if (callbacks.onDone) {
-              try { callbacks.onDone(JSON.parse(data)); } catch { /* ignore */ }
-            }
-            break;
-          case 'error':
-            if (callbacks.onError) callbacks.onError(data);
-            break;
+        dataLines.push(line.slice(5).trimStart());
+      } else if (line.trim() === '') {
+        // Empty line = SSE event boundary — dispatch accumulated data
+        if (currentEvent && dataLines.length > 0) {
+          const data = dataLines.join('\n');
+          switch (currentEvent) {
+            case 'tier':
+              if (callbacks.onTier) {
+                try { callbacks.onTier(JSON.parse(data)); } catch { /* ignore */ }
+              }
+              break;
+            case 'delta':
+              callbacks.onDelta(data);
+              break;
+            case 'done':
+              if (callbacks.onDone) {
+                try { callbacks.onDone(JSON.parse(data)); } catch { /* ignore */ }
+              }
+              break;
+            case 'error':
+              if (callbacks.onError) callbacks.onError(data);
+              break;
+          }
         }
         currentEvent = '';
+        dataLines = [];
       }
     }
   }

@@ -143,7 +143,7 @@ impl ProviderRegistry {
             api_key,
             model,
             base_url,
-            timeout_secs: Some(30),
+            timeout_secs: Some(90),
         })
     }
 
@@ -231,7 +231,7 @@ mod tests {
         assert!(matches!(provider.provider, ProviderType::Anthropic));
         assert_eq!(provider.model, "claude-sonnet-4-6");
         assert!(provider.base_url.ends_with("/v1/messages"));
-        assert_eq!(provider.timeout_secs, Some(30));
+        assert_eq!(provider.timeout_secs, Some(90));
     }
 
     #[test]

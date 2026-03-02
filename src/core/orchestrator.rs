@@ -93,6 +93,38 @@ MODE 6 (propose a new function for the function library):
   EX:{"input":"value"}->{"output":"value"}
   </nyaya>
 
+AVAILABLE CHAIN ABILITIES (use in S: lines):
+  browser.fetch — Fetch a web page (args: url)
+  nlp.summarize — Extractive summary (local, no LLM cost)
+  llm.summarize — LLM-powered synthesis across multiple inputs
+  llm.chat — Send a prompt to LLM for reasoning/analysis
+  script.run — Run Python or jq script on data (args: lang, code, input)
+  data.fetch_url — HTTP GET request
+  notify.user — Send notification
+
+EXAMPLE — Multi-hop news search with LLM synthesis:
+<nyaya>
+NEW:search_latest_news
+P:topic:text:required
+S:browser.fetch url=https://html.duckduckgo.com/html/?q=$topic+latest+news>search_results
+S:llm.summarize text=$search_results>summary
+L:news_search
+R:latest news about $topic|what is happening with $topic|$topic news update
+</nyaya>
+
+EXAMPLE — Deterministic parsing (no LLM cost after creation):
+<nyaya>
+NEW:get_gold_price
+P:currency:text:USD
+S:browser.fetch url=https://www.goldapi.io/dashboard>page_data
+S:script.run lang=python code="import sys,re; text=sys.stdin.read(); m=re.search(r'Gold Price.*?\\$(\\d[\\d,.]+)',text); print(m.group(1) if m else 'Price not found')" input=$page_data>price
+L:gold_price_lookup
+R:gold price|current gold price|how much is gold
+</nyaya>
+
+PREFER deterministic chains (script.run) when the output format is predictable.
+USE llm.summarize/llm.chat when synthesis or reasoning across sources is needed.
+
 RULES:
 - Always emit exactly one <nyaya> block after your answer
 - Use MODE 1 if any registered template matches
@@ -276,7 +308,7 @@ impl Orchestrator {
         config.ensure_dirs()?;
 
         let signer = ReceiptSigner::load_or_generate(&config.data_dir.join("receipt_key.bin"));
-        let ability_registry = AbilityRegistry::new(signer);
+        let mut ability_registry = AbilityRegistry::new(signer);
         // Initialize notification and email DB paths for host functions
         AbilityRegistry::set_notification_db(config.data_dir.join("notifications.db"));
         AbilityRegistry::set_email_db(config.data_dir.join("email_queue.db"));
@@ -362,6 +394,14 @@ impl Orchestrator {
         if let Some(ref key) = config.llm_api_key {
             let prov = config.llm_provider.as_deref().unwrap_or("anthropic");
             provider_registry.set_api_key(prov, key.clone());
+        }
+
+        // Wire LLM provider into AbilityRegistry for llm.summarize / llm.chat
+        for prov_id in &provider_registry.list_configured() {
+            if let Ok(provider) = provider_registry.build_provider(prov_id, None) {
+                ability_registry.set_llm_provider(provider);
+                break;
+            }
         }
 
         // Load agent configs from config/personas/ directory
@@ -1078,7 +1118,9 @@ impl Orchestrator {
                                 chain_result.receipts.len(),
                                 chain_result.total_ms
                             ),
-                            response_text: chain_result.outputs.values().last().cloned(),
+                            response_text: chain.steps.iter().rev()
+                                .filter_map(|s| s.output_key.as_ref())
+                                .find_map(|key| chain_result.outputs.get(key).cloned()),
                             nyaya_mode: Some("C".into()),
                             receipts_generated: chain_result.receipts.len(),
                             training_signal: None,
@@ -1319,7 +1361,9 @@ impl Orchestrator {
                     chain_result.receipts.len(),
                     chain_result.total_ms
                 ),
-                response_text: chain_result.outputs.values().last().cloned(),
+                response_text: chain.steps.iter().rev()
+                    .filter_map(|s| s.output_key.as_ref())
+                    .find_map(|key| chain_result.outputs.get(key).cloned()),
                 nyaya_mode: Some("C".into()),
                 receipts_generated: chain_result.receipts.len(),
                 training_signal: None,
@@ -1670,10 +1714,21 @@ impl Orchestrator {
         let nyaya_mode = parsed.nyaya.as_ref().map(|b| b.mode_name().to_string());
 
         // Process the <nyaya> block (pass user_text for MODE 4 cache storage)
-        let receipts_generated = if let Some(ref block) = parsed.nyaya {
+        let (receipts_generated, chain_output) = if let Some(ref block) = parsed.nyaya {
             self.process_nyaya_block(block, &intent_key_obj, &db_path, Some(&parsed.user_text))?
         } else {
-            0
+            (0, None)
+        };
+
+        // If chain execution produced output, append it to the LLM's preamble text
+        let final_text = if let Some(ref output) = chain_output {
+            if parsed.user_text.is_empty() {
+                output.clone()
+            } else {
+                format!("{}\n\n{}", parsed.user_text, output)
+            }
+        } else {
+            parsed.user_text
         };
 
         let result = QueryResult {
@@ -1693,7 +1748,7 @@ impl Orchestrator {
                 llm_response.output_tokens,
                 nyaya_mode.as_deref().unwrap_or("none"),
             ),
-            response_text: Some(parsed.user_text),
+            response_text: Some(final_text),
             nyaya_mode,
             receipts_generated,
             training_signal,
@@ -1711,13 +1766,14 @@ impl Orchestrator {
     }
 
     /// Process a <nyaya> block: dispatch by mode, store chains/cache/training data.
+    /// Returns (receipts_count, optional_chain_output).
     fn process_nyaya_block(
         &mut self,
         block: &NyayaBlock,
         _intent_key: &IntentKey,
         db_path: &std::path::Path,
         response_text: Option<&str>,
-    ) -> Result<usize> {
+    ) -> Result<(usize, Option<String>)> {
         match block {
             NyayaBlock::TemplateRef {
                 template_name,
@@ -1746,7 +1802,7 @@ impl Orchestrator {
                                 reason = %trust.reason,
                                 "Workflow blocked — financial/irreversible abilities require graduation"
                             );
-                            return Ok(0);
+                            return Ok((0, None));
                         }
                         // Soft warning: new chains are allowed but monitored
                         tracing::info!(
@@ -1799,13 +1855,17 @@ impl Orchestrator {
                             .record_tool_call(&receipt.tool_name, &HashMap::new());
                     }
 
-                    Ok(result.receipts.len())
+                    // Get output from the last step that has an output_key
+                    let chain_output = chain.steps.iter().rev()
+                        .filter_map(|s| s.output_key.as_ref())
+                        .find_map(|key| result.outputs.get(key).cloned());
+                    Ok((result.receipts.len(), chain_output))
                 } else {
                     tracing::warn!(
                         template = template_name,
                         "MODE 1 referenced unknown template"
                     );
-                    Ok(0)
+                    Ok((0, None))
                 }
             }
 
@@ -1825,7 +1885,7 @@ impl Orchestrator {
                         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
                 {
                     tracing::warn!(chain_name = %chain_name, "MODE 2 workflow rejected: invalid name");
-                    return Ok(0);
+                    return Ok((0, None));
                 }
 
                 // Fix 6: Constitution check on each step's ability
@@ -1838,7 +1898,7 @@ impl Orchestrator {
                             reason = ?check.reason,
                             "MODE 2 workflow blocked by constitution"
                         );
-                        return Ok(0);
+                        return Ok((0, None));
                     }
                 }
 
@@ -1910,7 +1970,11 @@ impl Orchestrator {
                                         self.behavior_profile
                                             .record_tool_call(&receipt.tool_name, &HashMap::new());
                                     }
-                                    Ok(result.receipts.len())
+                                    // Get output from the last step that has an output_key
+                                    let chain_output = chain.steps.iter().rev()
+                                        .filter_map(|s| s.output_key.as_ref())
+                                        .find_map(|key| result.outputs.get(key).cloned());
+                                    Ok((result.receipts.len(), chain_output))
                                 }
                                 Err(e) => {
                                     self.chain_store.record_failure(chain_name)?;
@@ -1919,7 +1983,7 @@ impl Orchestrator {
                                         error = %e,
                                         "New workflow execution failed"
                                     );
-                                    Ok(0)
+                                    Ok((0, None))
                                 }
                             }
                         }
@@ -1929,11 +1993,11 @@ impl Orchestrator {
                                 error = %e,
                                 "Failed to parse compiled workflow YAML"
                             );
-                            Ok(0)
+                            Ok((0, None))
                         }
                     }
                 } else {
-                    Ok(0)
+                    Ok((0, None))
                 }
             }
 
@@ -1971,7 +2035,7 @@ impl Orchestrator {
                                         reason = ?check.reason,
                                         "PATCH mode blocked by constitution"
                                     );
-                                    return Ok(0);
+                                    return Ok((0, None));
                                 }
                             }
 
@@ -2009,7 +2073,7 @@ impl Orchestrator {
                             // Validate and store
                             if let Err(e) = chain.check() {
                                 tracing::warn!(error = %e, "Patched workflow failed validation");
-                                return Ok(0);
+                                return Ok((0, None));
                             }
                             self.chain_store.store(&chain)?;
                             tracing::info!(
@@ -2017,16 +2081,16 @@ impl Orchestrator {
                                 steps = chain.steps.len(),
                                 "PATCH mode — workflow updated successfully"
                             );
-                            Ok(0)
+                            Ok((0, None))
                         }
                         Err(e) => {
                             tracing::warn!(base = base_template, error = %e, "Failed to parse base workflow for PATCH");
-                            Ok(0)
+                            Ok((0, None))
                         }
                     }
                 } else {
                     tracing::warn!(base = base_template, "PATCH mode — base template not found");
-                    Ok(0)
+                    Ok((0, None))
                 }
             }
 
@@ -2045,12 +2109,12 @@ impl Orchestrator {
                     )?;
                     tracing::info!(label = label, ttl = ttl, "Cached response in intent cache");
                 }
-                Ok(0)
+                Ok((0, None))
             }
 
             NyayaBlock::NoCache { .. } => {
                 // MODE 5: Nothing to cache — training signal is extracted separately
-                Ok(0)
+                Ok((0, None))
             }
 
             NyayaBlock::ProposeFunc {
@@ -2177,7 +2241,7 @@ impl Orchestrator {
                     }
                 }
 
-                Ok(0)
+                Ok((0, None))
             }
         }
     }
@@ -2387,7 +2451,7 @@ impl Orchestrator {
         // Inject known templates so the LLM can reference them with MODE 1
         let chains = self.chain_store.list(20)?;
         if !chains.is_empty() {
-            prompt.push_str("\n\nREGISTERED TEMPLATES (use MODE 1 to reference):\n");
+            prompt.push_str("\n\nREGISTERED TEMPLATES — you MUST use MODE 1 (C:name|param) when a template fits:\n");
             for chain in &chains {
                 let chain_def = ChainDef::from_yaml(&chain.yaml).ok();
                 let param_names: String = chain_def
@@ -2402,7 +2466,7 @@ impl Orchestrator {
                     .unwrap_or_default();
 
                 prompt.push_str(&format!(
-                    "  - {} ({}): {} [hits: {}, success: {:.0}%]\n",
+                    "  - C:{}|<{}> — {} [hits: {}, success: {:.0}%]\n",
                     chain.name,
                     param_names,
                     chain.description,
@@ -2410,6 +2474,7 @@ impl Orchestrator {
                     chain.success_rate() * 100.0,
                 ));
             }
+            prompt.push_str("  IMPORTANT: Do NOT create MODE 2 (NEW) chains if a matching template exists above. Use MODE 1 instead.\n");
         }
 
         Ok(prompt)
@@ -2445,6 +2510,9 @@ impl Orchestrator {
                 "data.analyze".into(),
                 "docs.generate".into(),
                 "channel.send".into(),
+                "llm.summarize".into(),
+                "llm.chat".into(),
+                "script.run".into(),
                 // NOTE: shell.exec, files.write, and deep.delegate are intentionally
                 // excluded from the default manifest. They must be explicitly granted
                 // via a custom manifest or constitution.
@@ -2765,7 +2833,7 @@ R:weather in {city}|forecast for {city}|temperature {city}
         let count = orch
             .process_nyaya_block(&block, &intent_key, &db_path, None)
             .unwrap();
-        assert_eq!(count, 0); // CACHE mode doesn't generate receipts
+        assert_eq!(count.0, 0); // CACHE mode doesn't generate receipts
 
         // Verify intent cache entry was created
         let cache = IntentCache::open(&db_path).unwrap();
@@ -2815,7 +2883,7 @@ R:weather in {city}|forecast for {city}|temperature {city}
             .unwrap();
 
         // Chain should have been stored and executed (flow.stop generates 1 receipt)
-        assert_eq!(count, 1);
+        assert_eq!(count.0, 1);
 
         // Verify chain was stored
         let record = orch.chain_store.lookup("morning_briefing").unwrap();
@@ -2875,7 +2943,7 @@ steps:
         let count = orch
             .process_nyaya_block(&block, &intent_key, &db_path, None)
             .unwrap();
-        assert_eq!(count, 1); // flow.stop generates 1 receipt
+        assert_eq!(count.0, 1); // flow.stop generates 1 receipt
 
         // Verify hit count was incremented
         let record = orch.chain_store.lookup("weather_check").unwrap().unwrap();
@@ -2913,7 +2981,7 @@ steps:
         let count = orch
             .process_nyaya_block(&block, &intent_key, &db_path, None)
             .unwrap();
-        assert_eq!(count, 0); // NOCACHE generates no receipts
+        assert_eq!(count.0, 0); // NOCACHE generates no receipts
     }
 
     #[test]

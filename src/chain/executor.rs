@@ -161,7 +161,22 @@ impl<'a> ChainExecutor<'a> {
                     // Store output if output_key is specified
                     if let Some(ref key) = step.output_key {
                         let output_str = String::from_utf8_lossy(&result.output).to_string();
-                        outputs.insert(key.clone(), output_str);
+                        // If output is JSON with a "text" or "summary" field, extract it
+                        // so downstream steps get content, not JSON metadata
+                        let stored = if output_str.starts_with('{') {
+                            serde_json::from_str::<serde_json::Value>(&output_str)
+                                .ok()
+                                .and_then(|v| {
+                                    v.get("summary")
+                                        .or_else(|| v.get("text"))
+                                        .and_then(|t| t.as_str())
+                                        .map(String::from)
+                                })
+                                .unwrap_or(output_str)
+                        } else {
+                            output_str
+                        };
+                        outputs.insert(key.clone(), stored);
                     }
                     receipts.push(result.receipt);
                 }

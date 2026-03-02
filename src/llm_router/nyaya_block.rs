@@ -637,12 +637,13 @@ impl NyayaBlock {
 /// Sanitize a string for safe YAML interpolation.
 /// Strips characters that could break YAML structure or inject new keys.
 fn sanitize_yaml_value(s: &str) -> String {
+    // Values are always double-quoted in YAML output, so colons are safe.
+    // Strip chars that could break YAML structure or enable injection.
     s.chars()
         .filter(|c| {
             !matches!(
                 c,
                 '\n' | '\r'
-                    | ':'
                     | '{'
                     | '}'
                     | '['
@@ -671,6 +672,66 @@ fn validate_identifier(s: &str) -> bool {
         && s.len() <= 128
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+}
+
+fn parse_step_args(params: &str) -> Vec<(String, String)> {
+    // Quick check: if params contains no '=' at all, it's not key=value format
+    if !params.contains('=') {
+        return Vec::new();
+    }
+    let mut args = Vec::new();
+    let mut chars = params.chars().peekable();
+    while chars.peek().is_some() {
+        // Skip whitespace
+        while chars.peek() == Some(&' ') {
+            chars.next();
+        }
+        if chars.peek().is_none() {
+            break;
+        }
+        // Read key (up to '=') — key must be alphanumeric/underscore only
+        let mut key = String::new();
+        while let Some(&c) = chars.peek() {
+            if c == '=' {
+                chars.next(); // consume '='
+                break;
+            }
+            if c == ' ' {
+                // Hit space before '=' — not a valid key=value token, skip
+                break;
+            }
+            key.push(c);
+            chars.next();
+        }
+        if key.is_empty() {
+            // Skip non-key chars
+            chars.next();
+            continue;
+        }
+        // Read value (possibly quoted)
+        let value = if chars.peek() == Some(&'"') {
+            chars.next(); // consume opening quote
+            let mut v = String::new();
+            let mut escaped = false;
+            for c in chars.by_ref() {
+                if escaped {
+                    v.push(c);
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    break;
+                } else {
+                    v.push(c);
+                }
+            }
+            v
+        } else {
+            chars.by_ref().take_while(|&c| c != ' ').collect()
+        };
+        args.push((key.trim().to_string(), value));
+    }
+    args
 }
 
 /// Convert a MODE 2 (NewChain) NyayaBlock into a ChainDef YAML string
@@ -719,15 +780,43 @@ impl NyayaBlock {
                         tracing::warn!(step_id = %step_id, "Invalid step_id skipped");
                         continue;
                     }
-                    let safe_params = sanitize_yaml_value(&s.params);
+                    let parsed_args = parse_step_args(&s.params);
                     yaml.push_str(&format!(
-                        "  - id: {}\n    ability: {}\n    args:\n      input: \"{}\"\n",
-                        step_id, s.ability, safe_params,
+                        "  - id: {}\n    ability: {}\n    args:\n",
+                        step_id, s.ability,
                     ));
+                    if parsed_args.is_empty() {
+                        // No key=value pairs — treat entire params as input
+                        let safe_params = sanitize_yaml_value(&s.params);
+                        yaml.push_str(&format!("      input: \"{}\"\n", safe_params));
+                    } else {
+                        for (key, val) in &parsed_args {
+                            let safe_val = sanitize_yaml_value(val);
+                            yaml.push_str(&format!("      {}: \"{}\"\n", key, safe_val));
+                        }
+                    }
                     if let Some(ref out) = s.output_var {
                         if validate_identifier(out) {
                             yaml.push_str(&format!("    output_key: {}\n", out));
                         }
+                    }
+                }
+
+                // Convert $param_name references to {{param_name}} for template resolution.
+                // Also convert $output_var references from previous steps.
+                for p in params {
+                    yaml = yaml.replace(
+                        &format!("${}", p.name),
+                        &format!("{{{{{}}}}}", p.name),
+                    );
+                }
+                // Convert $step_output references (step ids used as output_key)
+                for s in steps {
+                    if let Some(ref out) = s.output_var {
+                        yaml = yaml.replace(
+                            &format!("${}", out),
+                            &format!("{{{{{}}}}}", out),
+                        );
                     }
                 }
                 Some(yaml)

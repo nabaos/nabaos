@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
+use crate::llm_router::provider::LlmProvider;
 use crate::runtime::manifest::AgentManifest;
 use crate::runtime::plugin::{AbilitySource, ExternalAbilityConfig, PluginRegistry};
 use crate::runtime::receipt::{ReceiptSigner, ToolReceipt};
@@ -115,6 +116,8 @@ pub struct AbilityRegistry {
     plugin_registry: PluginRegistry,
     /// Optional privilege guard for tiered 2FA enforcement on abilities.
     pub privilege_guard: Option<std::sync::Arc<crate::security::privilege::PrivilegeGuard>>,
+    /// Optional LLM provider for llm.summarize / llm.chat abilities.
+    llm_provider: Option<LlmProvider>,
 }
 
 /// Specification for an ability (host function).
@@ -879,6 +882,49 @@ impl AbilityRegistry {
                     "required": ["tracking_id"]
                 })),
             },
+            // --- LLM-in-the-loop chain abilities ---
+            AbilitySpec {
+                name: "llm.summarize".into(),
+                description: "Summarize text using LLM (synthesis across sources, not extractive)".into(),
+                permission: "llm.summarize".into(),
+                source: AbilitySource::BuiltIn,
+                input_schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Text to summarize"}
+                    },
+                    "required": ["text"]
+                })),
+            },
+            AbilitySpec {
+                name: "llm.chat".into(),
+                description: "Send a prompt to LLM and get a response (reasoning/analysis)".into(),
+                permission: "llm.chat".into(),
+                source: AbilitySource::BuiltIn,
+                input_schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "Prompt to send to the LLM"},
+                        "system": {"type": "string", "description": "Optional system prompt (default: helpful assistant)"}
+                    },
+                    "required": ["prompt"]
+                })),
+            },
+            AbilitySpec {
+                name: "script.run".into(),
+                description: "Execute a script (Python/jq) on input data".into(),
+                permission: "script.run".into(),
+                source: AbilitySource::BuiltIn,
+                input_schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "lang": {"type": "string", "description": "Script language: python, python3, or jq"},
+                        "code": {"type": "string", "description": "Script code to execute"},
+                        "input": {"type": "string", "description": "Input data passed via stdin"}
+                    },
+                    "required": ["lang", "code"]
+                })),
+            },
         ];
 
         for spec in core_abilities {
@@ -890,7 +936,13 @@ impl AbilityRegistry {
             abilities,
             plugin_registry,
             privilege_guard: None,
+            llm_provider: None,
         }
+    }
+
+    /// Set the LLM provider for llm.summarize and llm.chat abilities.
+    pub fn set_llm_provider(&mut self, provider: LlmProvider) {
+        self.llm_provider = Some(provider);
     }
 
     /// Set the privilege guard for tiered 2FA enforcement on abilities.
@@ -1040,6 +1092,85 @@ impl AbilityRegistry {
             "coupon.validate" => exec_coupon_validate(&input)?,
             "tracking.check" => exec_tracking_check(&input)?,
             "tracking.subscribe" => exec_tracking_subscribe(&input)?,
+
+            "llm.summarize" => {
+                let text = input.get("text").or_else(|| input.get("input"))
+                    .and_then(|v| v.as_str())
+                    .ok_or("llm.summarize requires 'text' argument")?;
+                let provider = self.llm_provider.as_ref()
+                    .ok_or("No LLM provider configured for llm.summarize")?;
+                let system = "You are a concise summarizer. Provide a clear, factual summary of the given text. Focus on key information.";
+                let response = provider.complete(system, text)
+                    .map_err(|e| format!("LLM summarize failed: {}", e))?;
+                (response.text.into_bytes(), None, HashMap::new())
+            }
+
+            "llm.chat" => {
+                let prompt = input.get("prompt").or_else(|| input.get("input"))
+                    .and_then(|v| v.as_str())
+                    .ok_or("llm.chat requires 'prompt' argument")?;
+                let system_prompt = input.get("system")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("You are a helpful assistant. Answer clearly and concisely.");
+                let provider = self.llm_provider.as_ref()
+                    .ok_or("No LLM provider configured for llm.chat")?;
+                let response = provider.complete(system_prompt, prompt)
+                    .map_err(|e| format!("LLM chat failed: {}", e))?;
+                (response.text.into_bytes(), None, HashMap::new())
+            }
+
+            "script.run" => {
+                let lang = input.get("lang").and_then(|v| v.as_str())
+                    .ok_or("script.run requires 'lang'")?;
+                let code = input.get("code").and_then(|v| v.as_str())
+                    .ok_or("script.run requires 'code'")?;
+                let script_input = input.get("input").and_then(|v| v.as_str()).unwrap_or("");
+                match lang {
+                    "python" | "python3" => {
+                        let output = std::process::Command::new("python3")
+                            .arg("-c").arg(code)
+                            .stdin(std::process::Stdio::piped())
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .spawn()
+                            .and_then(|mut child| {
+                                use std::io::Write;
+                                if let Some(ref mut stdin) = child.stdin {
+                                    stdin.write_all(script_input.as_bytes()).ok();
+                                }
+                                child.wait_with_output()
+                            })
+                            .map_err(|e| format!("python3 execution failed: {}", e))?;
+                        if !output.status.success() {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            return Err(format!("script failed: {}", stderr));
+                        }
+                        (output.stdout, None, HashMap::new())
+                    }
+                    "jq" => {
+                        let output = std::process::Command::new("jq")
+                            .arg("-r").arg(code)
+                            .stdin(std::process::Stdio::piped())
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .spawn()
+                            .and_then(|mut child| {
+                                use std::io::Write;
+                                if let Some(ref mut stdin) = child.stdin {
+                                    stdin.write_all(script_input.as_bytes()).ok();
+                                }
+                                child.wait_with_output()
+                            })
+                            .map_err(|e| format!("jq execution failed: {}", e))?;
+                        if !output.status.success() {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            return Err(format!("jq failed: {}", stderr));
+                        }
+                        (output.stdout, None, HashMap::new())
+                    }
+                    _ => return Err(format!("Unsupported script language: {}. Use 'python' or 'jq'", lang)),
+                }
+            }
 
             _ => {
                 // Fall through to external abilities: plugin > subprocess > cloud
@@ -1876,10 +2007,20 @@ fn exec_sentiment(input: &serde_json::Value) -> Result<AbilityOutput, String> {
 
 /// Extractive text summarization — picks key sentences.
 fn exec_summarize(input: &serde_json::Value) -> Result<AbilityOutput, String> {
-    let text = input
+    let raw_text = input
         .get("text")
         .and_then(|v| v.as_str())
         .ok_or("nlp.summarize requires 'text' string field")?;
+
+    // If the input looks like JSON from browser.fetch, extract just the "text" field
+    let extracted: Option<String> = if raw_text.starts_with('{') {
+        serde_json::from_str::<serde_json::Value>(raw_text)
+            .ok()
+            .and_then(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
+    } else {
+        None
+    };
+    let text = extracted.as_deref().unwrap_or(raw_text);
 
     let max_sentences = input
         .get("max_sentences")
