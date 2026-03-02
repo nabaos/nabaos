@@ -108,7 +108,7 @@ pub fn fetch_source(url: &str, timeout_secs: u64) -> Result<SourceResult, String
 
     let resp = client
         .get(url)
-        .header("User-Agent", "NyayaAgent/1.0 ResearchBot")
+        .header("User-Agent", "Mozilla/5.0 (compatible; nabaos/0.2; +https://github.com/nabaos/nabaos)")
         .send()
         .map_err(|e| format!("fetch error for {url}: {e}"))?;
 
@@ -126,8 +126,8 @@ pub fn fetch_source(url: &str, timeout_secs: u64) -> Result<SourceResult, String
     // Hash the full body before truncation.
     let hash = sha256_hex(&body);
 
-    // Simple HTML tag stripping (best-effort; not a full parser).
-    let text = strip_html_tags(&body);
+    // Parse HTML and extract readable content, removing boilerplate.
+    let text = extract_page_text(&body);
 
     let content = if text.len() > MAX_CONTENT_LEN {
         text[..MAX_CONTENT_LEN].to_string()
@@ -216,37 +216,58 @@ fn sha256_hex(data: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Best-effort HTML tag removal.
-fn strip_html_tags(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(ch),
-            _ => {}
-        }
-    }
-    // Collapse multiple whitespace runs.
-    let mut prev_ws = false;
-    let collapsed: String = out
-        .chars()
-        .filter_map(|c| {
-            if c.is_whitespace() {
-                if prev_ws {
-                    None
-                } else {
-                    prev_ws = true;
-                    Some(' ')
-                }
+/// Extract readable text from an HTML page, removing boilerplate elements.
+fn extract_page_text(html: &str) -> String {
+    use scraper::{Html, Selector};
+
+    let doc = Html::parse_document(html);
+
+    // Build a combined selector that matches all boilerplate elements
+    let boilerplate_sel = Selector::parse(
+        "script, style, nav, header, footer, aside, form, noscript, iframe, \
+         [role=\"navigation\"], [role=\"banner\"], [role=\"contentinfo\"], \
+         .cookie-banner, .ad, .advertisement, .sidebar",
+    );
+
+    // Collect all boilerplate element text so we can exclude it
+    let boilerplate_text: std::collections::HashSet<String> =
+        if let Ok(ref sel) = boilerplate_sel {
+            doc.select(sel)
+                .map(|el| el.text().collect::<String>())
+                .filter(|t| !t.trim().is_empty())
+                .collect()
+        } else {
+            std::collections::HashSet::new()
+        };
+
+    // Prefer main/article content if available, then body, then full doc
+    let body_sel = Selector::parse("body").ok();
+    let main_sel = Selector::parse("main, article, [role=\"main\"]").ok();
+
+    let text = if let Some(ref sel) = main_sel {
+        if let Some(main_el) = doc.select(sel).next() {
+            main_el.text().collect::<Vec<_>>().join(" ")
+        } else if let Some(ref bsel) = body_sel {
+            if let Some(body) = doc.select(bsel).next() {
+                body.text().collect::<Vec<_>>().join(" ")
             } else {
-                prev_ws = false;
-                Some(c)
+                doc.root_element().text().collect::<Vec<_>>().join(" ")
             }
-        })
-        .collect();
-    collapsed.trim().to_string()
+        } else {
+            doc.root_element().text().collect::<Vec<_>>().join(" ")
+        }
+    } else {
+        doc.root_element().text().collect::<Vec<_>>().join(" ")
+    };
+
+    // Remove boilerplate text fragments from the result
+    let mut result = text;
+    for bp in &boilerplate_text {
+        result = result.replace(bp.as_str(), "");
+    }
+
+    // Collapse whitespace
+    result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Extract the contents of the first `<title>` tag.
@@ -362,17 +383,28 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_html_tags() {
+    fn test_extract_page_text() {
         let html = "<html><body><p>Hello <b>world</b>!</p></body></html>";
-        let text = strip_html_tags(html);
-        assert_eq!(text, "Hello world!");
+        let text = extract_page_text(html);
+        assert_eq!(text, "Hello world !");
     }
 
     #[test]
-    fn test_strip_html_collapses_whitespace() {
-        let html = "<p>  Hello   world  </p>";
-        let text = strip_html_tags(html);
-        assert_eq!(text, "Hello world");
+    fn test_extract_page_text_strips_boilerplate() {
+        let html = r#"<html><body>
+            <nav>Home About Contact</nav>
+            <main><p>Actual content here.</p></main>
+            <footer>Copyright 2026</footer>
+        </body></html>"#;
+        let text = extract_page_text(html);
+        assert_eq!(text, "Actual content here.");
+    }
+
+    #[test]
+    fn test_extract_page_text_strips_scripts() {
+        let html = "<html><body><script>var x=1;</script><p>Clean text</p></body></html>";
+        let text = extract_page_text(html);
+        assert_eq!(text, "Clean text");
     }
 
     #[test]
