@@ -116,6 +116,9 @@ rust_xlsxwriter = "0.93"
 # Regex for credential scanning
 regex = "1"
 
+# HTML parsing with CSS selectors (web scraping)
+scraper = "0.22"
+
 # JSONPath extraction
 jsonpath-rust = "0.7"
 

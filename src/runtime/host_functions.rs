@@ -1720,6 +1720,7 @@ fn fetch_url_blocking(url: &str, method: &str) -> std::result::Result<(u16, Stri
     };
 
     let response = request
+        .header("User-Agent", "Mozilla/5.0 (compatible; nabaos/0.2; +https://github.com/nabaos/nabaos)")
         .send()
         .map_err(|e| format!("HTTP request failed: {}", e))?;
     let status_code = response.status().as_u16();
@@ -3256,8 +3257,21 @@ fn exec_browser_fetch(input: &serde_json::Value) -> std::result::Result<AbilityO
 
     match fetch_url_blocking(url, "GET") {
         Ok((status_code, body)) => {
-            // Basic HTML tag stripping for text extraction
-            let text = strip_html_tags(&body);
+            // Extract text using appropriate method based on content type
+            let text = if url.contains("duckduckgo.com") && url.contains("q=") {
+                if is_ddg_captcha(&body) {
+                    "DuckDuckGo returned a CAPTCHA challenge. The search could not be completed. \
+                     Try rephrasing the query or using a different search approach.".to_string()
+                } else {
+                    extract_search_results(&body)
+                        .unwrap_or_else(|| extract_page_text(&body))
+                }
+            } else if body.contains("<!") || body.contains("<html") || body.contains("<HTML") {
+                extract_page_text(&body)
+            } else {
+                // Not HTML — return as-is (JSON, plain text, etc.)
+                body.clone()
+            };
             let text = safe_truncate(&text, 500_000);
 
             let mut facts = HashMap::new();
@@ -3287,48 +3301,121 @@ fn exec_browser_fetch(input: &serde_json::Value) -> std::result::Result<AbilityO
     }
 }
 
-/// Basic HTML tag stripping (removes <tags> and decodes common entities).
-fn strip_html_tags(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut in_tag = false;
-    let mut in_script = false;
+/// Detect if DuckDuckGo returned a CAPTCHA instead of results.
+fn is_ddg_captcha(html: &str) -> bool {
+    html.contains("anomaly-modal")
+        || html.contains("Please complete the following challenge")
+}
 
-    for ch in html.chars() {
-        match ch {
-            '<' => {
-                in_tag = true;
-                // Check if we're entering a script/style tag
-                let rest = &html[html.len().saturating_sub(result.len())..];
-                if rest.to_lowercase().starts_with("<script")
-                    || rest.to_lowercase().starts_with("<style")
-                {
-                    in_script = true;
-                }
-            }
-            '>' => {
-                in_tag = false;
-                if in_script {
-                    let rest = &html[html.len().saturating_sub(result.len())..];
-                    if rest.to_lowercase().contains("</script")
-                        || rest.to_lowercase().contains("</style")
-                    {
-                        in_script = false;
-                    }
-                }
-            }
-            _ if !in_tag && !in_script => result.push(ch),
-            _ => {}
+/// Extract structured search results from DuckDuckGo HTML.
+/// Returns a formatted string with numbered results (title, URL, snippet).
+fn extract_search_results(html: &str) -> Option<String> {
+    use scraper::{Html, Selector};
+
+    let doc = Html::parse_document(html);
+
+    // DuckDuckGo result containers
+    let result_sel = Selector::parse(".result").ok()?;
+    let title_sel = Selector::parse(".result__a").ok()?;
+    let snippet_sel = Selector::parse(".result__snippet").ok()?;
+    let url_sel = Selector::parse(".result__url").ok()?;
+
+    let mut results = Vec::new();
+    for el in doc.select(&result_sel) {
+        let title = el
+            .select(&title_sel)
+            .next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+        let snippet = el
+            .select(&snippet_sel)
+            .next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+        let url = el
+            .select(&url_sel)
+            .next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .or_else(|| {
+                el.select(&title_sel)
+                    .next()
+                    .and_then(|e| e.value().attr("href").map(|s| s.to_string()))
+            })
+            .unwrap_or_default();
+
+        if !title.is_empty() {
+            results.push(format!(
+                "{}. {}\n   {}\n   {}",
+                results.len() + 1,
+                title,
+                url,
+                snippet
+            ));
+        }
+        if results.len() >= 10 {
+            break;
         }
     }
 
-    // Decode common HTML entities
-    result
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
+    if results.is_empty() {
+        None // Not a valid search results page (might be CAPTCHA)
+    } else {
+        Some(results.join("\n\n"))
+    }
+}
+
+/// Extract readable text from an HTML page, removing boilerplate elements.
+fn extract_page_text(html: &str) -> String {
+    use scraper::{Html, Selector};
+
+    let doc = Html::parse_document(html);
+
+    // Build a combined selector that matches all boilerplate elements
+    let boilerplate_sel = Selector::parse(
+        "script, style, nav, header, footer, aside, form, noscript, iframe, \
+         [role=\"navigation\"], [role=\"banner\"], [role=\"contentinfo\"], \
+         .cookie-banner, .ad, .advertisement, .sidebar"
+    );
+
+    // Collect all boilerplate element text so we can exclude it
+    let boilerplate_text: std::collections::HashSet<String> = if let Ok(ref sel) = boilerplate_sel {
+        doc.select(sel)
+            .map(|el| el.text().collect::<String>())
+            .filter(|t| !t.trim().is_empty())
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    // Get body text, or fall back to full document
+    let body_sel = Selector::parse("body").ok();
+    let main_sel = Selector::parse("main, article, [role=\"main\"]").ok();
+
+    // Prefer main/article content if available, then body, then full doc
+    let text = if let Some(ref sel) = main_sel {
+        if let Some(main_el) = doc.select(sel).next() {
+            main_el.text().collect::<Vec<_>>().join(" ")
+        } else if let Some(ref bsel) = body_sel {
+            if let Some(body) = doc.select(bsel).next() {
+                body.text().collect::<Vec<_>>().join(" ")
+            } else {
+                doc.root_element().text().collect::<Vec<_>>().join(" ")
+            }
+        } else {
+            doc.root_element().text().collect::<Vec<_>>().join(" ")
+        }
+    } else {
+        doc.root_element().text().collect::<Vec<_>>().join(" ")
+    };
+
+    // Remove boilerplate text fragments from the result
+    let mut result = text;
+    for bp in &boilerplate_text {
+        result = result.replace(bp.as_str(), "");
+    }
+
+    // Collapse whitespace
+    result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Screenshot of a web page — queues for headless browser execution.
