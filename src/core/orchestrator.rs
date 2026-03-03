@@ -98,36 +98,99 @@ AVAILABLE CHAIN ABILITIES (use in S: lines):
   nlp.summarize — Extractive summary (local, no LLM cost)
   llm.summarize — LLM-powered synthesis across multiple inputs
   llm.chat — Send a prompt to LLM for reasoning/analysis
-  script.run — Run Python or jq script on data (args: lang, code, input)
-  data.fetch_url — HTTP GET request
+  script.run — Run Python or jq script on data (args: lang, code, input). Can write files.
+  data.fetch_url — HTTP GET request (args: url)
+  data.download — Download a file from URL (args: url, filename)
   notify.user — Send notification
+  files.read — Read a file (args: path)
+  files.list — List files in a directory (args: path)
+  shell.exec — Run an allowlisted shell command (args: command, args). Only: ls, cat, grep, wc, head, tail, sort, uniq, cut, tr, date, echo, pwd, whoami, uname, df, du, file, stat, which, tee, diff, md5sum, sha256sum, jq, hostname, uptime, free, find
+  memory.store — Store a fact for later recall (args: key, value)
+  memory.search — Search stored facts (args: query)
+  storage.get — Read from key-value store (args: key)
+  storage.set — Write to key-value store (args: key, value)
+  calendar.list — List calendar events
+  calendar.add — Add a calendar event (args: title, start_time)
 
-EXAMPLE — Multi-hop news search with LLM synthesis:
+WHEN TO USE CHAINS (MODE 2):
+- The user asks to CREATE, WRITE, SAVE, or GENERATE a file → use script.run with Python to write it
+- The user asks to READ a file or list files → use files.read / files.list
+- The user asks to run a command or get system info → use shell.exec
+- The user asks to remember/store something → use memory.store
+- The user asks to recall something stored → use memory.search
+- The user asks about web content → use browser.fetch + llm.summarize
+
+EXAMPLE — "What is the latest news about AI?":
 <nyaya>
-NEW:search_latest_news
-P:topic:text:required
-S:browser.fetch url=https://html.duckduckgo.com/html/?q=$topic+latest+news>search_results
-S:llm.summarize text=$search_results>summary
+NEW:search_ai_news
+P:topic:text:AI
+S:browser.fetch:url=https://html.duckduckgo.com/html/?q=$topic+latest+news>search_results
+S:llm.summarize:text=$search_results>summary
 L:news_search
 R:latest news about $topic|what is happening with $topic|$topic news update
 </nyaya>
 
-EXAMPLE — Deterministic parsing (no LLM cost after creation):
+CRITICAL RULE FOR S: LINES:
+- Embed actual values directly in the code/arguments — do NOT use $variables
+- Write complete, self-contained commands with real paths, real content, real values
+- P: lines are optional for future template reuse but the S: code must work standalone
+
+EXAMPLE — "Create a file hello.txt with Hello World in /tmp/":
 <nyaya>
-NEW:get_gold_price
-P:currency:text:USD
-S:browser.fetch url=https://www.goldapi.io/dashboard>page_data
-S:script.run lang=python code="import sys,re; text=sys.stdin.read(); m=re.search(r'Gold Price.*?\\$(\\d[\\d,.]+)',text); print(m.group(1) if m else 'Price not found')" input=$page_data>price
-L:gold_price_lookup
-R:gold price|current gold price|how much is gold
+NEW:write_hello
+S:script.run:lang=python code="open('/tmp/hello.txt','w').write('Hello World'); print('Created /tmp/hello.txt')" input=>result
+L:file_creation
+R:create a file|write a file|save to file
 </nyaya>
 
-PREFER deterministic chains (script.run) when the output format is predictable.
+EXAMPLE — "What is the kernel version and uptime?":
+<nyaya>
+NEW:system_info
+S:shell.exec:command=uname args=-a>kernel
+S:shell.exec:command=uptime>up
+L:system_info
+R:system info|what system is this|server details
+</nyaya>
+
+EXAMPLE — "Remember that my favorite color is blue":
+<nyaya>
+NEW:store_color
+S:memory.store:key=favorite_color value=blue>stored
+L:memory_store
+R:remember this|store this|save this fact
+</nyaya>
+
+EXAMPLE — "Read the file /tmp/data.txt":
+<nyaya>
+NEW:read_data
+S:files.read:path=/tmp/data.txt>contents
+L:file_read
+R:read the file|show me the file|what does the file say
+</nyaya>
+
+EXAMPLE — "List files in /tmp/bench_test/":
+<nyaya>
+NEW:list_dir
+S:shell.exec:command=ls args=/tmp/bench_test/>listing
+L:file_list
+R:list files|show directory|what files are in
+</nyaya>
+
+EXAMPLE — "Calculate 47 times 83":
+<nyaya>
+CACHE:3600
+L:simple_math
+R:calculate|multiply|what is 47 times 83
+</nyaya>
+
+PREFER deterministic chains (script.run, shell.exec) when the output format is predictable.
 USE llm.summarize/llm.chat when synthesis or reasoning across sources is needed.
+USE script.run with Python to create files — it runs in a sandbox and generates audit receipts.
 
 RULES:
 - Always emit exactly one <nyaya> block after your answer
 - Use MODE 1 if any registered template matches
+- Use MODE 2 when the user asks to DO something (create, write, run, remember, fetch)
 - Use MODE 4 for factual/simple answers (cache them)
 - Use MODE 5 only for truly unique responses
 - L: is the intent label for the classifier training
@@ -1913,6 +1976,7 @@ impl Orchestrator {
                 }
 
                 if let Some(yaml) = block.to_chain_yaml() {
+                    tracing::debug!(yaml = %yaml, "Generated workflow YAML");
                     match ChainDef::from_yaml(&yaml) {
                         Ok(chain) => {
                             // Store the chain for future reuse
@@ -2513,9 +2577,14 @@ impl Orchestrator {
                 "llm.summarize".into(),
                 "llm.chat".into(),
                 "script.run".into(),
-                // NOTE: shell.exec, files.write, and deep.delegate are intentionally
-                // excluded from the default manifest. They must be explicitly granted
-                // via a custom manifest or constitution.
+                "data.download".into(),
+                "shell.exec".into(),
+                // NOTE: files.write and deep.delegate are intentionally excluded
+                // from the default manifest. They must be explicitly granted via a
+                // custom manifest or constitution. shell.exec is safe because it
+                // only allows a hardcoded allowlist of read-only commands (ls, cat,
+                // grep, date, uname, df, free, uptime, etc.) and blocks all shell
+                // metacharacters and dangerous flags.
             ],
             memory_limit_mb: 256,
             fuel_limit: 10_000_000,

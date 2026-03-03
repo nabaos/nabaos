@@ -440,18 +440,45 @@ fn parse_step(s: &str) -> StepSpec {
     let confirm = s.contains("!confirm");
     let s = s.replace("!confirm", "");
 
-    let (main, output_var) = if let Some(idx) = s.find('>') {
-        (s[..idx].to_string(), Some(s[idx + 1..].trim().to_string()))
+    // Use rfind to get the LAST '>' — avoids matching '>' inside quoted code values
+    let (main, output_var) = if let Some(idx) = s.rfind('>') {
+        let candidate = s[idx + 1..].trim();
+        // Only treat as output_var if it looks like an identifier (no spaces, no special chars)
+        if !candidate.is_empty() && validate_identifier(candidate) {
+            (s[..idx].to_string(), Some(candidate.to_string()))
+        } else {
+            (s.to_string(), None)
+        }
     } else {
         (s.to_string(), None)
     };
 
-    // Split ability:params (first colon separates ability from params)
+    // Split ability from params.
+    // Format 1: ability.name:params (colon separator)
+    // Format 2: ability.name params (space separator — LLMs often use this)
     let (ability, params) = if let Some(idx) = main.find(':') {
-        (
-            main[..idx].trim().to_string(),
-            main[idx + 1..].trim().to_string(),
-        )
+        let candidate = main[..idx].trim();
+        // Validate: ability names are like "script.run", "llm.chat" — no spaces
+        if !candidate.contains(' ') && candidate.contains('.') {
+            (candidate.to_string(), main[idx + 1..].trim().to_string())
+        } else if let Some(sp) = main.find(' ') {
+            let first_word = main[..sp].trim();
+            if first_word.contains('.') {
+                (first_word.to_string(), main[sp + 1..].trim().to_string())
+            } else {
+                (main[..idx].trim().to_string(), main[idx + 1..].trim().to_string())
+            }
+        } else {
+            (main[..idx].trim().to_string(), main[idx + 1..].trim().to_string())
+        }
+    } else if let Some(sp) = main.find(' ') {
+        // No colon — try space separator (e.g. "script.run lang=python code=...")
+        let first_word = main[..sp].trim();
+        if first_word.contains('.') {
+            (first_word.to_string(), main[sp + 1..].trim().to_string())
+        } else {
+            (main.trim().to_string(), String::new())
+        }
     } else {
         (main.trim().to_string(), String::new())
     };
@@ -637,33 +664,96 @@ impl NyayaBlock {
 /// Sanitize a string for safe YAML interpolation.
 /// Strips characters that could break YAML structure or inject new keys.
 fn sanitize_yaml_value(s: &str) -> String {
-    // Values are always double-quoted in YAML output, so colons are safe.
-    // Strip chars that could break YAML structure or enable injection.
-    s.chars()
-        .filter(|c| {
-            !matches!(
-                c,
-                '\n' | '\r'
-                    | '{'
-                    | '}'
-                    | '['
-                    | ']'
-                    | '#'
-                    | '&'
-                    | '*'
-                    | '!'
-                    | '|'
-                    | '>'
-                    | '\''
-                    | '"'
-                    | '%'
-                    | '@'
-                    | '`'
-            )
-        })
-        .collect::<String>()
-        .trim()
-        .to_string()
+    // Properly escape for YAML double-quoted strings.
+    // Preserve {{template}} markers for variable substitution.
+    let mut result = String::with_capacity(s.len() + 16);
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        // Preserve {{ and }} template markers
+        if c == '{' && i + 1 < chars.len() && chars[i + 1] == '{' {
+            result.push_str("{{");
+            i += 2;
+            continue;
+        }
+        if c == '}' && i + 1 < chars.len() && chars[i + 1] == '}' {
+            result.push_str("}}");
+            i += 2;
+            continue;
+        }
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '"' => result.push_str("\\\""),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            // Strip YAML structural chars that could enable injection
+            '{' | '}' | '`' => {}
+            _ => result.push(c),
+        }
+        i += 1;
+    }
+    result.trim().to_string()
+}
+
+/// Sanitize a single line for YAML block scalar (`|`) content.
+/// Same security posture as `sanitize_yaml_value` — preserves `{{}}` template
+/// markers, strips lone `{`, `}`, and backtick.
+fn sanitize_yaml_block_line(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '{' && i + 1 < chars.len() && chars[i + 1] == '{' {
+            result.push_str("{{");
+            i += 2;
+        } else if chars[i] == '}' && i + 1 < chars.len() && chars[i + 1] == '}' {
+            result.push_str("}}");
+            i += 2;
+        } else if matches!(chars[i], '{' | '}' | '`') {
+            i += 1;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result.trim_end().to_string()
+}
+
+/// Convert $variable references to {{variable}} template syntax.
+/// First converts known param names, then auto-detects any remaining
+/// $word patterns (alphanumeric + underscore).
+fn convert_dollar_refs(s: &str, param_names: &[&str]) -> String {
+    let mut result = s.to_string();
+    // Convert known params first
+    for name in param_names {
+        let dollar_ref = format!("${}", name);
+        let template_ref = format!("{{{{{}}}}}", name);
+        result = result.replace(&dollar_ref, &template_ref);
+    }
+    // Auto-detect remaining $word references not yet converted
+    // Match $identifier patterns (alphanumeric + underscore, not already in {{}})
+    let mut final_result = String::with_capacity(result.len());
+    let chars: Vec<char> = result.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '$' && i + 1 < chars.len() && (chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_') {
+            // Collect the identifier
+            let start = i + 1;
+            let mut end = start;
+            while end < chars.len() && (chars[end].is_ascii_alphanumeric() || chars[end] == '_') {
+                end += 1;
+            }
+            let var_name: String = chars[start..end].iter().collect();
+            final_result.push_str(&format!("{{{{{}}}}}", var_name));
+            i = end;
+        } else {
+            final_result.push(chars[i]);
+            i += 1;
+        }
+    }
+    final_result
 }
 
 /// Validate a chain/step/param name: only alphanumeric, underscore, hyphen, dot allowed.
@@ -715,7 +805,16 @@ fn parse_step_args(params: &str) -> Vec<(String, String)> {
             let mut escaped = false;
             for c in chars.by_ref() {
                 if escaped {
-                    v.push(c);
+                    // Interpret standard escape sequences so real newlines/tabs
+                    // reach sanitize_yaml_value and the rest of the pipeline.
+                    match c {
+                        'n' => v.push('\n'),
+                        't' => v.push('\t'),
+                        'r' => v.push('\r'),
+                        '\\' => v.push('\\'),
+                        '"' => v.push('"'),
+                        other => { v.push('\\'); v.push(other); }
+                    }
                     escaped = false;
                 } else if c == '\\' {
                     escaped = true;
@@ -767,6 +866,19 @@ impl NyayaBlock {
                         yaml.push_str(&format!("    default: \"{}\"\n", safe_def));
                     }
                 }
+                // Collect param names for $var → {{var}} conversion
+                let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+                // Also include step output vars as known references
+                let step_output_names: Vec<String> = steps
+                    .iter()
+                    .filter_map(|s| s.output_var.clone())
+                    .collect();
+                let all_ref_names: Vec<&str> = param_names
+                    .iter()
+                    .copied()
+                    .chain(step_output_names.iter().map(|s| s.as_str()))
+                    .collect();
+
                 yaml.push_str("steps:\n");
                 for (i, s) in steps.iter().enumerate() {
                     // Validate ability name
@@ -780,19 +892,37 @@ impl NyayaBlock {
                         tracing::warn!(step_id = %step_id, "Invalid step_id skipped");
                         continue;
                     }
-                    let parsed_args = parse_step_args(&s.params);
+                    // Convert $param → {{param}} before parsing args
+                    let converted_params = convert_dollar_refs(&s.params, &all_ref_names);
+                    let parsed_args = parse_step_args(&converted_params);
                     yaml.push_str(&format!(
                         "  - id: {}\n    ability: {}\n    args:\n",
                         step_id, s.ability,
                     ));
                     if parsed_args.is_empty() {
                         // No key=value pairs — treat entire params as input
-                        let safe_params = sanitize_yaml_value(&s.params);
-                        yaml.push_str(&format!("      input: \"{}\"\n", safe_params));
+                        if converted_params.contains('\n') {
+                            yaml.push_str("      input: |\n");
+                            for line in converted_params.lines() {
+                                let safe_line = sanitize_yaml_block_line(line);
+                                yaml.push_str(&format!("        {}\n", safe_line));
+                            }
+                        } else {
+                            let safe_params = sanitize_yaml_value(&converted_params);
+                            yaml.push_str(&format!("      input: \"{}\"\n", safe_params));
+                        }
                     } else {
                         for (key, val) in &parsed_args {
-                            let safe_val = sanitize_yaml_value(val);
-                            yaml.push_str(&format!("      {}: \"{}\"\n", key, safe_val));
+                            if val.contains('\n') {
+                                yaml.push_str(&format!("      {}: |\n", key));
+                                for line in val.lines() {
+                                    let safe_line = sanitize_yaml_block_line(line);
+                                    yaml.push_str(&format!("        {}\n", safe_line));
+                                }
+                            } else {
+                                let safe_val = sanitize_yaml_value(val);
+                                yaml.push_str(&format!("      {}: \"{}\"\n", key, safe_val));
+                            }
                         }
                     }
                     if let Some(ref out) = s.output_var {
@@ -1129,5 +1259,91 @@ SEC:read_only
         assert!(yaml.contains("id: test_chain"));
         assert!(yaml.contains("ability: data.fetch_url"));
         assert!(yaml.contains("output_key: weather"));
+    }
+
+    #[test]
+    fn test_parse_step_args_interprets_escapes() {
+        // \n should become a real newline, \" a real quote
+        let args = parse_step_args(r#"code="def foo():\n    return 42" name="test\"file""#);
+        assert_eq!(args.len(), 2);
+        let (key, val) = &args[0];
+        assert_eq!(key, "code");
+        assert!(val.contains('\n'), "Expected real newline in value, got: {:?}", val);
+        assert_eq!(val, "def foo():\n    return 42");
+        let (key2, val2) = &args[1];
+        assert_eq!(key2, "name");
+        assert_eq!(val2, "test\"file");
+    }
+
+    #[test]
+    fn test_parse_step_args_tab_and_backslash() {
+        let args = parse_step_args(r#"data="col1\tcol2\\end""#);
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].1, "col1\tcol2\\end");
+    }
+
+    #[test]
+    fn test_parse_step_args_unknown_escape_preserved() {
+        // Unknown escape sequences like \x should be preserved literally
+        let args = parse_step_args(r#"val="hello\xworld""#);
+        assert_eq!(args[0].1, "hello\\xworld");
+    }
+
+    #[test]
+    fn test_yaml_block_scalar_for_multiline() {
+        // Build a NewChain with multi-line code in step params
+        let block = NyayaBlock::NewChain {
+            chain_name: "code_writer".into(),
+            params: vec![],
+            steps: vec![StepSpec {
+                ability: "file.write".into(),
+                params: "path=\"/tmp/test.py\" code=\"def hello():\\n    print(\\\"hi\\\")\\n    return True\"".into(),
+                output_var: Some("result".into()),
+                confirm: false,
+            }],
+            trigger: None,
+            circuit_breakers: vec![],
+            intent_label: Some("write_code".into()),
+            rephrasings: vec![],
+        };
+
+        let yaml = block.to_chain_yaml().unwrap();
+        // The code arg should use block scalar (|) since it contains newlines
+        assert!(yaml.contains("code: |"), "Expected block scalar for multiline code, got:\n{}", yaml);
+        // Should contain the actual code lines indented
+        assert!(yaml.contains("def hello():"), "Expected function def in yaml:\n{}", yaml);
+        assert!(yaml.contains("print(\"hi\")"), "Expected print statement in yaml:\n{}", yaml);
+    }
+
+    #[test]
+    fn test_sanitize_yaml_block_line_preserves_templates() {
+        assert_eq!(sanitize_yaml_block_line("hello {{name}} world"), "hello {{name}} world");
+        // Lone braces stripped (trim_end removes trailing whitespace)
+        assert_eq!(sanitize_yaml_block_line("hello { world }"), "hello  world");
+        // Backticks stripped
+        assert_eq!(sanitize_yaml_block_line("run `ls`"), "run ls");
+    }
+
+    #[test]
+    fn test_single_line_stays_quoted() {
+        // Single-line values should still use double-quoted YAML strings
+        let block = NyayaBlock::NewChain {
+            chain_name: "simple".into(),
+            params: vec![],
+            steps: vec![StepSpec {
+                ability: "file.write".into(),
+                params: "path=\"/tmp/test.txt\" content=\"hello world\"".into(),
+                output_var: None,
+                confirm: false,
+            }],
+            trigger: None,
+            circuit_breakers: vec![],
+            intent_label: None,
+            rephrasings: vec![],
+        };
+
+        let yaml = block.to_chain_yaml().unwrap();
+        assert!(yaml.contains("content: \"hello world\""), "Single-line should be quoted:\n{}", yaml);
+        assert!(yaml.contains("path: \"/tmp/test.txt\""), "Path should be quoted:\n{}", yaml);
     }
 }

@@ -3029,7 +3029,13 @@ const SHELL_ALLOWLIST: &[&str] = &[
     "diff",
     "md5sum",
     "sha256sum",
-    "jq", // NOTE: 'find' removed — arbitrary exec via -exec; 'git' removed — hooks; 'cargo' removed — build scripts
+    "jq",
+    "hostname",
+    "uptime",
+    "free",
+    "find", // NOTE: -exec/-delete flags are blocked by the dangerous-flags check below
+    // NOTE: 'python3' not allowed here — use script.run ability instead
+    // NOTE: 'git' removed — hooks; 'cargo' removed — build scripts
 ];
 
 /// Execute a shell command (sandboxed — allowlisted commands only, no shell interpreter).
