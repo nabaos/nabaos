@@ -445,6 +445,65 @@ pub struct Orchestrator {
     memory_store: crate::memory::MemoryStore,
 }
 
+/// Extract human-readable content from chain step output.
+///
+/// `shell.exec` returns JSON like `{"status":"ok","exit_code":0,"stdout":"...","stderr":"..."}`.
+/// `files.read` returns JSON like `{"status":"ok","content":"..."}`.
+/// This function extracts the meaningful payload so the user sees clean output
+/// instead of raw JSON in the NabaOS box.
+fn extract_chain_output(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if !trimmed.starts_with('{') {
+        return raw.to_string();
+    }
+    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        // shell.exec → prefer stdout, fall back to stderr
+        if let Some(stdout) = obj.get("stdout").and_then(|v| v.as_str()) {
+            if !stdout.is_empty() {
+                return stdout.to_string();
+            }
+            // stdout empty, try stderr
+            if let Some(stderr) = obj.get("stderr").and_then(|v| v.as_str()) {
+                if !stderr.is_empty() {
+                    return stderr.to_string();
+                }
+            }
+            // Both empty — return a brief status
+            if let Some(status) = obj.get("status").and_then(|v| v.as_str()) {
+                return format!("[{}]", status);
+            }
+        }
+        // files.read → content field
+        if let Some(content) = obj.get("content").and_then(|v| v.as_str()) {
+            return content.to_string();
+        }
+        // memory.search → results array (fields: key, value, category)
+        if let Some(results) = obj.get("results").and_then(|v| v.as_array()) {
+            if !results.is_empty() {
+                let entries: Vec<String> = results
+                    .iter()
+                    .filter_map(|r| {
+                        let key = r.get("key").and_then(|k| k.as_str())?;
+                        let val = r.get("value").and_then(|v| v.as_str())?;
+                        Some(format!("{}: {}", key, val))
+                    })
+                    .collect();
+                if !entries.is_empty() {
+                    return entries.join("\n");
+                }
+            }
+        }
+        // memory.store → simple confirmation
+        if obj.get("persisted").is_some() {
+            if let Some(key) = obj.get("key").and_then(|v| v.as_str()) {
+                return format!("Stored: {}", key);
+            }
+        }
+    }
+    // Not recognized JSON or parse failed — return as-is
+    raw.to_string()
+}
+
 impl Orchestrator {
     /// Initialize the orchestrator.
     pub fn new(config: NyayaConfig) -> Result<Self> {
@@ -1263,7 +1322,8 @@ impl Orchestrator {
                             ),
                             response_text: chain.steps.iter().rev()
                                 .filter_map(|s| s.output_key.as_ref())
-                                .find_map(|key| chain_result.outputs.get(key).cloned()),
+                                .find_map(|key| chain_result.outputs.get(key).cloned())
+                                .map(|o| extract_chain_output(&o)),
                             nyaya_mode: Some("C".into()),
                             receipts_generated: chain_result.receipts.len(),
                             training_signal: None,
@@ -1506,7 +1566,8 @@ impl Orchestrator {
                 ),
                 response_text: chain.steps.iter().rev()
                     .filter_map(|s| s.output_key.as_ref())
-                    .find_map(|key| chain_result.outputs.get(key).cloned()),
+                    .find_map(|key| chain_result.outputs.get(key).cloned())
+                    .map(|o| extract_chain_output(&o)),
                 nyaya_mode: Some("C".into()),
                 receipts_generated: chain_result.receipts.len(),
                 training_signal: None,
@@ -1865,10 +1926,11 @@ impl Orchestrator {
 
         // If chain execution produced output, append it to the LLM's preamble text
         let final_text = if let Some(ref output) = chain_output {
+            let clean = extract_chain_output(output);
             if parsed.user_text.is_empty() {
-                output.clone()
+                clean
             } else {
-                format!("{}\n\n{}", parsed.user_text, output)
+                format!("{}\n\n{}", parsed.user_text, clean)
             }
         } else {
             parsed.user_text

@@ -28,6 +28,8 @@ struct AnthropicRequest {
     messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -213,6 +215,7 @@ impl LlmProvider {
                         content: user_message.into(),
                     }],
                     system: Some(system_prompt.into()),
+                    temperature: Some(0.2),
                 };
 
                 let resp = client
@@ -265,7 +268,8 @@ impl LlmProvider {
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message}
                     ],
-                    "max_tokens": 4096
+                    "max_tokens": 4096,
+                    "temperature": 0.2
                 });
 
                 let mut req = client
@@ -352,6 +356,7 @@ impl LlmProvider {
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": user_message}],
                     "tools": tools_json,
+                    "temperature": 0.2,
                 });
 
                 let resp = client
@@ -430,6 +435,7 @@ impl LlmProvider {
                         {"role": "user", "content": user_message}
                     ],
                     "tools": tools_json,
+                    "temperature": 0.2,
                 });
 
                 let mut req = client
@@ -535,6 +541,7 @@ impl LlmProvider {
                     "max_tokens": 4096,
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": content_json}],
+                    "temperature": 0.2,
                 });
 
                 let resp = client
@@ -597,6 +604,7 @@ impl LlmProvider {
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": content_json}
                     ],
+                    "temperature": 0.2,
                 });
 
                 let mut req = client
@@ -666,6 +674,7 @@ impl LlmProvider {
                     "stream": true,
                     "messages": [{"role": "user", "content": user_message}],
                     "system": system_prompt,
+                    "temperature": 0.2,
                 });
 
                 let resp = client
@@ -759,6 +768,7 @@ impl LlmProvider {
                         {"role": "user", "content": user_message}
                     ],
                     "max_tokens": 4096,
+                    "temperature": 0.2,
                 });
                 // stream_options is OpenAI-specific; Ollama silently ignores it
                 // but token counts would report as 0. Only add for OpenAI/DeepSeek.
