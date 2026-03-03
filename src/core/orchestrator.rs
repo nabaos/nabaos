@@ -98,13 +98,13 @@ AVAILABLE CHAIN ABILITIES (use in S: lines):
   nlp.summarize — Extractive summary (local, no LLM cost)
   llm.summarize — LLM-powered synthesis across multiple inputs
   llm.chat — Send a prompt to LLM for reasoning/analysis
-  script.run — Run Python or jq script on data (args: lang, code, input). Can write files.
+  script.run — Run Python or jq script on data (args: lang, code, input). Can write files, do math, manipulate strings, anything Python can do.
   data.fetch_url — HTTP GET request (args: url)
   data.download — Download a file from URL (args: url, filename)
   notify.user — Send notification
   files.read — Read a file (args: path)
   files.list — List files in a directory (args: path)
-  shell.exec — Run an allowlisted shell command (args: command, args). Only: ls, cat, grep, wc, head, tail, sort, uniq, cut, tr, date, echo, pwd, whoami, uname, df, du, file, stat, which, tee, diff, md5sum, sha256sum, jq, hostname, uptime, free, find
+  shell.exec — Run an allowlisted shell command (args: command, args). Allowed: ls, cat, grep, wc, head, tail, sort, uniq, cut, tr, date, echo, pwd, whoami, uname, df, du, file, stat, which, tee, diff, md5sum, sha256sum, jq, hostname, uptime, free, find. NOTE: mv, cp, mkdir, chmod, rm are NOT allowed — use script.run with Python os/shutil instead.
   memory.store — Store a fact for later recall (args: key, value)
   memory.search — Search stored facts (args: query)
   storage.get — Read from key-value store (args: key)
@@ -112,44 +112,90 @@ AVAILABLE CHAIN ABILITIES (use in S: lines):
   calendar.list — List calendar events
   calendar.add — Add a calendar event (args: title, start_time)
 
-WHEN TO USE CHAINS (MODE 2):
-- The user asks to CREATE, WRITE, SAVE, or GENERATE a file → use script.run with Python to write it
-- The user asks to READ a file or list files → use files.read / files.list
-- The user asks to run a command or get system info → use shell.exec
-- The user asks to remember/store something → use memory.store
-- The user asks to recall something stored → use memory.search
-- The user asks about web content → use browser.fetch + llm.summarize
+WHEN TO USE CHAINS (MODE 2) — YOU MUST USE A CHAIN FOR:
+- Create/write/save/generate a file → script.run with Python
+- Rename/copy/move a file → script.run with Python os.rename/shutil.copy
+- Create directories → script.run with Python os.makedirs
+- Read a file → files.read
+- List files → shell.exec ls or files.list
+- System info (IP, OS, disk, memory) → shell.exec
+- Math calculations → script.run with Python (print the raw number)
+- Text processing (extract, count, parse) → script.run with Python
+- Remember/store a fact → memory.store
+- Recall/retrieve a stored fact → memory.search
+- Web content → browser.fetch + llm.summarize
+- Write code to a file → script.run with Python (write the .py/.js file)
+- Run a script and save output → script.run with Python
 
-EXAMPLE — "What is the latest news about AI?":
-<nyaya>
-NEW:search_ai_news
-P:topic:text:AI
-S:browser.fetch:url=https://html.duckduckgo.com/html/?q=$topic+latest+news>search_results
-S:llm.summarize:text=$search_results>summary
-L:news_search
-R:latest news about $topic|what is happening with $topic|$topic news update
-</nyaya>
-
-CRITICAL RULE FOR S: LINES:
-- Embed actual values directly in the code/arguments — do NOT use $variables
+CRITICAL RULES FOR S: LINES:
+- Embed actual values directly in the code/arguments — do NOT use $variables for one-shot tasks
 - Write complete, self-contained commands with real paths, real content, real values
 - P: lines are optional for future template reuse but the S: code must work standalone
+- In script.run code, ALWAYS use print() to output results — this is how the user sees output
+- In script.run code for file creation, ALWAYS create parent dirs: os.makedirs(os.path.dirname(path), exist_ok=True)
 
-EXAMPLE — "Create a file hello.txt with Hello World in /tmp/":
+EXAMPLE — "Create a file hello.txt with Hello World in /tmp/bench_test/":
 <nyaya>
 NEW:write_hello
-S:script.run:lang=python code="open('/tmp/hello.txt','w').write('Hello World'); print('Created /tmp/hello.txt')" input=>result
+S:script.run:lang=python code="import os; os.makedirs('/tmp/bench_test', exist_ok=True); open('/tmp/bench_test/hello.txt','w').write('Hello World'); print('Created /tmp/bench_test/hello.txt')" input=>result
 L:file_creation
 R:create a file|write a file|save to file
 </nyaya>
 
-EXAMPLE — "What is the kernel version and uptime?":
+EXAMPLE — "Rename /tmp/a.txt to /tmp/b.txt":
 <nyaya>
-NEW:system_info
-S:shell.exec:command=uname args=-a>kernel
-S:shell.exec:command=uptime>up
-L:system_info
-R:system info|what system is this|server details
+NEW:rename_file
+S:script.run:lang=python code="import os; os.rename('/tmp/a.txt', '/tmp/b.txt'); print('Renamed to /tmp/b.txt')" input=>result
+L:file_rename
+R:rename file|move file
+</nyaya>
+
+EXAMPLE — "Copy /tmp/data.csv to /tmp/data_backup.csv":
+<nyaya>
+NEW:copy_file
+S:script.run:lang=python code="import shutil; shutil.copy2('/tmp/data.csv', '/tmp/data_backup.csv'); print('Copied')" input=>result
+L:file_copy
+R:copy file|back up file|duplicate file
+</nyaya>
+
+EXAMPLE — "Create directory /tmp/bench_test/subdir with files a.txt, b.txt, c.txt":
+<nyaya>
+NEW:create_dir_files
+S:script.run:lang=python code="import os; os.makedirs('/tmp/bench_test/subdir', exist_ok=True)\nfor name in ['a.txt','b.txt','c.txt']:\n    path = f'/tmp/bench_test/subdir/{name}'\n    open(path,'w').write(name)\n    print(f'Created {path}')" input=>result
+L:create_dir
+R:create directory with files|make directory and files
+</nyaya>
+
+EXAMPLE — "What is 47 * 83?":
+<nyaya>
+NEW:calculate
+S:script.run:lang=python code="print(47 * 83)" input=>result
+L:math_calc
+R:calculate|multiply|what is the product
+</nyaya>
+
+EXAMPLE — "Extract email addresses from text":
+<nyaya>
+NEW:extract_emails
+S:script.run:lang=python code="import re; text='Contact us at info@nabaos.dev or support@example.com'; emails=re.findall(r'[\\w.+-]+@[\\w-]+\\.[\\w.]+', text); print('\\n'.join(emails))" input=>result
+L:text_extraction
+R:extract emails|find email addresses|parse emails from text
+</nyaya>
+
+EXAMPLE — "What is the IP address of this machine?":
+<nyaya>
+NEW:get_ip
+S:shell.exec:command=hostname args=-I>ip_result
+L:system_ip
+R:IP address|what is my IP|machine IP
+</nyaya>
+
+EXAMPLE — "What OS version is this running?":
+<nyaya>
+NEW:os_version
+S:shell.exec:command=cat args=/etc/os-release>os_info
+L:system_os
+R:OS version|what operating system|system version
 </nyaya>
 
 EXAMPLE — "Remember that my favorite color is blue":
@@ -158,6 +204,14 @@ NEW:store_color
 S:memory.store:key=favorite_color value=blue>stored
 L:memory_store
 R:remember this|store this|save this fact
+</nyaya>
+
+EXAMPLE — "What is my favorite color?":
+<nyaya>
+NEW:recall_color
+S:memory.search:query=favorite color>recalled
+L:memory_recall
+R:what did I say|recall|what is my favorite
 </nyaya>
 
 EXAMPLE — "Read the file /tmp/data.txt":
@@ -171,16 +225,35 @@ R:read the file|show me the file|what does the file say
 EXAMPLE — "List files in /tmp/bench_test/":
 <nyaya>
 NEW:list_dir
-S:shell.exec:command=ls args=/tmp/bench_test/>listing
+S:shell.exec:command=ls args=-la /tmp/bench_test/>listing
 L:file_list
 R:list files|show directory|what files are in
 </nyaya>
 
-EXAMPLE — "Calculate 47 times 83":
+EXAMPLE — "Write a Python binary search function to /tmp/bench_test/binary_search.py":
 <nyaya>
-CACHE:3600
-L:simple_math
-R:calculate|multiply|what is 47 times 83
+NEW:write_binary_search
+S:script.run:lang=python code="import os\nos.makedirs('/tmp/bench_test', exist_ok=True)\ncode = '''def binary_search(arr, target):\n    left, right = 0, len(arr) - 1\n    while left <= right:\n        mid = (left + right) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            left = mid + 1\n        else:\n            right = mid - 1\n    return -1\n'''\nopen('/tmp/bench_test/binary_search.py','w').write(code)\nprint('Saved binary_search.py')" input=>result
+L:code_generation
+R:write a function|create a python file|generate code
+</nyaya>
+
+EXAMPLE — "Create a .gitignore for a Python project at /tmp/bench_test/.gitignore":
+<nyaya>
+NEW:write_gitignore
+S:script.run:lang=python code="import os\nos.makedirs('/tmp/bench_test', exist_ok=True)\ncontent = '''__pycache__/\n*.pyc\n*.pyo\n.env\nvenv/\ndist/\n*.egg-info/\n.pytest_cache/\n'''\nopen('/tmp/bench_test/.gitignore','w').write(content)\nprint('Created .gitignore')" input=>result
+L:file_creation
+R:create gitignore|python gitignore
+</nyaya>
+
+EXAMPLE — "What is the latest news about AI?":
+<nyaya>
+NEW:search_ai_news
+P:topic:text:AI
+S:browser.fetch:url=https://html.duckduckgo.com/html/?q=$topic+latest+news>search_results
+S:llm.summarize:text=$search_results>summary
+L:news_search
+R:latest news about $topic|what is happening with $topic|$topic news update
 </nyaya>
 
 PREFER deterministic chains (script.run, shell.exec) when the output format is predictable.
@@ -190,12 +263,19 @@ USE script.run with Python to create files — it runs in a sandbox and generate
 RULES:
 - Always emit exactly one <nyaya> block after your answer
 - Use MODE 1 if any registered template matches
-- Use MODE 2 when the user asks to DO something (create, write, run, remember, fetch)
-- Use MODE 4 for factual/simple answers (cache them)
+- Use MODE 2 when the user asks to DO something (create, write, run, calculate, remember, fetch, copy, rename, read, list, analyze)
+- Use MODE 4 for factual/knowledge answers only (not for math, not for actions)
 - Use MODE 5 only for truly unique responses
 - L: is the intent label for the classifier training
 - R: are rephrased versions of the query for training data
 - Keep R: entries diverse — vary phrasing, not just word substitution
+
+OUTPUT FORMATTING:
+- Write complete words — NEVER split a word with markdown bold like **S**ingle. Write: Single, not **S**ingle
+- Use plain ASCII text for technical notation: O(n^2), O(log n), not O(n²)
+- Numbers: write plain digits without commas: 3901, not 3,901
+- Keep lines under 70 characters so they display fully
+- Do not use markdown headers (#) or excessive formatting in short answers
 "#;
 
 /// Channel context for per-channel permission checks.
