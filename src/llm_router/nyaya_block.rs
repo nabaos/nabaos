@@ -764,6 +764,34 @@ fn validate_identifier(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
 }
 
+/// When a quoted value runs off the end of input (no closing `"`), scan
+/// backwards for the last `"` that is followed by ` key=` — that was likely
+/// the real closing delimiter, with a stray `\` before it interpreted as escape.
+/// Returns the byte offset of the `"` to split at, or None.
+fn find_runaway_quote_split(value: &str) -> Option<usize> {
+    // Search backwards for `" ` followed by an identifier and `=`
+    let bytes = value.as_bytes();
+    let mut i = value.len().saturating_sub(1);
+    while i > 0 {
+        if bytes[i] == b'"' && i + 1 < bytes.len() && bytes[i + 1] == b' ' {
+            // Check if what follows looks like `key=`
+            let rest = &value[i + 2..];
+            if let Some(eq) = rest.find('=') {
+                let candidate = &rest[..eq];
+                if !candidate.is_empty()
+                    && candidate
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    return Some(i);
+                }
+            }
+        }
+        i -= 1;
+    }
+    None
+}
+
 fn parse_step_args(params: &str) -> Vec<(String, String)> {
     // Quick check: if params contains no '=' at all, it's not key=value format
     if !params.contains('=') {
@@ -803,6 +831,7 @@ fn parse_step_args(params: &str) -> Vec<(String, String)> {
             chars.next(); // consume opening quote
             let mut v = String::new();
             let mut escaped = false;
+            let mut found_closing_quote = false;
             for c in chars.by_ref() {
                 if escaped {
                     // Interpret standard escape sequences so real newlines/tabs
@@ -819,12 +848,28 @@ fn parse_step_args(params: &str) -> Vec<(String, String)> {
                 } else if c == '\\' {
                     escaped = true;
                 } else if c == '"' {
+                    found_closing_quote = true;
                     break;
                 } else {
                     v.push(c);
                 }
             }
-            v
+            // Backtrack heuristic: if we exhausted input without finding a
+            // closing quote, the LLM likely wrote \" before the real closing
+            // delimiter (e.g. code="...print('hi')\" input=).  Scan backwards
+            // for `" key=` pattern and split there.
+            let mut tail_args = Vec::new();
+            if !found_closing_quote {
+                if let Some(split) = find_runaway_quote_split(&v) {
+                    let tail = v[split + 1..].to_string();
+                    v.truncate(split);
+                    tail_args = parse_step_args(&tail);
+                }
+            }
+            // Push main arg first, then any recovered tail args
+            args.push((key.trim().to_string(), v));
+            args.extend(tail_args);
+            continue; // skip the push at end of loop
         } else {
             chars.by_ref().take_while(|&c| c != ' ').collect()
         };
@@ -1345,5 +1390,26 @@ SEC:read_only
         let yaml = block.to_chain_yaml().unwrap();
         assert!(yaml.contains("content: \"hello world\""), "Single-line should be quoted:\n{}", yaml);
         assert!(yaml.contains("path: \"/tmp/test.txt\""), "Path should be quoted:\n{}", yaml);
+    }
+
+    #[test]
+    fn test_backtrack_runaway_quote() {
+        // Simulates LLM writing: code="print('hello')\" input=
+        // The \" before input= should be treated as closing quote via backtracking
+        let args = parse_step_args(r#"code="print('hello')\" input="#);
+        assert_eq!(args.len(), 2, "Should find 2 args, got: {:?}", args);
+        assert_eq!(args[0].0, "code");
+        // Value is truncated at the " that precedes " input="
+        assert_eq!(args[0].1, "print('hello')");
+        assert_eq!(args[1].0, "input");
+    }
+
+    #[test]
+    fn test_backtrack_does_not_trigger_on_normal_quotes() {
+        // Normal case: closing quote found properly
+        let args = parse_step_args(r#"code="hello world" input="test""#);
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0].1, "hello world");
+        assert_eq!(args[1].1, "test");
     }
 }

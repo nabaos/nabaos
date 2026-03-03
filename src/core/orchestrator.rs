@@ -102,8 +102,8 @@ AVAILABLE CHAIN ABILITIES (use in S: lines):
   data.fetch_url — HTTP GET request (args: url)
   data.download — Download a file from URL (args: url, filename)
   notify.user — Send notification
-  files.read — Read a file (args: path)
-  files.list — List files in a directory (args: path)
+  files.read — Read a file (args: path). NOTE: only works with relative paths inside the sandbox. For absolute paths like /tmp/..., use shell.exec cat instead.
+  files.list — List files in a directory (args: path). NOTE: only works with relative paths. For absolute paths, use shell.exec ls instead.
   shell.exec — Run an allowlisted shell command (args: command, args). Allowed: ls, cat, grep, wc, head, tail, sort, uniq, cut, tr, date, echo, pwd, whoami, uname, df, du, file, stat, which, tee, diff, md5sum, sha256sum, jq, hostname, uptime, free, find. NOTE: mv, cp, mkdir, chmod, rm are NOT allowed — use script.run with Python os/shutil instead.
   memory.store — Store a fact for later recall (args: key, value)
   memory.search — Search stored facts (args: query)
@@ -116,7 +116,7 @@ WHEN TO USE CHAINS (MODE 2) — YOU MUST USE A CHAIN FOR:
 - Create/write/save/generate a file → script.run with Python
 - Rename/copy/move a file → script.run with Python os.rename/shutil.copy
 - Create directories → script.run with Python os.makedirs
-- Read a file → files.read
+- Read a file → shell.exec cat (for absolute paths) or files.read (for sandbox-relative paths)
 - List files → shell.exec ls or files.list
 - System info (IP, OS, disk, memory) → shell.exec
 - Math calculations → script.run with Python (print the raw number)
@@ -217,7 +217,7 @@ R:what did I say|recall|what is my favorite
 EXAMPLE — "Read the file /tmp/data.txt":
 <nyaya>
 NEW:read_data
-S:files.read:path=/tmp/data.txt>contents
+S:shell.exec:command=cat args=/tmp/data.txt>contents
 L:file_read
 R:read the file|show me the file|what does the file say
 </nyaya>
