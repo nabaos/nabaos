@@ -688,8 +688,6 @@ fn sanitize_yaml_value(s: &str) -> String {
             '\n' => result.push_str("\\n"),
             '\r' => result.push_str("\\r"),
             '\t' => result.push_str("\\t"),
-            // Strip YAML structural chars that could enable injection
-            '{' | '}' | '`' => {}
             _ => result.push(c),
         }
         i += 1;
@@ -698,27 +696,12 @@ fn sanitize_yaml_value(s: &str) -> String {
 }
 
 /// Sanitize a single line for YAML block scalar (`|`) content.
-/// Same security posture as `sanitize_yaml_value` — preserves `{{}}` template
-/// markers, strips lone `{`, `}`, and backtick.
+/// Block scalars are literal text in YAML — no special character escaping
+/// needed. We only trim trailing whitespace to keep the YAML clean.
+/// `{`, `}`, backtick are preserved because they're essential in code
+/// (Python dicts, f-strings, JSON literals, shell commands).
 fn sanitize_yaml_block_line(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '{' && i + 1 < chars.len() && chars[i + 1] == '{' {
-            result.push_str("{{");
-            i += 2;
-        } else if chars[i] == '}' && i + 1 < chars.len() && chars[i + 1] == '}' {
-            result.push_str("}}");
-            i += 2;
-        } else if matches!(chars[i], '{' | '}' | '`') {
-            i += 1;
-        } else {
-            result.push(chars[i]);
-            i += 1;
-        }
-    }
-    result.trim_end().to_string()
+    s.trim_end().to_string()
 }
 
 /// Convert $variable references to {{variable}} template syntax.
@@ -1361,12 +1344,15 @@ SEC:read_only
     }
 
     #[test]
-    fn test_sanitize_yaml_block_line_preserves_templates() {
+    fn test_sanitize_yaml_block_line_preserves_code() {
         assert_eq!(sanitize_yaml_block_line("hello {{name}} world"), "hello {{name}} world");
-        // Lone braces stripped (trim_end removes trailing whitespace)
-        assert_eq!(sanitize_yaml_block_line("hello { world }"), "hello  world");
-        // Backticks stripped
-        assert_eq!(sanitize_yaml_block_line("run `ls`"), "run ls");
+        // Lone braces preserved (essential for Python dicts, JSON, f-strings)
+        assert_eq!(sanitize_yaml_block_line("data = {\"key\": \"value\"}"), "data = {\"key\": \"value\"}");
+        assert_eq!(sanitize_yaml_block_line("f\"hello {name}\""), "f\"hello {name}\"");
+        // Backticks preserved (shell commands, markdown)
+        assert_eq!(sanitize_yaml_block_line("run `ls`"), "run `ls`");
+        // Trailing whitespace trimmed
+        assert_eq!(sanitize_yaml_block_line("hello   "), "hello");
     }
 
     #[test]

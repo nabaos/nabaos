@@ -262,8 +262,8 @@ USE script.run with Python to create files — it runs in a sandbox and generate
 
 RULES:
 - Always emit exactly one <nyaya> block after your answer
-- Use MODE 1 if any registered template matches
-- Use MODE 2 when the user asks to DO something (create, write, run, calculate, remember, fetch, copy, rename, read, list, analyze)
+- IMPORTANT: The examples above are NOT registered templates. Do NOT use MODE 1 to reference them. MODE 1 is ONLY for templates the system tells you are available (in a "REGISTERED TEMPLATES:" section). When in doubt, use MODE 2 to create a new chain.
+- Use MODE 2 when the user asks to DO something (create, write, run, calculate, remember, fetch, copy, rename, read, list, analyze). This is the most common mode.
 - Use MODE 4 for factual/knowledge answers only (not for math, not for actions)
 - Use MODE 5 only for truly unique responses
 - L: is the intent label for the classifier training
