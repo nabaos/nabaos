@@ -123,6 +123,8 @@ WHEN TO USE CHAINS (MODE 2) — YOU MUST USE A CHAIN FOR:
 - Text processing (extract, count, parse) → script.run with Python
 - Remember/store a fact → memory.store
 - Recall/retrieve a stored fact → memory.search
+- Before storing to memory, check REMEMBERED FACTS and RECENT CONVERSATION — never reuse an existing key
+- Use unique descriptive keys for memory.store (e.g. "server_password" not "grocery_list" for a password)
 - Web content → browser.fetch + llm.summarize
 - Write code to a file → script.run with Python (write the .py/.js file)
 - Run a script and save output → script.run with Python
@@ -211,7 +213,7 @@ EXAMPLE — "What is my favorite color?":
 NEW:recall_color
 S:memory.search:query=favorite color>recalled
 L:memory_recall
-R:what did I say|recall|what is my favorite
+R:what did I say|recall|what is my favorite|do you remember|what did I tell you|what were the items
 </nyaya>
 
 EXAMPLE — "Read the file /tmp/data.txt":
@@ -264,7 +266,8 @@ RULES:
 - Always emit exactly one <nyaya> block after your answer
 - IMPORTANT: The examples above are NOT registered templates. Do NOT use MODE 1 to reference them. MODE 1 is ONLY for templates the system tells you are available (in a "REGISTERED TEMPLATES:" section). When in doubt, use MODE 2 to create a new chain.
 - Use MODE 2 when the user asks to DO something (create, write, run, calculate, remember, fetch, copy, rename, read, list, analyze). This is the most common mode.
-- Use MODE 4 for factual/knowledge answers only (not for math, not for actions)
+- Use MODE 4 for factual/knowledge answers only (not for math, not for actions, not for recall of stored facts)
+- If the user asks about something they previously told you or asked you to remember, answer from REMEMBERED FACTS above — do NOT use MODE 4
 - Use MODE 5 only for truly unique responses
 - L: is the intent label for the classifier training
 - R: are rephrased versions of the query for training data
@@ -1751,7 +1754,7 @@ impl Orchestrator {
         }
 
         let llm = self.build_llm_provider()?;
-        let system_prompt = self.build_system_prompt()?;
+        let system_prompt = self.build_system_prompt(safe_query)?;
 
         tracing::info!(
             query_len = safe_query.len(),
@@ -2568,7 +2571,7 @@ impl Orchestrator {
     }
 
     /// Build the system prompt, injecting persona, function library, and known chain templates.
-    fn build_system_prompt(&self) -> Result<String> {
+    fn build_system_prompt(&self, current_query: &str) -> Result<String> {
         let mut prompt = String::new();
 
         // Inject active agent's persona as a system prompt prefix
@@ -2607,6 +2610,67 @@ impl Orchestrator {
         }
 
         prompt.push_str(SELF_ANNOTATING_PROMPT);
+
+        // Inject stored memories so the LLM knows what facts the user has saved.
+        // This enables recall queries ("What is my favorite color?") to work
+        // even across process restarts, because memory.db persists on disk.
+        if let Ok(conn) = rusqlite::Connection::open(self.config.data_dir.join("memory.db")) {
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT key, value FROM memories ORDER BY updated_at DESC LIMIT 50",
+            ) {
+                let memories: Vec<(String, String)> = stmt
+                    .query_map([], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })
+                    .ok()
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                    .unwrap_or_default();
+                if !memories.is_empty() {
+                    prompt.push_str("\n\nREMEMBERED FACTS (previously stored by the user — use these to answer recall questions):\n");
+                    for (key, value) in &memories {
+                        prompt.push_str(&format!("  - {}: {}\n", key, value));
+                    }
+                    prompt.push_str("IMPORTANT: When the user asks about something listed above, answer directly from these facts. Do NOT say you don't have access to their preferences or stored information.\n");
+                }
+            }
+        }
+
+        // Inject recent conversation context for short-term memory.
+        // Budget: ~2000 tokens to avoid prompt bloat.
+        let recent = self.memory_store.recent_turns("default", 10).unwrap_or_default();
+        if !recent.is_empty() {
+            // Walk backwards to find how many turns fit in token budget
+            let mut budget: i32 = 2000;
+            let mut start_idx = recent.len();
+            for (i, turn) in recent.iter().enumerate().rev() {
+                let cost = (turn.content.len().min(500) as i32) / 4 + 5;
+                if budget - cost < 0 {
+                    break;
+                }
+                budget -= cost;
+                start_idx = i;
+            }
+            let mut has_content = false;
+            let mut section = String::from(
+                "\n\nRECENT CONVERSATION (short-term context from previous exchanges):\n",
+            );
+            for turn in &recent[start_idx..] {
+                // Skip current query (already sent as user message)
+                if turn.role == crate::memory::TurnRole::User && turn.content == current_query {
+                    continue;
+                }
+                let content = if turn.content.len() > 500 {
+                    format!("{}...", &turn.content[..497])
+                } else {
+                    turn.content.clone()
+                };
+                section.push_str(&format!("  {}: {}\n", turn.role, content));
+                has_content = true;
+            }
+            if has_content {
+                prompt.push_str(&section);
+            }
+        }
 
         // Inject available functions from the function library
         let func_text = self.function_registry.to_prompt_text()?;
