@@ -207,7 +207,7 @@ impl ConstitutionEnforcer {
             let matches = intent_matches || keyword_matches;
 
             if matches {
-                let allowed = matches!(rule.enforcement, Enforcement::Allow | Enforcement::Warn);
+                let allowed = matches!(rule.enforcement, Enforcement::Allow | Enforcement::Warn | Enforcement::Confirm);
                 return ConstitutionCheck {
                     allowed,
                     enforcement: rule.enforcement,
@@ -220,7 +220,7 @@ impl ConstitutionEnforcer {
         // No rule matched, use default
         let allowed = matches!(
             self.constitution.default_enforcement,
-            Enforcement::Allow | Enforcement::Warn
+            Enforcement::Allow | Enforcement::Warn | Enforcement::Confirm
         );
         ConstitutionCheck {
             allowed,
@@ -248,7 +248,7 @@ impl ConstitutionEnforcer {
                 .any(|kw| query_lower.contains(&kw.to_lowercase()));
 
             if keyword_matches {
-                let allowed = matches!(rule.enforcement, Enforcement::Allow | Enforcement::Warn);
+                let allowed = matches!(rule.enforcement, Enforcement::Allow | Enforcement::Warn | Enforcement::Confirm);
                 return ConstitutionCheck {
                     allowed,
                     enforcement: rule.enforcement,
@@ -339,7 +339,7 @@ impl ConstitutionEnforcer {
                 });
 
             if action_match && target_match {
-                let allowed = matches!(rule.enforcement, Enforcement::Allow | Enforcement::Warn);
+                let allowed = matches!(rule.enforcement, Enforcement::Allow | Enforcement::Warn | Enforcement::Confirm);
                 return ConstitutionCheck {
                     allowed,
                     enforcement: rule.enforcement,
@@ -352,7 +352,7 @@ impl ConstitutionEnforcer {
         // No rule matched, use default
         let allowed = matches!(
             self.constitution.default_enforcement,
-            Enforcement::Allow | Enforcement::Warn
+            Enforcement::Allow | Enforcement::Warn | Enforcement::Confirm
         );
         ConstitutionCheck {
             allowed,
@@ -1814,7 +1814,8 @@ mod tests {
 
         let intent = make_intent(Action::Send, Target::Email);
         let result = enforcer.check(&intent, Some("send email to bob"));
-        assert!(!result.allowed);
+        // Confirm enforcement is treated as allowed (user confirms in TUI)
+        assert!(result.allowed);
         assert_eq!(result.enforcement, Enforcement::Confirm);
     }
 

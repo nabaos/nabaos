@@ -249,6 +249,12 @@ impl LlmProvider {
                     .collect::<Vec<_>>()
                     .join("");
 
+                if text.is_empty() {
+                    return Err(NyayaError::Config(
+                        "LLM returned empty response (Anthropic: no text content blocks)".into(),
+                    ));
+                }
+
                 let usage = parsed.usage.unwrap_or(Usage {
                     input_tokens: 0,
                     output_tokens: 0,
@@ -302,6 +308,18 @@ impl LlmProvider {
                     .as_str()
                     .unwrap_or("")
                     .to_string();
+
+                if text.is_empty() {
+                    // Surface the API response so failures aren't silent
+                    let error_hint = parsed["error"]["message"]
+                        .as_str()
+                        .or_else(|| parsed["error"].as_str())
+                        .unwrap_or("LLM returned empty response");
+                    return Err(NyayaError::Config(format!(
+                        "LLM returned empty response: {}",
+                        error_hint
+                    )));
+                }
 
                 let input_tokens = parsed["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32;
                 let output_tokens =
