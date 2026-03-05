@@ -194,7 +194,39 @@ impl LlmProvider {
 
     /// Send a message to the LLM and get a response.
     /// This is a blocking call — use from a tokio::spawn context.
+    /// Retries up to 2 times on transient failures (rate limits, empty responses).
     pub fn complete(&self, system_prompt: &str, user_message: &str) -> Result<LlmResponse> {
+        let mut last_err = None;
+        for attempt in 0..3u32 {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_millis(500 * 2u64.pow(attempt - 1));
+                tracing::warn!(attempt, delay_ms = delay.as_millis() as u64, "Retrying LLM request");
+                std::thread::sleep(delay);
+            }
+            match self.complete_once(system_prompt, user_message) {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    let msg = e.to_string();
+                    let retryable = msg.contains("empty response")
+                        || msg.contains("429")
+                        || msg.contains("500")
+                        || msg.contains("502")
+                        || msg.contains("503")
+                        || msg.contains("rate")
+                        || msg.contains("timed out")
+                        || msg.contains("timeout");
+                    if !retryable {
+                        return Err(e);
+                    }
+                    tracing::warn!(attempt, error = %e, "LLM transient failure");
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| NyayaError::Config("LLM request failed after 3 attempts".into())))
+    }
+
+    fn complete_once(&self, system_prompt: &str, user_message: &str) -> Result<LlmResponse> {
         let start = std::time::Instant::now();
 
         let mut builder = reqwest::blocking::Client::builder();
