@@ -8,6 +8,9 @@
 //! - 7 tabs: Chat, Agents, Workflows, Resources, PEA, Settings, History
 //! - Background query processing (non-blocking UI)
 //! - Animated loading spinner with elapsed timer
+//! - Command palette (Ctrl+K) with fuzzy search
+//! - Toast notifications for background events
+//! - Mouse support for tab switching and scrolling
 
 use std::collections::VecDeque;
 use std::io;
@@ -15,11 +18,12 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::ExecutableCommand;
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -73,6 +77,169 @@ enum ContextPanel {
     SettingsDetail(usize),
 }
 
+// ── Command Palette ──────────────────────────────────────────────────────────
+
+/// A single command palette entry.
+#[derive(Clone)]
+struct PaletteCommand {
+    label: String,
+    category: &'static str,
+    action: PaletteAction,
+}
+
+#[derive(Clone)]
+enum PaletteAction {
+    SwitchTab(TabId),
+    ToggleLogs,
+    ToggleHelp,
+    Quit,
+    ReloadSettings,
+    ClearChat,
+}
+
+/// Fuzzy command palette state.
+struct CommandPalette {
+    open: bool,
+    query: String,
+    commands: Vec<PaletteCommand>,
+    filtered: Vec<usize>, // indices into commands
+    selected: usize,
+}
+
+impl CommandPalette {
+    fn new() -> Self {
+        let commands = vec![
+            PaletteCommand { label: "Go to Chat".into(), category: "Navigation", action: PaletteAction::SwitchTab(TabId::Chat) },
+            PaletteCommand { label: "Go to Agents".into(), category: "Navigation", action: PaletteAction::SwitchTab(TabId::Agents) },
+            PaletteCommand { label: "Go to Workflows".into(), category: "Navigation", action: PaletteAction::SwitchTab(TabId::Workflows) },
+            PaletteCommand { label: "Go to Resources".into(), category: "Navigation", action: PaletteAction::SwitchTab(TabId::Resources) },
+            PaletteCommand { label: "Go to PEA".into(), category: "Navigation", action: PaletteAction::SwitchTab(TabId::Pea) },
+            PaletteCommand { label: "Go to Settings".into(), category: "Navigation", action: PaletteAction::SwitchTab(TabId::Settings) },
+            PaletteCommand { label: "Go to History".into(), category: "Navigation", action: PaletteAction::SwitchTab(TabId::History) },
+            PaletteCommand { label: "Toggle Logs Panel".into(), category: "View", action: PaletteAction::ToggleLogs },
+            PaletteCommand { label: "Show Help".into(), category: "View", action: PaletteAction::ToggleHelp },
+            PaletteCommand { label: "Clear Chat".into(), category: "Chat", action: PaletteAction::ClearChat },
+            PaletteCommand { label: "Reload Settings".into(), category: "Settings", action: PaletteAction::ReloadSettings },
+            PaletteCommand { label: "Quit".into(), category: "System", action: PaletteAction::Quit },
+        ];
+        let filtered: Vec<usize> = (0..commands.len()).collect();
+        Self {
+            open: false,
+            query: String::new(),
+            commands,
+            filtered,
+            selected: 0,
+        }
+    }
+
+    fn toggle(&mut self) {
+        self.open = !self.open;
+        if self.open {
+            self.query.clear();
+            self.filtered = (0..self.commands.len()).collect();
+            self.selected = 0;
+        }
+    }
+
+    fn close(&mut self) {
+        self.open = false;
+    }
+
+    fn update_filter(&mut self) {
+        let q = self.query.to_lowercase();
+        if q.is_empty() {
+            self.filtered = (0..self.commands.len()).collect();
+        } else {
+            self.filtered = self
+                .commands
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| {
+                    let label_lower = c.label.to_lowercase();
+                    let cat_lower = c.category.to_lowercase();
+                    // Simple fuzzy: all query chars appear in order
+                    fuzzy_match(&q, &label_lower) || cat_lower.contains(&q)
+                })
+                .map(|(i, _)| i)
+                .collect();
+        }
+        if self.selected >= self.filtered.len() {
+            self.selected = 0;
+        }
+    }
+
+    fn select_next(&mut self) {
+        if !self.filtered.is_empty() {
+            self.selected = (self.selected + 1) % self.filtered.len();
+        }
+    }
+
+    fn select_prev(&mut self) {
+        if !self.filtered.is_empty() {
+            self.selected = (self.selected + self.filtered.len() - 1) % self.filtered.len();
+        }
+    }
+
+    fn selected_action(&self) -> Option<PaletteAction> {
+        self.filtered
+            .get(self.selected)
+            .and_then(|&i| self.commands.get(i))
+            .map(|c| c.action.clone())
+    }
+}
+
+/// Simple subsequence fuzzy match.
+fn fuzzy_match(query: &str, target: &str) -> bool {
+    let mut chars = target.chars();
+    for qc in query.chars() {
+        loop {
+            match chars.next() {
+                Some(tc) if tc == qc => break,
+                Some(_) => continue,
+                None => return false,
+            }
+        }
+    }
+    true
+}
+
+// ── Toast Notifications ──────────────────────────────────────────────────────
+
+struct Toast {
+    message: String,
+    is_error: bool,
+    created: Instant,
+}
+
+impl Toast {
+    fn new(message: String, is_error: bool) -> Self {
+        Self {
+            message,
+            is_error,
+            created: Instant::now(),
+        }
+    }
+
+    fn expired(&self) -> bool {
+        self.created.elapsed() > Duration::from_secs(3)
+    }
+}
+
+// ── Layout geometry for mouse hit testing ────────────────────────────────────
+
+/// Cached layout rectangles for mouse hit-testing.
+struct LayoutGeometry {
+    tab_bar: ratatui::layout::Rect,
+}
+
+impl Default for LayoutGeometry {
+    fn default() -> Self {
+        Self {
+            tab_bar: ratatui::layout::Rect::default(),
+        }
+    }
+}
+
 /// The main TUI application state.
 pub struct App {
     pub active_tab: TabId,
@@ -97,6 +264,9 @@ pub struct App {
     orchestrator: Option<Arc<Mutex<Orchestrator>>>,
     rx: mpsc::Receiver<AppMessage>,
     tx: mpsc::Sender<AppMessage>,
+    palette: CommandPalette,
+    toasts: Vec<Toast>,
+    layout: LayoutGeometry,
 }
 
 impl App {
@@ -138,6 +308,9 @@ impl App {
             orchestrator,
             rx,
             tx,
+            palette: CommandPalette::new(),
+            toasts: Vec::new(),
+            layout: LayoutGeometry::default(),
         };
 
         // Load initial data
@@ -652,8 +825,58 @@ impl App {
                 AppMessage::QueryError(e) => {
                     self.chat
                         .push_agent(format!("Error: {}", e), "error".into());
+                    self.push_toast(format!("Query failed: {}", e), true);
                 }
             }
+        }
+    }
+
+    /// Push a toast notification.
+    fn push_toast(&mut self, message: String, is_error: bool) {
+        self.toasts.push(Toast::new(message, is_error));
+        // Keep at most 5 toasts
+        if self.toasts.len() > 5 {
+            self.toasts.remove(0);
+        }
+    }
+
+    /// Remove expired toasts.
+    fn tick_toasts(&mut self) {
+        self.toasts.retain(|t| !t.expired());
+    }
+
+    /// Execute a command palette action.
+    fn execute_palette_action(&mut self, action: PaletteAction) {
+        match action {
+            PaletteAction::SwitchTab(tab) => {
+                self.active_tab = tab;
+            }
+            PaletteAction::ToggleLogs => {
+                self.show_logs = !self.show_logs;
+            }
+            PaletteAction::ToggleHelp => {
+                self.show_help = !self.show_help;
+            }
+            PaletteAction::Quit => {
+                self.should_quit = true;
+            }
+            PaletteAction::ReloadSettings => {
+                self.pending_settings_reload();
+            }
+            PaletteAction::ClearChat => {
+                self.chat.clear();
+            }
+        }
+    }
+
+    fn pending_settings_reload(&mut self) {
+        use crate::core::config::NyayaConfig;
+        if let Ok(new_config) = NyayaConfig::load() {
+            self.config = new_config;
+            Self::populate_settings(&mut self.settings, &self.config);
+            self.push_toast("Settings reloaded".into(), false);
+        } else {
+            self.push_toast("Failed to reload settings".into(), true);
         }
     }
 
@@ -688,13 +911,15 @@ impl App {
         match AgentStore::open(&store_db, &agents_dir) {
             Ok(store) => match store.install_from_dir(&agent_src) {
                 Ok(_installed) => {
-                    self.agents
-                        .show_status(format!("Installed {}", name), false);
+                    let msg = format!("Installed {}", name);
+                    self.agents.show_status(msg.clone(), false);
+                    self.push_toast(msg, false);
                     self.load_agents();
                 }
                 Err(e) => {
-                    self.agents
-                        .show_status(format!("Install failed: {}", e), true);
+                    let msg = format!("Install failed: {}", e);
+                    self.agents.show_status(msg.clone(), true);
+                    self.push_toast(msg, true);
                 }
             },
             Err(e) => {
@@ -1342,6 +1567,9 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
     io::stdout()
         .execute(EnterAlternateScreen)
         .map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?;
+    io::stdout()
+        .execute(EnableMouseCapture)
+        .map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?;
 
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)
@@ -1355,6 +1583,7 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
     let result = loop {
         // Tick animations
         app.chat.tick();
+        app.tick_toasts();
 
         // Poll background results
         app.poll_messages();
@@ -1377,6 +1606,24 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
         // Update context panel
         app.update_context_panel();
 
+        // Compute layout geometry for mouse hit testing
+        {
+            let term_size = terminal.size()
+                .map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?;
+            let term_rect = ratatui::layout::Rect::new(0, 0, term_size.width, term_size.height);
+            let outer = Block::default().borders(Borders::ALL);
+            let inner = outer.inner(term_rect);
+            let log_height = if app.show_logs { 8u16 } else { 0 };
+            let chunks = Layout::vertical([
+                Constraint::Length(2),
+                Constraint::Min(5),
+                Constraint::Length(log_height),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+            app.layout.tab_bar = chunks[0];
+        }
+
         // Draw
         terminal
             .draw(|frame| draw_ui(frame, &app))
@@ -1386,87 +1633,128 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
         if event::poll(Duration::from_millis(100))
             .map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?
         {
-            if let Event::Key(key) = event::read()
-                .map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?
-            {
-                // Help overlay intercepts all keys
-                if app.show_help {
-                    app.show_help = false;
-                } else {
-                    // Global keys
-                    match key.code {
-                        KeyCode::Char('c')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            app.should_quit = true;
-                        }
-                        KeyCode::Char('q')
-                            if app.active_tab != TabId::Chat
-                                && app.active_tab != TabId::Agents =>
-                        {
-                            app.should_quit = true;
-                        }
-                        KeyCode::Char('?')
-                            if app.active_tab != TabId::Chat
-                                && app.active_tab != TabId::Agents =>
-                        {
-                            app.show_help = !app.show_help;
-                        }
-                        KeyCode::Char('l') | KeyCode::Char('L')
-                            if app.active_tab != TabId::Chat
-                                && app.active_tab != TabId::Agents
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            app.show_logs = !app.show_logs;
-                        }
-                        KeyCode::Tab => {
-                            app.active_tab = app.active_tab.next();
-                        }
-                        KeyCode::BackTab => {
-                            app.active_tab = app.active_tab.prev();
-                        }
-                        KeyCode::Char(n @ '1'..='7')
-                            if key.modifiers.is_empty()
-                                && app.active_tab != TabId::Chat
-                                && app.active_tab != TabId::Agents =>
-                        {
-                            app.active_tab =
-                                TabId::from_index((n as usize) - ('1' as usize));
-                        }
-                        KeyCode::Enter if app.active_tab == TabId::Chat => {
-                            let input = app.chat.take_input();
-                            if !input.is_empty() {
-                                app.submit_query(input);
+            let ev = event::read()
+                .map_err(|e| crate::core::error::NyayaError::Config(e.to_string()))?;
+
+            match ev {
+                Event::Key(key) => {
+                    // Command palette intercepts all keys when open
+                    if app.palette.open {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.palette.close();
                             }
+                            KeyCode::Enter => {
+                                if let Some(action) = app.palette.selected_action() {
+                                    app.palette.close();
+                                    app.execute_palette_action(action);
+                                }
+                            }
+                            KeyCode::Up => {
+                                app.palette.select_prev();
+                            }
+                            KeyCode::Down => {
+                                app.palette.select_next();
+                            }
+                            KeyCode::Backspace => {
+                                app.palette.query.pop();
+                                app.palette.update_filter();
+                            }
+                            KeyCode::Char(c) => {
+                                app.palette.query.push(c);
+                                app.palette.update_filter();
+                            }
+                            _ => {}
                         }
-                        _ => {
-                            // Delegate to active tab
-                            match app.active_tab {
-                                TabId::Chat => {
-                                    app.chat.handle_key(key);
+                    } else if app.show_help {
+                        // Help overlay intercepts all keys
+                        app.show_help = false;
+                    } else {
+                        // Global keys
+                        match key.code {
+                            // Ctrl+K: Command palette
+                            KeyCode::Char('k')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                app.palette.toggle();
+                            }
+                            KeyCode::Char('c')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                app.should_quit = true;
+                            }
+                            KeyCode::Char('q')
+                                if app.active_tab != TabId::Chat
+                                    && app.active_tab != TabId::Agents =>
+                            {
+                                app.should_quit = true;
+                            }
+                            KeyCode::Char('?')
+                                if app.active_tab != TabId::Chat
+                                    && app.active_tab != TabId::Agents =>
+                            {
+                                app.show_help = !app.show_help;
+                            }
+                            KeyCode::Char('l') | KeyCode::Char('L')
+                                if app.active_tab != TabId::Chat
+                                    && app.active_tab != TabId::Agents
+                                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                app.show_logs = !app.show_logs;
+                            }
+                            KeyCode::Tab => {
+                                app.active_tab = app.active_tab.next();
+                            }
+                            KeyCode::BackTab => {
+                                app.active_tab = app.active_tab.prev();
+                            }
+                            KeyCode::Char(n @ '1'..='7')
+                                if key.modifiers.is_empty()
+                                    && app.active_tab != TabId::Chat
+                                    && app.active_tab != TabId::Agents =>
+                            {
+                                app.active_tab =
+                                    TabId::from_index((n as usize) - ('1' as usize));
+                            }
+                            KeyCode::Enter if app.active_tab == TabId::Chat => {
+                                let input = app.chat.take_input();
+                                if !input.is_empty() {
+                                    app.submit_query(input);
                                 }
-                                TabId::Pea => {
-                                    app.tasks.handle_key(key);
-                                }
-                                TabId::Agents => {
-                                    app.agents.handle_key(key);
-                                }
-                                TabId::Settings => {
-                                    app.settings.handle_key(key);
-                                }
-                                TabId::History => {
-                                    app.history.handle_key(key);
-                                }
-                                TabId::Workflows => {
-                                    app.workflows.handle_key(key);
-                                }
-                                TabId::Resources => {
-                                    app.resources.handle_key(key);
+                            }
+                            _ => {
+                                // Delegate to active tab
+                                match app.active_tab {
+                                    TabId::Chat => {
+                                        app.chat.handle_key(key);
+                                    }
+                                    TabId::Pea => {
+                                        app.tasks.handle_key(key);
+                                    }
+                                    TabId::Agents => {
+                                        app.agents.handle_key(key);
+                                    }
+                                    TabId::Settings => {
+                                        app.settings.handle_key(key);
+                                    }
+                                    TabId::History => {
+                                        app.history.handle_key(key);
+                                    }
+                                    TabId::Workflows => {
+                                        app.workflows.handle_key(key);
+                                    }
+                                    TabId::Resources => {
+                                        app.resources.handle_key(key);
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                Event::Mouse(mouse) => {
+                    handle_mouse(&mut app, mouse);
+                }
+                _ => {}
             }
         }
 
@@ -1483,12 +1771,62 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
 
     // Restore terminal
     disable_raw_mode().ok();
+    io::stdout().execute(DisableMouseCapture).ok();
     io::stdout().execute(LeaveAlternateScreen).ok();
 
     result
 }
 
 /// Draw the full TUI layout.
+/// Handle mouse events — tab clicks and scroll wheel.
+fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let tab_bar = app.layout.tab_bar;
+            // Click in tab bar area?
+            if mouse.row >= tab_bar.y && mouse.row < tab_bar.y + tab_bar.height {
+                // Determine which tab was clicked based on x position
+                // Each tab takes roughly equal width
+                let tab_count = TabId::all().len() as u16;
+                let tab_width = tab_bar.width / tab_count;
+                if tab_width > 0 {
+                    let rel_x = mouse.column.saturating_sub(tab_bar.x);
+                    let tab_idx = (rel_x / tab_width) as usize;
+                    if tab_idx < TabId::all().len() {
+                        app.active_tab = TabId::from_index(tab_idx);
+                    }
+                }
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            // Send Up key to active tab
+            let key = crossterm::event::KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
+            match app.active_tab {
+                TabId::Chat => { app.chat.handle_key(key); }
+                TabId::Pea => { app.tasks.handle_key(key); }
+                TabId::Agents => { app.agents.handle_key(key); }
+                TabId::Settings => { app.settings.handle_key(key); }
+                TabId::History => { app.history.handle_key(key); }
+                TabId::Workflows => { app.workflows.handle_key(key); }
+                TabId::Resources => { app.resources.handle_key(key); }
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            let key = crossterm::event::KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+            match app.active_tab {
+                TabId::Chat => { app.chat.handle_key(key); }
+                TabId::Pea => { app.tasks.handle_key(key); }
+                TabId::Agents => { app.agents.handle_key(key); }
+                TabId::Settings => { app.settings.handle_key(key); }
+                TabId::History => { app.history.handle_key(key); }
+                TabId::Workflows => { app.workflows.handle_key(key); }
+                TabId::Resources => { app.resources.handle_key(key); }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
     let size = frame.area();
 
@@ -1606,7 +1944,7 @@ fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
         Span::styled("  ", Style::default().bg(BG)),
         Span::styled("\u{2502} ", Style::default().fg(BORDER).bg(BG)),
         Span::styled(
-            "[?] help  [L] logs  [Ctrl+C] quit ",
+            "[Ctrl+K] palette  [?] help  [L] logs  [Ctrl+C] quit ",
             Style::default().fg(DIM).bg(BG),
         ),
     ]);
@@ -1619,6 +1957,14 @@ fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
     if app.show_help {
         draw_help_overlay(frame, size);
     }
+
+    // Command palette overlay
+    if app.palette.open {
+        draw_command_palette(frame, size, &app.palette);
+    }
+
+    // Toast notifications (bottom-right)
+    draw_toasts(frame, size, &app.toasts);
 }
 
 /// Render the active tab into the given area.
@@ -3007,9 +3353,152 @@ fn draw_tab_bar(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, app: &A
 }
 
 /// Draw the help overlay centered on screen.
+/// Draw the command palette overlay.
+fn draw_command_palette(
+    frame: &mut ratatui::Frame,
+    area: ratatui::layout::Rect,
+    palette: &CommandPalette,
+) {
+    let max_items = 10;
+    let visible = palette.filtered.len().min(max_items);
+    let h = (visible as u16 + 5).min(area.height.saturating_sub(4));
+    let w = 50.min(area.width.saturating_sub(8));
+    let x = (area.width.saturating_sub(w)) / 2 + area.x;
+    let y = area.height / 6 + area.y; // positioned in upper third
+    let palette_area = ratatui::layout::Rect::new(x, y, w, h);
+
+    frame.render_widget(Clear, palette_area);
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(
+                if palette.query.is_empty() {
+                    "Type to search...".to_string()
+                } else {
+                    format!("{}▏", palette.query)
+                },
+                Style::default()
+                    .fg(if palette.query.is_empty() { DIM } else { Color::White })
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+    ];
+
+    for (vi, &cmd_idx) in palette.filtered.iter().enumerate().take(max_items) {
+        if let Some(cmd) = palette.commands.get(cmd_idx) {
+            let is_selected = vi == palette.selected;
+            let prefix = if is_selected { "▸ " } else { "  " };
+            let fg = if is_selected { ACCENT } else { FG };
+            let cat_fg = if is_selected {
+                Color::Rgb(200, 150, 80)
+            } else {
+                DIM
+            };
+            lines.push(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(fg)),
+                Span::styled(
+                    cmd.label.clone(),
+                    Style::default()
+                        .fg(fg)
+                        .add_modifier(if is_selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                ),
+                Span::styled(
+                    format!("  {}", cmd.category),
+                    Style::default().fg(cat_fg),
+                ),
+            ]));
+        }
+    }
+
+    if palette.filtered.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            "  No matches",
+            Style::default().fg(DIM),
+        )]));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT).bg(BG))
+        .style(Style::default().bg(BG))
+        .title(Line::from(vec![Span::styled(
+            " Command Palette ",
+            Style::default()
+                .fg(ACCENT)
+                .bg(BG)
+                .add_modifier(Modifier::BOLD),
+        )]));
+
+    frame.render_widget(
+        Paragraph::new(lines).block(block).style(Style::default().bg(BG)),
+        palette_area,
+    );
+}
+
+/// Draw toast notifications in the bottom-right corner.
+fn draw_toasts(
+    frame: &mut ratatui::Frame,
+    area: ratatui::layout::Rect,
+    toasts: &[Toast],
+) {
+    if toasts.is_empty() {
+        return;
+    }
+
+    let toast_w: u16 = 40.min(area.width.saturating_sub(4));
+    let mut y = area.height.saturating_sub(3);
+
+    for toast in toasts.iter().rev().take(3) {
+        if y < 2 {
+            break;
+        }
+        let toast_area = ratatui::layout::Rect::new(
+            area.width.saturating_sub(toast_w + 2),
+            y,
+            toast_w,
+            2,
+        );
+
+        frame.render_widget(Clear, toast_area);
+
+        let color = if toast.is_error { Color::Red } else { GREEN };
+        let icon = if toast.is_error { "✗" } else { "✓" };
+
+        let line = Line::from(vec![
+            Span::styled(format!(" {} ", icon), Style::default().fg(color)),
+            Span::styled(
+                toast.message.chars().take((toast_w as usize).saturating_sub(6)).collect::<String>(),
+                Style::default().fg(FG),
+            ),
+        ]);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(color))
+            .style(Style::default().bg(Color::Rgb(30, 30, 40)));
+
+        frame.render_widget(
+            Paragraph::new(vec![line])
+                .block(block)
+                .style(Style::default().bg(Color::Rgb(30, 30, 40))),
+            toast_area,
+        );
+
+        y = y.saturating_sub(3);
+    }
+}
+
+/// Draw the help overlay centered on screen.
 fn draw_help_overlay(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
     let w = 55.min(area.width.saturating_sub(4));
-    let h = 21.min(area.height.saturating_sub(4));
+    let h = 24.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(w)) / 2 + area.x;
     let y = (area.height.saturating_sub(h)) / 2 + area.y;
     let help_area = ratatui::layout::Rect::new(x, y, w, h);
@@ -3030,12 +3519,15 @@ fn draw_help_overlay(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
         help_row("↑ ↓ / j k", "Navigate lists"),
         help_row("Enter", "Send query (Chat) / Detail"),
         help_row("PgUp / PgDn", "Scroll messages"),
+        help_row("Ctrl+K", "Command palette"),
         help_row("Ctrl+L", "Clear chat"),
         help_row("Ctrl+A / Ctrl+E", "Cursor start/end"),
         help_row("L", "Toggle logs"),
         help_row("q", "Quit"),
         help_row("Ctrl+C", "Force quit"),
         help_row("?", "Toggle this help"),
+        help_row("Mouse click", "Switch tabs"),
+        help_row("Scroll wheel", "Navigate lists"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "  Press any key to close",
