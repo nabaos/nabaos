@@ -33,7 +33,7 @@ use super::tabs::agents::{AgentAction, AgentEntry, AgentsTab, DisplayState};
 use super::tabs::chat::ChatTab;
 use super::tabs::history::{HistoryEntry, HistoryTab};
 use super::tabs::resources::{ResourceAction, ResourcesTab};
-use super::tabs::settings::{ConfigEntry, SettingsTab};
+use super::tabs::settings::{ConfigEntry, SettingsAction, SettingsTab};
 use super::tabs::tasks::{ObjectiveSummary, PeaAction, TasksTab};
 use super::tabs::workflows::{WorkflowAction, WorkflowsTab};
 use super::tabs::{Tab, TabId};
@@ -70,6 +70,7 @@ enum ContextPanel {
     WorkflowDetail(usize),
     ResourceDetail(usize),
     HistoryDetail(usize),
+    SettingsDetail(usize),
 }
 
 /// The main TUI application state.
@@ -103,41 +104,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
 
         let mut settings = SettingsTab::new();
-
-        // Populate settings from config
-        let mut entries = vec![
-            ConfigEntry {
-                key: "LLM Provider".into(),
-                value: config
-                    .llm_provider
-                    .as_deref()
-                    .unwrap_or("not set")
-                    .to_string(),
-            },
-            ConfigEntry {
-                key: "LLM Model".into(),
-                value: config
-                    .llm_model
-                    .as_deref()
-                    .unwrap_or("default")
-                    .to_string(),
-            },
-            ConfigEntry {
-                key: "Data directory".into(),
-                value: config.data_dir.display().to_string(),
-            },
-        ];
-        if let Some(ref path) = config.constitution_path {
-            entries.push(ConfigEntry {
-                key: "Constitution".into(),
-                value: path.display().to_string(),
-            });
-        }
-        entries.push(ConfigEntry {
-            key: "Version".into(),
-            value: env!("CARGO_PKG_VERSION").to_string(),
-        });
-        settings.set_entries(entries);
+        Self::populate_settings(&mut settings, &config);
 
         // Create persistent orchestrator
         let orchestrator = match Orchestrator::new(config.clone()) {
@@ -261,6 +228,156 @@ impl App {
     }
 
     /// Load objectives from PEA engine.
+    fn populate_settings(settings: &mut SettingsTab, config: &NyayaConfig) {
+        let mut entries = Vec::new();
+
+        // Provider section
+        entries.push(ConfigEntry {
+            key: "LLM Provider".into(),
+            value: config.llm_provider.as_deref().unwrap_or("not set").to_string(),
+            section: "Provider".into(),
+            editable: true,
+            is_secret: false,
+            env_key: Some("NABA_LLM_PROVIDER".into()),
+        });
+        entries.push(ConfigEntry {
+            key: "LLM Model".into(),
+            value: config.llm_model.as_deref().unwrap_or("default").to_string(),
+            section: "Provider".into(),
+            editable: true,
+            is_secret: false,
+            env_key: Some("NABA_LLM_MODEL".into()),
+        });
+        entries.push(ConfigEntry {
+            key: "API Key".into(),
+            value: config.llm_api_key.as_deref().unwrap_or("").to_string(),
+            section: "Provider".into(),
+            editable: true,
+            is_secret: true,
+            env_key: Some("NABA_LLM_API_KEY".into()),
+        });
+        if let Some(ref url) = config.llm_base_url {
+            entries.push(ConfigEntry {
+                key: "Base URL".into(),
+                value: url.clone(),
+                section: "Provider".into(),
+                editable: true,
+                is_secret: false,
+                env_key: Some("NABA_LLM_BASE_URL".into()),
+            });
+        }
+
+        // Constitution section
+        entries.push(ConfigEntry {
+            key: "Template".into(),
+            value: config
+                .constitution_template
+                .as_deref()
+                .unwrap_or("default")
+                .to_string(),
+            section: "Constitution".into(),
+            editable: true,
+            is_secret: false,
+            env_key: Some("NABA_CONSTITUTION".into()),
+        });
+        if let Some(ref path) = config.constitution_path {
+            entries.push(ConfigEntry {
+                key: "Path".into(),
+                value: path.display().to_string(),
+                section: "Constitution".into(),
+                editable: false,
+                is_secret: false,
+                env_key: None,
+            });
+        }
+
+        // Budget section
+        entries.push(ConfigEntry {
+            key: "Daily Budget".into(),
+            value: config
+                .daily_budget_usd
+                .map(|b| format!("${:.2}", b))
+                .unwrap_or_else(|| "unlimited".to_string()),
+            section: "Budget".into(),
+            editable: true,
+            is_secret: false,
+            env_key: Some("NABA_DAILY_BUDGET_USD".into()),
+        });
+        entries.push(ConfigEntry {
+            key: "Per-Task Budget".into(),
+            value: config
+                .per_task_budget_usd
+                .map(|b| format!("${:.2}", b))
+                .unwrap_or_else(|| "unlimited".to_string()),
+            section: "Budget".into(),
+            editable: true,
+            is_secret: false,
+            env_key: Some("NABA_PER_TASK_BUDGET_USD".into()),
+        });
+
+        // Channels section
+        let web_enabled = std::env::var("NABA_WEB_ENABLED")
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        entries.push(ConfigEntry {
+            key: "Web Dashboard".into(),
+            value: if web_enabled { "enabled" } else { "disabled" }.to_string(),
+            section: "Channels".into(),
+            editable: true,
+            is_secret: false,
+            env_key: Some("NABA_WEB_ENABLED".into()),
+        });
+        let telegram_enabled = std::env::var("NABA_TELEGRAM_ENABLED")
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        entries.push(ConfigEntry {
+            key: "Telegram".into(),
+            value: if telegram_enabled { "enabled" } else { "disabled" }.to_string(),
+            section: "Channels".into(),
+            editable: true,
+            is_secret: false,
+            env_key: Some("NABA_TELEGRAM_ENABLED".into()),
+        });
+        if let Ok(bind) = std::env::var("NABA_WEB_BIND") {
+            entries.push(ConfigEntry {
+                key: "Web Bind".into(),
+                value: bind,
+                section: "Channels".into(),
+                editable: true,
+                is_secret: false,
+                env_key: Some("NABA_WEB_BIND".into()),
+            });
+        }
+
+        // System section
+        entries.push(ConfigEntry {
+            key: "Data Directory".into(),
+            value: config.data_dir.display().to_string(),
+            section: "System".into(),
+            editable: false,
+            is_secret: false,
+            env_key: None,
+        });
+        entries.push(ConfigEntry {
+            key: "Plugin Dir".into(),
+            value: config.plugin_dir.display().to_string(),
+            section: "System".into(),
+            editable: false,
+            is_secret: false,
+            env_key: None,
+        });
+        entries.push(ConfigEntry {
+            key: "Version".into(),
+            value: env!("CARGO_PKG_VERSION").to_string(),
+            section: "System".into(),
+            editable: false,
+            is_secret: false,
+            env_key: None,
+        });
+
+        settings.set_entries(entries);
+    }
+
     fn load_objectives(&mut self) {
         use crate::pea::engine::PeaEngine;
 
@@ -1091,6 +1208,64 @@ impl App {
         }
     }
 
+    /// Process pending settings actions.
+    fn process_settings_actions(&mut self) {
+        if let Some(action) = self.settings.take_action() {
+            match action {
+                SettingsAction::Save { env_key, value } => {
+                    self.do_settings_save(&env_key, &value);
+                }
+                SettingsAction::Reload => {
+                    Self::populate_settings(&mut self.settings, &self.config);
+                    self.settings
+                        .show_status("Settings reloaded".to_string(), false);
+                }
+            }
+        }
+    }
+
+    fn do_settings_save(&mut self, env_key: &str, value: &str) {
+        let env_path = self.config.data_dir.join(".env");
+
+        // Read existing .env, update or append the key
+        let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+        let mut found = false;
+        let mut lines: Vec<String> = existing
+            .lines()
+            .map(|line| {
+                if line.starts_with(env_key) && line.contains('=') {
+                    let prefix = format!("{}=", env_key);
+                    if line.starts_with(&prefix) {
+                        found = true;
+                        return format!("{}={}", env_key, value);
+                    }
+                }
+                line.to_string()
+            })
+            .collect();
+
+        if !found {
+            lines.push(format!("{}={}", env_key, value));
+        }
+
+        match std::fs::write(&env_path, lines.join("\n")) {
+            Ok(()) => {
+                // Also set in current process env
+                // Reload config from .env file
+                if let Ok(new_config) = NyayaConfig::load() {
+                    self.config = new_config;
+                }
+                Self::populate_settings(&mut self.settings, &self.config);
+                self.settings
+                    .show_status(format!("Saved {}", env_key), false);
+            }
+            Err(e) => {
+                self.settings
+                    .show_status(format!("Save failed: {}", e), true);
+            }
+        }
+    }
+
     /// Update context panel based on active tab and selection.
     fn update_context_panel(&mut self) {
         self.context_panel = match self.active_tab {
@@ -1125,6 +1300,13 @@ impl App {
             TabId::History => {
                 if let Some(i) = self.history.state.selected() {
                     ContextPanel::HistoryDetail(i)
+                } else {
+                    ContextPanel::Welcome
+                }
+            }
+            TabId::Settings => {
+                if let Some(i) = self.settings.state.selected() {
+                    ContextPanel::SettingsDetail(i)
                 } else {
                     ContextPanel::Welcome
                 }
@@ -1188,6 +1370,9 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
 
         // Process PEA actions
         app.process_pea_actions();
+
+        // Process settings actions
+        app.process_settings_actions();
 
         // Update context panel
         app.update_context_panel();
@@ -1458,6 +1643,7 @@ fn draw_context_panel(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, a
         ContextPanel::WorkflowDetail(i) => draw_context_workflow(frame, area, app, *i),
         ContextPanel::ResourceDetail(i) => draw_context_resource(frame, area, app, *i),
         ContextPanel::HistoryDetail(i) => draw_context_history(frame, area, app, *i),
+        ContextPanel::SettingsDetail(i) => draw_context_settings(frame, area, app, *i),
     }
 }
 
@@ -2633,6 +2819,141 @@ fn draw_context_history(
                 Line::from(""),
                 Line::from(vec![Span::styled(
                     "  No entry selected",
+                    Style::default().fg(DIM),
+                )]),
+            ])
+            .block(block)
+            .style(Style::default().bg(BG)),
+            area,
+        );
+    }
+}
+
+fn draw_context_settings(
+    frame: &mut ratatui::Frame,
+    area: ratatui::layout::Rect,
+    app: &App,
+    idx: usize,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![Span::styled(
+            " Setting Detail ",
+            Style::default().fg(HEADING).bg(BG),
+        )]));
+
+    if let Some(entry) = app.settings.entries.get(idx) {
+        let display_val = if entry.is_secret && !entry.value.is_empty() {
+            let len = entry.value.len();
+            if len > 4 {
+                format!(
+                    "{}...{}",
+                    "*".repeat((len - 4).min(12)),
+                    &entry.value[len - 4..]
+                )
+            } else {
+                "*".repeat(len)
+            }
+        } else if entry.value.is_empty() {
+            "(not set)".to_string()
+        } else {
+            entry.value.clone()
+        };
+
+        let section_color = match entry.section.as_str() {
+            "Provider" => Color::Cyan,
+            "Constitution" => Color::Magenta,
+            "Budget" => Color::Yellow,
+            "Channels" => Color::Green,
+            "System" => Color::Rgb(100, 100, 120),
+            _ => Color::DarkGray,
+        };
+
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Section     ", Style::default().fg(DIM)),
+                Span::styled(
+                    entry.section.clone(),
+                    Style::default()
+                        .fg(section_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Key         ", Style::default().fg(DIM)),
+                Span::styled(
+                    entry.key.clone(),
+                    Style::default().fg(FG).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "  Value",
+                Style::default()
+                    .fg(ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    display_val,
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(""),
+        ];
+
+        if let Some(ref ek) = entry.env_key {
+            lines.push(Line::from(vec![
+                Span::styled("  Env var     ", Style::default().fg(DIM)),
+                Span::styled(ek.clone(), Style::default().fg(Color::Rgb(150, 150, 170))),
+            ]));
+        }
+
+        lines.push(Line::from(vec![
+            Span::styled("  Editable    ", Style::default().fg(DIM)),
+            if entry.editable {
+                Span::styled("Yes", Style::default().fg(GREEN))
+            } else {
+                Span::styled("No", Style::default().fg(Color::DarkGray))
+            },
+        ]));
+
+        if entry.is_secret {
+            lines.push(Line::from(vec![
+                Span::styled("  Secret      ", Style::default().fg(DIM)),
+                Span::styled("Yes (masked)", Style::default().fg(Color::Yellow)),
+            ]));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(""));
+
+        if entry.editable {
+            lines.push(Line::from(vec![
+                Span::styled("  [Enter] ", Style::default().fg(GREEN).add_modifier(Modifier::BOLD)),
+                Span::styled("Edit value", Style::default().fg(FG)),
+            ]));
+        }
+        lines.push(Line::from(vec![
+            Span::styled("  [r] ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled("Reload config", Style::default().fg(FG)),
+        ]));
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(block)
+                .style(Style::default().bg(BG)),
+            area,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "  No setting selected",
                     Style::default().fg(DIM),
                 )]),
             ])
