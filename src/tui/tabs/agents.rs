@@ -40,7 +40,7 @@ impl AgentsTab {
         }
     }
 
-    fn filtered(&self) -> Vec<&AgentEntry> {
+    pub fn filtered(&self) -> Vec<&AgentEntry> {
         if self.search.is_empty() {
             self.agents.iter().collect()
         } else {

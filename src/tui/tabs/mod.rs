@@ -8,8 +8,10 @@ use ratatui::Frame;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabId {
     Chat,
-    Tasks,
     Agents,
+    Workflows,
+    Resources,
+    Pea,
     Settings,
     History,
 }
@@ -18,8 +20,10 @@ impl TabId {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Chat => "Chat",
-            Self::Tasks => "Tasks",
             Self::Agents => "Agents",
+            Self::Workflows => "Workflows",
+            Self::Resources => "Resources",
+            Self::Pea => "PEA",
             Self::Settings => "Settings",
             Self::History => "History",
         }
@@ -28,8 +32,10 @@ impl TabId {
     pub fn all() -> &'static [TabId] {
         &[
             TabId::Chat,
-            TabId::Tasks,
             TabId::Agents,
+            TabId::Workflows,
+            TabId::Resources,
+            TabId::Pea,
             TabId::Settings,
             TabId::History,
         ]
@@ -38,20 +44,24 @@ impl TabId {
     pub fn index(&self) -> usize {
         match self {
             Self::Chat => 0,
-            Self::Tasks => 1,
-            Self::Agents => 2,
-            Self::Settings => 3,
-            Self::History => 4,
+            Self::Agents => 1,
+            Self::Workflows => 2,
+            Self::Resources => 3,
+            Self::Pea => 4,
+            Self::Settings => 5,
+            Self::History => 6,
         }
     }
 
     pub fn from_index(i: usize) -> Self {
         match i {
             0 => Self::Chat,
-            1 => Self::Tasks,
-            2 => Self::Agents,
-            3 => Self::Settings,
-            4 => Self::History,
+            1 => Self::Agents,
+            2 => Self::Workflows,
+            3 => Self::Resources,
+            4 => Self::Pea,
+            5 => Self::Settings,
+            6 => Self::History,
             _ => Self::Chat,
         }
     }
@@ -64,6 +74,19 @@ impl TabId {
         let len = Self::all().len();
         Self::from_index((self.index() + len - 1) % len)
     }
+
+    /// Status-bar hints for each tab.
+    pub fn hints(&self) -> &'static str {
+        match self {
+            Self::Chat => "[Enter] send  [PgUp/Dn] scroll  [Ctrl+L] clear",
+            Self::Agents => "[Enter] detail  [i] install  [s] start/stop  [/] search",
+            Self::Workflows => "[Enter] detail  [n] new  [c] cancel",
+            Self::Resources => "[Enter] detail  [r] register  [d] delete",
+            Self::Pea => "[Enter] detail  [n] new objective  [p] pause  [x] cancel",
+            Self::Settings => "[Enter] edit  [r] reload",
+            Self::History => "[Enter] detail  [/] search",
+        }
+    }
 }
 
 /// Shared trait for all tabs.
@@ -75,5 +98,7 @@ pub trait Tab {
 pub mod agents;
 pub mod chat;
 pub mod history;
+pub mod resources;
 pub mod settings;
 pub mod tasks;
+pub mod workflows;
