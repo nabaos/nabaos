@@ -35,7 +35,7 @@ use super::tabs::history::{HistoryEntry, HistoryTab};
 use super::tabs::resources::ResourcesTab;
 use super::tabs::settings::{ConfigEntry, SettingsTab};
 use super::tabs::tasks::{ObjectiveSummary, TasksTab};
-use super::tabs::workflows::WorkflowsTab;
+use super::tabs::workflows::{WorkflowAction, WorkflowsTab};
 use super::tabs::{Tab, TabId};
 
 // ── Wizard-matching color palette ───────────────────────────────────────────
@@ -291,16 +291,41 @@ impl App {
                 let summaries: Vec<_> = defs
                     .into_iter()
                     .map(|(id, name)| {
-                        let instance_count = store.count_active_instances(&id).unwrap_or(0);
+                        let active_count = store.count_active_instances(&id).unwrap_or(0);
+                        let instances = store.list_instances_for_workflow(&id).unwrap_or_default();
+                        let instance_count = instances.len();
+                        let last_status = instances
+                            .last()
+                            .map(|i| format!("{:?}", i.status))
+                            .unwrap_or_else(|| {
+                                if active_count > 0 { "running".to_string() } else { "idle".to_string() }
+                            });
+
+                        // Load full def for node/param info
+                        let (description, node_count, param_names, max_instances, global_timeout_secs) =
+                            if let Ok(Some(def)) = store.get_def(&id) {
+                                (
+                                    def.description.clone(),
+                                    def.nodes.len(),
+                                    def.params.iter().map(|p| p.name.clone()).collect(),
+                                    def.max_instances,
+                                    def.global_timeout_secs,
+                                )
+                            } else {
+                                (String::new(), 0, Vec::new(), 0, 0)
+                            };
+
                         super::tabs::workflows::WorkflowSummary {
                             id,
                             name,
+                            description,
+                            node_count,
+                            param_names,
                             instance_count,
-                            last_status: if instance_count > 0 {
-                                "running".to_string()
-                            } else {
-                                "idle".to_string()
-                            },
+                            active_count,
+                            last_status,
+                            max_instances,
+                            global_timeout_secs,
                         }
                     })
                     .collect();
@@ -593,6 +618,155 @@ impl App {
         }
     }
 
+    /// Process pending workflow actions from the workflows tab.
+    fn process_workflow_actions(&mut self) {
+        if let Some(action) = self.workflows.take_action() {
+            match action {
+                WorkflowAction::Start { workflow_id, params } => {
+                    self.do_workflow_start(&workflow_id, params);
+                }
+                WorkflowAction::Cancel { instance_id } => {
+                    self.do_workflow_cancel(&instance_id);
+                }
+                WorkflowAction::LoadInstances { workflow_id } => {
+                    self.do_load_instances(&workflow_id);
+                }
+            }
+        }
+    }
+
+    fn do_workflow_start(&mut self, workflow_id: &str, params: Vec<(String, String)>) {
+        use crate::chain::workflow_engine::WorkflowEngine;
+        use crate::chain::workflow_store::WorkflowStore;
+        use std::collections::HashMap;
+
+        let db_path = self.config.data_dir.join("chains.db");
+        match WorkflowStore::open(&db_path) {
+            Ok(store) => {
+                let engine = WorkflowEngine::new(store);
+                let param_map: HashMap<String, String> = params.into_iter().collect();
+                match engine.start(workflow_id, param_map) {
+                    Ok(instance_id) => {
+                        let short_id = if instance_id.len() > 12 {
+                            format!("{}…", &instance_id[..12])
+                        } else {
+                            instance_id.clone()
+                        };
+                        self.workflows
+                            .show_status(format!("Started instance {}", short_id), false);
+                        self.load_workflows();
+                        // Reload instances if viewing this workflow
+                        if let super::tabs::workflows::WorkflowView::Instances(ref wf_id) =
+                            self.workflows.view
+                        {
+                            if wf_id == workflow_id {
+                                self.do_load_instances(workflow_id);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.workflows
+                            .show_status(format!("Start failed: {}", e), true);
+                    }
+                }
+            }
+            Err(e) => {
+                self.workflows
+                    .show_status(format!("Store error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_workflow_cancel(&mut self, instance_id: &str) {
+        use crate::chain::workflow_engine::WorkflowEngine;
+        use crate::chain::workflow_store::WorkflowStore;
+
+        let db_path = self.config.data_dir.join("chains.db");
+        match WorkflowStore::open(&db_path) {
+            Ok(store) => {
+                let engine = WorkflowEngine::new(store);
+                match engine.cancel(instance_id) {
+                    Ok(()) => {
+                        let short_id = if instance_id.len() > 12 {
+                            format!("{}…", &instance_id[..12])
+                        } else {
+                            instance_id.to_string()
+                        };
+                        self.workflows
+                            .show_status(format!("Cancelled {}", short_id), false);
+                        self.load_workflows();
+                        // Reload instances for current view
+                        if let super::tabs::workflows::WorkflowView::Instances(ref wf_id) =
+                            self.workflows.view
+                        {
+                            let wf_id = wf_id.clone();
+                            self.do_load_instances(&wf_id);
+                        }
+                    }
+                    Err(e) => {
+                        self.workflows
+                            .show_status(format!("Cancel failed: {}", e), true);
+                    }
+                }
+            }
+            Err(e) => {
+                self.workflows
+                    .show_status(format!("Store error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_load_instances(&mut self, workflow_id: &str) {
+        use crate::chain::workflow_store::WorkflowStore;
+
+        let db_path = self.config.data_dir.join("chains.db");
+        if let Ok(store) = WorkflowStore::open(&db_path) {
+            // Get the def for node info
+            let node_info: Vec<(String, String)> =
+                if let Ok(Some(def)) = store.get_def(workflow_id) {
+                    def.nodes
+                        .iter()
+                        .map(|n| {
+                            let id = n.id().to_string();
+                            let ntype = match n {
+                                crate::chain::workflow::WorkflowNode::Action(_) => "action",
+                                crate::chain::workflow::WorkflowNode::WaitEvent(_) => "wait",
+                                crate::chain::workflow::WorkflowNode::Delay(_) => "delay",
+                                crate::chain::workflow::WorkflowNode::WaitPoll(_) => "poll",
+                                crate::chain::workflow::WorkflowNode::Parallel(_) => "parallel",
+                                crate::chain::workflow::WorkflowNode::Branch(_) => "branch",
+                                crate::chain::workflow::WorkflowNode::Compensate(_) => "compensate",
+                            };
+                            (id, ntype.to_string())
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
+            let node_count = node_info.len();
+
+            if let Ok(instances) = store.list_instances_for_workflow(workflow_id) {
+                let summaries: Vec<_> = instances
+                    .into_iter()
+                    .map(|inst| super::tabs::workflows::InstanceSummary {
+                        instance_id: inst.instance_id,
+                        workflow_id: inst.workflow_id,
+                        status: format!("{:?}", inst.status),
+                        cursor_node: inst.cursor.node_index,
+                        node_count,
+                        error: inst.error,
+                        created_at: inst.created_at,
+                        updated_at: inst.updated_at,
+                        execution_ms: inst.execution_ms,
+                        node_names: node_info.clone(),
+                    })
+                    .collect();
+                self.workflows.set_instances(summaries);
+            }
+        }
+    }
+
     /// Update context panel based on active tab and selection.
     fn update_context_panel(&mut self) {
         self.context_panel = match self.active_tab {
@@ -681,6 +855,9 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
 
         // Process agent actions
         app.process_agent_actions();
+
+        // Process workflow actions
+        app.process_workflow_actions();
 
         // Update context panel
         app.update_context_panel();
@@ -1252,8 +1429,27 @@ fn draw_context_objective(
     }
 }
 
-/// Workflow detail context panel.
+/// Workflow detail context panel — shows either definition or instance detail.
 fn draw_context_workflow(
+    frame: &mut ratatui::Frame,
+    area: ratatui::layout::Rect,
+    app: &App,
+    idx: usize,
+) {
+    use super::tabs::workflows::WorkflowView;
+
+    match &app.workflows.view {
+        WorkflowView::Instances(_) => {
+            draw_context_workflow_instance(frame, area, app);
+        }
+        WorkflowView::Definitions => {
+            draw_context_workflow_def(frame, area, app, idx);
+        }
+    }
+}
+
+/// Context panel for a workflow definition.
+fn draw_context_workflow_def(
     frame: &mut ratatui::Frame,
     area: ratatui::layout::Rect,
     app: &App,
@@ -1268,15 +1464,9 @@ fn draw_context_workflow(
         )]));
 
     if let Some(wf) = app.workflows.workflows.get(idx) {
-        let status_color = match wf.last_status.as_str() {
-            "running" => Color::Cyan,
-            "completed" => Color::Green,
-            "failed" => Color::Red,
-            "cancelled" => Color::Yellow,
-            _ => Color::DarkGray,
-        };
+        let status_color = workflow_status_color(&wf.last_status);
 
-        let lines = vec![
+        let mut lines = vec![
             Line::from(""),
             Line::from(vec![Span::styled(
                 format!("  {}", wf.name),
@@ -1284,14 +1474,60 @@ fn draw_context_workflow(
                     .fg(ACCENT)
                     .add_modifier(Modifier::BOLD),
             )]),
-            Line::from(""),
-            context_row("ID", &wf.id),
-            Line::from(vec![
-                Span::styled("  Status      ", Style::default().fg(DIM)),
-                Span::styled(&wf.last_status, Style::default().fg(status_color)),
-            ]),
-            context_row("Instances", &format!("{}", wf.instance_count)),
         ];
+
+        if !wf.description.is_empty() {
+            lines.push(Line::from(vec![Span::styled(
+                format!("  {}", wf.description),
+                Style::default().fg(DIM),
+            )]));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(context_row("ID", &wf.id));
+        lines.push(Line::from(vec![
+            Span::styled("  Status      ", Style::default().fg(DIM)),
+            Span::styled(wf.last_status.to_string(), Style::default().fg(status_color)),
+        ]));
+        lines.push(context_row("Nodes", &format!("{}", wf.node_count)));
+        lines.push(context_row(
+            "Instances",
+            &format!("{} total, {} active", wf.instance_count, wf.active_count),
+        ));
+
+        if wf.max_instances > 0 {
+            lines.push(context_row("Max parallel", &format!("{}", wf.max_instances)));
+        }
+        if wf.global_timeout_secs > 0 {
+            lines.push(context_row(
+                "Timeout",
+                &format_timeout_secs(wf.global_timeout_secs),
+            ));
+        }
+
+        // Parameters
+        if !wf.param_names.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                "  Parameters:",
+                Style::default().fg(FG),
+            )]));
+            for p in &wf.param_names {
+                lines.push(Line::from(vec![
+                    Span::styled("    ◦ ", Style::default().fg(ACCENT)),
+                    Span::styled(p.to_string(), Style::default().fg(FG)),
+                ]));
+            }
+        }
+
+        // Action hints
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  [n] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("new instance  ", Style::default().fg(DIM)),
+            Span::styled("[Enter] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("view instances", Style::default().fg(DIM)),
+        ]));
 
         frame.render_widget(
             Paragraph::new(lines)
@@ -1312,6 +1548,184 @@ fn draw_context_workflow(
             .style(Style::default().bg(BG)),
             area,
         );
+    }
+}
+
+/// Context panel for a selected workflow instance — shows DAG + status.
+fn draw_context_workflow_instance(
+    frame: &mut ratatui::Frame,
+    area: ratatui::layout::Rect,
+    app: &App,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![Span::styled(
+            " Instance Detail ",
+            Style::default().fg(HEADING).bg(BG),
+        )]));
+
+    if let Some(inst) = app.workflows.selected_instance() {
+        let sc = workflow_status_color(&inst.status);
+
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                format!("  {}", inst.instance_id),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Status      ", Style::default().fg(DIM)),
+                Span::styled(inst.status.to_string(), Style::default().fg(sc)),
+            ]),
+        ];
+
+        if inst.node_count > 0 {
+            // Progress bar
+            let progress = inst.cursor_node.min(inst.node_count) as f64 / inst.node_count as f64;
+            let bar_w = (area.width.saturating_sub(20)) as usize;
+            let filled = (progress * bar_w as f64) as usize;
+            let empty = bar_w.saturating_sub(filled);
+            lines.push(Line::from(vec![
+                Span::styled("  Progress    ", Style::default().fg(DIM)),
+                Span::styled(
+                    "█".repeat(filled),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(
+                    "░".repeat(empty),
+                    Style::default().fg(Color::Rgb(60, 60, 80)),
+                ),
+            ]));
+            lines.push(context_row(
+                "Position",
+                &format!("{}/{} nodes", inst.cursor_node.min(inst.node_count), inst.node_count),
+            ));
+        }
+
+        let elapsed = if inst.execution_ms < 1000 {
+            format!("{}ms", inst.execution_ms)
+        } else if inst.execution_ms < 60_000 {
+            format!("{:.1}s", inst.execution_ms as f64 / 1000.0)
+        } else {
+            format!("{:.1}m", inst.execution_ms as f64 / 60_000.0)
+        };
+        lines.push(context_row("Elapsed", &elapsed));
+
+        // DAG node list
+        if !inst.node_names.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                "  Nodes:",
+                Style::default().fg(FG),
+            )]));
+            for (i, (node_id, node_type)) in inst.node_names.iter().enumerate() {
+                let (sym, color) = if i < inst.cursor_node {
+                    ("✓", Color::Green) // completed
+                } else if i == inst.cursor_node && !super::tabs::workflows::is_terminal_status(&inst.status) {
+                    ("▸", Color::Cyan) // current
+                } else {
+                    ("○", Color::Rgb(60, 60, 80)) // pending
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {} ", sym), Style::default().fg(color)),
+                    Span::styled(
+                        node_id.to_string(),
+                        Style::default().fg(if i == inst.cursor_node {
+                            Color::White
+                        } else {
+                            DIM
+                        }),
+                    ),
+                    Span::styled(
+                        format!("  ({})", node_type),
+                        Style::default().fg(Color::Rgb(60, 60, 80)),
+                    ),
+                ]));
+                // Draw connector line between nodes
+                if i < inst.node_names.len() - 1 {
+                    let connector_color = if i < inst.cursor_node {
+                        Color::Green
+                    } else {
+                        Color::Rgb(60, 60, 80)
+                    };
+                    lines.push(Line::from(vec![Span::styled(
+                        "  │",
+                        Style::default().fg(connector_color),
+                    )]));
+                }
+            }
+        }
+
+        // Error detail
+        if let Some(ref err) = inst.error {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("  Error: ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled(err.to_string(), Style::default().fg(Color::Red)),
+            ]));
+        }
+
+        // Action hints
+        lines.push(Line::from(""));
+        if !super::tabs::workflows::is_terminal_status(&inst.status) {
+            lines.push(Line::from(vec![
+                Span::styled("  [c] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("cancel  ", Style::default().fg(DIM)),
+                Span::styled("[Esc] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled("back", Style::default().fg(DIM)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled("  [Esc] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled("back to definitions", Style::default().fg(DIM)),
+            ]));
+        }
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(block)
+                .style(Style::default().bg(BG)),
+            area,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "  No instance selected",
+                    Style::default().fg(DIM),
+                )]),
+            ])
+            .block(block)
+            .style(Style::default().bg(BG)),
+            area,
+        );
+    }
+}
+
+fn workflow_status_color(status: &str) -> Color {
+    match status.to_lowercase().as_str() {
+        "completed" => Color::Green,
+        "running" => Color::Cyan,
+        "waiting" => Color::Yellow,
+        "created" => Color::Blue,
+        "failed" => Color::Red,
+        "cancelled" => Color::Yellow,
+        "timed_out" | "timedout" => Color::Red,
+        "compensated" => Color::Magenta,
+        _ => Color::DarkGray,
+    }
+}
+
+fn format_timeout_secs(secs: u64) -> String {
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}h", secs / 3600)
     }
 }
 
