@@ -29,7 +29,7 @@ use ratatui::Terminal;
 use crate::core::config::NyayaConfig;
 use crate::core::error::Result;
 use crate::core::orchestrator::Orchestrator;
-use super::tabs::agents::AgentsTab;
+use super::tabs::agents::{AgentAction, AgentEntry, AgentsTab, DisplayState};
 use super::tabs::chat::ChatTab;
 use super::tabs::history::{HistoryEntry, HistoryTab};
 use super::tabs::resources::ResourcesTab;
@@ -210,21 +210,50 @@ impl App {
         }
     }
 
-    /// Load agents from the catalog directory.
+    /// Load agents from catalog, merging installed state from AgentStore.
     fn load_agents(&mut self) {
         use crate::agent_os::catalog::AgentCatalog;
+        use crate::agent_os::store::AgentStore;
 
         let catalog_dir = self.config.data_dir.join("catalog");
         let catalog = AgentCatalog::new(&catalog_dir);
 
+        // Load installed agents from store
+        let store_db = self.config.data_dir.join("agents.db");
+        let agents_dir = self.config.data_dir.join("agents");
+        let installed = AgentStore::open(&store_db, &agents_dir)
+            .and_then(|s| s.list())
+            .unwrap_or_default();
+
         if let Ok(entries) = catalog.list() {
             let agents: Vec<_> = entries
                 .into_iter()
-                .map(|e| super::tabs::agents::AgentEntry {
-                    name: e.name,
-                    category: e.category,
-                    description: e.description,
-                    installed: false,
+                .map(|e| {
+                    // Check if this agent is installed
+                    let inst = installed.iter().find(|i| i.id == e.name);
+                    let (state, is_installed) = match inst {
+                        Some(i) => {
+                            let ds = match i.state {
+                                crate::agent_os::types::AgentState::Running => DisplayState::Running,
+                                crate::agent_os::types::AgentState::Paused => DisplayState::Paused,
+                                crate::agent_os::types::AgentState::Stopped => DisplayState::Stopped,
+                                crate::agent_os::types::AgentState::Disabled => DisplayState::Disabled,
+                            };
+                            (ds, true)
+                        }
+                        None => (DisplayState::NotInstalled, false),
+                    };
+
+                    AgentEntry {
+                        name: e.name,
+                        version: e.version,
+                        category: e.category,
+                        description: e.description,
+                        author: e.author,
+                        permissions: e.permissions,
+                        state,
+                        installed: is_installed,
+                    }
                 })
                 .collect();
             self.agents.set_agents(agents);
@@ -440,6 +469,130 @@ impl App {
         }
     }
 
+    /// Process pending agent actions from the agents tab.
+    fn process_agent_actions(&mut self) {
+        if let Some(action) = self.agents.take_action() {
+            match action {
+                AgentAction::Install(name) => {
+                    self.do_agent_install(&name);
+                }
+                AgentAction::Uninstall(name) => {
+                    self.do_agent_uninstall(&name);
+                }
+                AgentAction::Start(name) => {
+                    self.do_agent_start(&name);
+                }
+                AgentAction::Stop(name) => {
+                    self.do_agent_stop(&name);
+                }
+            }
+        }
+    }
+
+    fn do_agent_install(&mut self, name: &str) {
+        use crate::agent_os::store::AgentStore;
+
+        let store_db = self.config.data_dir.join("agents.db");
+        let agents_dir = self.config.data_dir.join("agents");
+        let catalog_dir = self.config.data_dir.join("catalog");
+        let agent_src = catalog_dir.join(name);
+
+        match AgentStore::open(&store_db, &agents_dir) {
+            Ok(store) => match store.install_from_dir(&agent_src) {
+                Ok(_installed) => {
+                    self.agents
+                        .show_status(format!("Installed {}", name), false);
+                    self.load_agents();
+                }
+                Err(e) => {
+                    self.agents
+                        .show_status(format!("Install failed: {}", e), true);
+                }
+            },
+            Err(e) => {
+                self.agents
+                    .show_status(format!("Store error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_agent_uninstall(&mut self, name: &str) {
+        use crate::agent_os::store::AgentStore;
+
+        let store_db = self.config.data_dir.join("agents.db");
+        let agents_dir = self.config.data_dir.join("agents");
+
+        match AgentStore::open(&store_db, &agents_dir) {
+            Ok(store) => match store.uninstall(name) {
+                Ok(()) => {
+                    self.agents
+                        .show_status(format!("Uninstalled {}", name), false);
+                    self.load_agents();
+                }
+                Err(e) => {
+                    self.agents
+                        .show_status(format!("Uninstall failed: {}", e), true);
+                }
+            },
+            Err(e) => {
+                self.agents
+                    .show_status(format!("Store error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_agent_start(&mut self, name: &str) {
+        use crate::agent_os::store::AgentStore;
+        use crate::agent_os::types::AgentState;
+
+        let store_db = self.config.data_dir.join("agents.db");
+        let agents_dir = self.config.data_dir.join("agents");
+
+        match AgentStore::open(&store_db, &agents_dir) {
+            Ok(store) => match store.set_state(name, AgentState::Running) {
+                Ok(()) => {
+                    self.agents
+                        .show_status(format!("Started {}", name), false);
+                    self.load_agents();
+                }
+                Err(e) => {
+                    self.agents
+                        .show_status(format!("Start failed: {}", e), true);
+                }
+            },
+            Err(e) => {
+                self.agents
+                    .show_status(format!("Store error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_agent_stop(&mut self, name: &str) {
+        use crate::agent_os::store::AgentStore;
+        use crate::agent_os::types::AgentState;
+
+        let store_db = self.config.data_dir.join("agents.db");
+        let agents_dir = self.config.data_dir.join("agents");
+
+        match AgentStore::open(&store_db, &agents_dir) {
+            Ok(store) => match store.set_state(name, AgentState::Stopped) {
+                Ok(()) => {
+                    self.agents
+                        .show_status(format!("Stopped {}", name), false);
+                    self.load_agents();
+                }
+                Err(e) => {
+                    self.agents
+                        .show_status(format!("Stop failed: {}", e), true);
+                }
+            },
+            Err(e) => {
+                self.agents
+                    .show_status(format!("Store error: {}", e), true);
+            }
+        }
+    }
+
     /// Update context panel based on active tab and selection.
     fn update_context_panel(&mut self) {
         self.context_panel = match self.active_tab {
@@ -525,6 +678,9 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
 
         // Poll background results
         app.poll_messages();
+
+        // Process agent actions
+        app.process_agent_actions();
 
         // Update context panel
         app.update_context_panel();
@@ -876,7 +1032,7 @@ fn draw_context_welcome(frame: &mut ratatui::Frame, area: ratatui::layout::Rect,
     );
 }
 
-/// Agent detail context panel.
+/// Agent detail context panel — full lifecycle info.
 fn draw_context_agent(
     frame: &mut ratatui::Frame,
     area: ratatui::layout::Rect,
@@ -893,9 +1049,7 @@ fn draw_context_agent(
 
     let filtered = app.agents.filtered();
     if let Some(agent) = filtered.get(idx) {
-        let status_text = if agent.installed { "Installed" } else { "Not installed" };
-        let status_color = if agent.installed { GREEN } else { DIM };
-        let lines = vec![
+        let mut lines = vec![
             Line::from(""),
             Line::from(vec![Span::styled(
                 format!("  {}", agent.name),
@@ -904,30 +1058,81 @@ fn draw_context_agent(
                     .add_modifier(Modifier::BOLD),
             )]),
             Line::from(""),
+            context_row("Version", &agent.version),
+            context_row("Author", &agent.author),
             context_row("Category", &agent.category),
             Line::from(vec![
-                Span::styled("  Status      ", Style::default().fg(DIM)),
-                Span::styled(status_text, Style::default().fg(status_color)),
+                Span::styled("  Status        ", Style::default().fg(DIM)),
+                Span::styled(
+                    format!("{} {}", agent.state.symbol(), agent.state.label()),
+                    Style::default().fg(agent.state.color()),
+                ),
             ]),
-            Line::from(""),
-            Line::from(vec![Span::styled(
-                "  Description",
-                Style::default().fg(DIM),
-            )]),
-            Line::from(""),
         ];
 
-        let mut all_lines = lines;
-        // Wrap description
-        for line in super::tabs::chat::wrap_text(&agent.description, area.width.saturating_sub(6) as usize) {
-            all_lines.push(Line::from(vec![
+        // Permissions section
+        if !agent.permissions.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                "  Permissions",
+                Style::default()
+                    .fg(ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+            lines.push(Line::from(""));
+            for perm in &agent.permissions {
+                let (icon, color) = if agent.installed {
+                    ("✓", GREEN)
+                } else {
+                    ("◦", DIM)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("   {} ", icon), Style::default().fg(color)),
+                    Span::styled(perm.to_string(), Style::default().fg(FG)),
+                ]));
+            }
+        }
+
+        // Description
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![Span::styled(
+            "  Description",
+            Style::default()
+                .fg(ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )]));
+        lines.push(Line::from(""));
+        for line in super::tabs::chat::wrap_text(
+            &agent.description,
+            area.width.saturating_sub(6) as usize,
+        ) {
+            lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(line, Style::default().fg(FG)),
             ]));
         }
 
+        // Action hints
+        lines.push(Line::from(""));
+        if !agent.installed {
+            lines.push(Line::from(vec![Span::styled(
+                "  [i] Install",
+                Style::default().fg(DIM),
+            )]));
+        } else {
+            let action_hint = match agent.state {
+                DisplayState::Running => "[s] Stop  [u] Uninstall",
+                DisplayState::Stopped | DisplayState::Paused => "[s] Start  [u] Uninstall",
+                _ => "[u] Uninstall",
+            };
+            lines.push(Line::from(vec![Span::styled(
+                format!("  {}", action_hint),
+                Style::default().fg(DIM),
+            )]));
+        }
+
         frame.render_widget(
-            Paragraph::new(all_lines)
+            Paragraph::new(lines)
                 .block(block)
                 .style(Style::default().bg(BG)),
             area,
