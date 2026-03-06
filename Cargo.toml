@@ -1,13 +1,13 @@
 [package]
 name = "nabaos"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 description = "Autonomous agent runtime with 130+ agents, intent caching, constitutional safety, and multi-provider LLM orchestration"
 license = "MIT"
 rust-version = "1.85"
 
 [features]
-default = ["bert", "tui"]
+default = ["bert", "tui", "watcher"]
 bert = ["dep:ort", "dep:tokenizers"]
 tui = ["dep:ratatui", "dep:crossterm"]
 watcher = []

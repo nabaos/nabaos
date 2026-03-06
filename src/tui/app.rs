@@ -313,6 +313,10 @@ impl App {
             layout: LayoutGeometry::default(),
         };
 
+        // Seed catalog + workflows if empty (first run)
+        app.seed_agent_catalog();
+        app.seed_demo_workflows();
+
         // Load initial data
         app.load_conversation_history();
         app.load_agents();
@@ -347,6 +351,73 @@ impl App {
                     }
                 }
             }
+        }
+    }
+
+    /// Seed agent catalog with bundled agents if catalog is empty.
+    fn seed_agent_catalog(&self) {
+        let catalog_dir = self.config.data_dir.join("catalog");
+        std::fs::create_dir_all(&catalog_dir).ok();
+
+        // Check if catalog already has entries
+        if let Ok(entries) = std::fs::read_dir(&catalog_dir) {
+            if entries
+                .filter_map(|e| e.ok())
+                .any(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            {
+                return; // Already seeded
+            }
+        }
+
+        // Bundled agents — same set as the setup wizard fallback
+        let agents = [
+            ("code-reviewer", "Developer", "Automated code review with security and style checks", "NabaOS Core", "1.2.0", &["llm.chat", "files.read", "git.read"][..]),
+            ("morning-briefing", "Productivity", "Calendar, weather, news summary delivered daily", "NabaOS Core", "1.0.0", &["calendar.read", "weather.read", "news.read"]),
+            ("email-assistant", "Communication", "Smart email triage and drafting", "NabaOS Core", "1.1.0", &["email.read", "email.write", "contacts.read"]),
+            ("research-digest", "Research", "Summarize academic papers and articles", "NabaOS Core", "1.0.0", &["web.read", "pdf.read", "filesystem.write"]),
+            ("budget-tracker", "Finance", "Track expenses, alert on budget overruns", "NabaOS Core", "1.0.0", &["finance.read", "spreadsheet.write"]),
+            ("social-scheduler", "Creative", "Schedule and manage social media posts", "NabaOS Core", "1.0.0", &["social.write", "schedule.write"]),
+            ("security-scanner", "Security", "Scan repos for leaked secrets and vulnerabilities", "NabaOS Core", "1.3.0", &["git.read", "files.read", "shell.exec"]),
+            ("devops-monitor", "Developer", "Monitor CI/CD pipelines and deployment status", "NabaOS Core", "1.1.0", &["ci.read", "github.read", "shell.exec"]),
+            ("data-analyst", "Research", "Run SQL queries and generate charts from datasets", "NabaOS Core", "1.0.0", &["database.read", "filesystem.write", "llm.chat"]),
+            ("meeting-notes", "Productivity", "Transcribe and summarize meeting recordings", "NabaOS Core", "1.0.0", &["voice.transcribe", "llm.chat", "filesystem.write"]),
+            ("api-tester", "Developer", "Automated API endpoint testing and reporting", "NabaOS Core", "1.0.0", &["web.read", "web.write", "filesystem.write"]),
+            ("doc-generator", "Developer", "Generate documentation from codebases", "NabaOS Core", "1.0.0", &["files.read", "llm.chat", "filesystem.write"]),
+        ];
+
+        for (name, category, description, author, version, permissions) in &agents {
+            let agent_dir = catalog_dir.join(name);
+            if std::fs::create_dir_all(&agent_dir).is_ok() {
+                let perms_yaml: Vec<String> = permissions.iter().map(|p| format!("  - {}", p)).collect();
+                let manifest = format!(
+                    "name: {}\nversion: \"{}\"\ndescription: \"{}\"\ncategory: {}\nauthor: {}\npermissions:\n{}\n",
+                    name, version, description, category, author, perms_yaml.join("\n")
+                );
+                std::fs::write(agent_dir.join("manifest.yaml"), manifest).ok();
+            }
+        }
+        tracing::info!("Seeded agent catalog with {} agents", agents.len());
+    }
+
+    /// Seed demo workflows into chains.db if empty.
+    fn seed_demo_workflows(&self) {
+        use crate::chain::demo_workflows::all_demo_workflows;
+        use crate::chain::workflow_store::WorkflowStore;
+
+        let db_path = self.config.data_dir.join("chains.db");
+        if let Ok(store) = WorkflowStore::open(&db_path) {
+            // Only seed if no definitions exist
+            if let Ok(defs) = store.list_defs() {
+                if !defs.is_empty() {
+                    return;
+                }
+            }
+            for def in all_demo_workflows() {
+                if let Err(e) = store.store_def(&def) {
+                    tracing::warn!("Failed to seed workflow {}: {}", def.name, e);
+                }
+            }
+            tracing::info!("Seeded {} demo workflows", all_demo_workflows().len());
         }
     }
 
@@ -2061,6 +2132,45 @@ fn draw_context_welcome(frame: &mut ratatui::Frame, area: ratatui::layout::Rect,
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| "custom".to_string()),
         ));
+    }
+
+    // Watcher alerts section
+    #[cfg(feature = "watcher")]
+    {
+        use crate::watcher::alerts::AlertStore;
+        let watcher_db = app.config.data_dir.join("watcher.db");
+        if let Ok(store) = AlertStore::open(&watcher_db) {
+            if let Ok(alerts) = store.list_recent(3600) {
+                let active = alerts.iter().filter(|a| a.resolved_at.is_none()).count();
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![Span::styled(
+                    "  Watcher",
+                    Style::default()
+                        .fg(ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                )]));
+                lines.push(Line::from(""));
+                let alert_color = if active > 0 { Color::Red } else { GREEN };
+                lines.push(Line::from(vec![
+                    Span::styled("  Alerts (1h)  ", Style::default().fg(DIM)),
+                    Span::styled(
+                        format!("{} active, {} total", active, alerts.len()),
+                        Style::default().fg(alert_color),
+                    ),
+                ]));
+                for alert in alerts.iter().take(3) {
+                    let icon = if alert.resolved_at.is_some() { "✓" } else { "!" };
+                    let color = if alert.resolved_at.is_some() { DIM } else { Color::Yellow };
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {} ", icon), Style::default().fg(color)),
+                        Span::styled(
+                            alert.event_summary.chars().take(30).collect::<String>(),
+                            Style::default().fg(color),
+                        ),
+                    ]));
+                }
+            }
+        }
     }
 
     frame.render_widget(
