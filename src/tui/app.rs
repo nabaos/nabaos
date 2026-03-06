@@ -34,7 +34,7 @@ use super::tabs::chat::ChatTab;
 use super::tabs::history::{HistoryEntry, HistoryTab};
 use super::tabs::resources::{ResourceAction, ResourcesTab};
 use super::tabs::settings::{ConfigEntry, SettingsTab};
-use super::tabs::tasks::{ObjectiveSummary, TasksTab};
+use super::tabs::tasks::{ObjectiveSummary, PeaAction, TasksTab};
 use super::tabs::workflows::{WorkflowAction, WorkflowsTab};
 use super::tabs::{Tab, TabId};
 
@@ -268,12 +268,45 @@ impl App {
             if let Ok(objectives) = engine.list_objectives() {
                 let summaries: Vec<_> = objectives
                     .into_iter()
-                    .map(|obj| ObjectiveSummary {
-                        id: obj.id,
-                        description: obj.description,
-                        status: format!("{}", obj.status),
-                        spent: obj.spent_usd,
-                        budget: obj.budget_usd,
+                    .map(|obj| {
+                        let tasks = engine.get_tasks(&obj.id).unwrap_or_default();
+                        let task_count = tasks.len();
+                        let completed_tasks = tasks
+                            .iter()
+                            .filter(|t| {
+                                matches!(
+                                    t.status,
+                                    crate::pea::objective::TaskStatus::Completed
+                                )
+                            })
+                            .count();
+                        let milestones_achieved = obj
+                            .milestones
+                            .iter()
+                            .filter(|m| m.achieved)
+                            .count();
+                        let beliefs: Vec<(String, f64)> = obj
+                            .beliefs
+                            .confidence
+                            .iter()
+                            .map(|(k, &v)| (k.clone(), v))
+                            .collect();
+
+                        ObjectiveSummary {
+                            id: obj.id,
+                            description: obj.description,
+                            status: format!("{}", obj.status),
+                            spent: obj.spent_usd,
+                            budget: obj.budget_usd,
+                            progress_score: obj.progress_score,
+                            task_count,
+                            completed_tasks,
+                            milestone_count: obj.milestones.len(),
+                            milestones_achieved,
+                            budget_strategy: format!("{:?}", obj.budget_strategy),
+                            beliefs,
+                            created_at: obj.created_at,
+                        }
                     })
                     .collect();
                 self.tasks.set_objectives(summaries);
@@ -887,6 +920,177 @@ impl App {
         }
     }
 
+    /// Process pending PEA actions from the tasks tab.
+    fn process_pea_actions(&mut self) {
+        if let Some(action) = self.tasks.take_action() {
+            match action {
+                PeaAction::Create {
+                    description,
+                    budget_usd,
+                } => {
+                    self.do_pea_create(&description, budget_usd);
+                }
+                PeaAction::Pause { objective_id } => {
+                    self.do_pea_pause(&objective_id);
+                }
+                PeaAction::Resume { objective_id } => {
+                    self.do_pea_resume(&objective_id);
+                }
+                PeaAction::Cancel { objective_id } => {
+                    self.do_pea_cancel(&objective_id);
+                }
+                PeaAction::LoadTasks { objective_id } => {
+                    self.do_load_tasks(&objective_id);
+                }
+            }
+        }
+    }
+
+    fn do_pea_create(&mut self, description: &str, budget_usd: f64) {
+        use crate::pea::engine::PeaEngine;
+
+        match PeaEngine::open(&self.config.data_dir) {
+            Ok(engine) => {
+                // Create with a single desire matching the description
+                let desires = vec![(
+                    description.to_string(),
+                    "objective completed".to_string(),
+                    0,
+                )];
+                match engine.create_objective(description, budget_usd, desires) {
+                    Ok(obj_id) => {
+                        let short_id = if obj_id.len() > 8 {
+                            &obj_id[..8]
+                        } else {
+                            &obj_id
+                        };
+                        self.tasks
+                            .show_status(format!("Created objective {}", short_id), false);
+                        self.load_objectives();
+                    }
+                    Err(e) => {
+                        self.tasks
+                            .show_status(format!("Create failed: {}", e), true);
+                    }
+                }
+            }
+            Err(e) => {
+                self.tasks
+                    .show_status(format!("PEA error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_pea_pause(&mut self, objective_id: &str) {
+        use crate::pea::engine::PeaEngine;
+
+        match PeaEngine::open(&self.config.data_dir) {
+            Ok(engine) => match engine.pause(objective_id) {
+                Ok(()) => {
+                    self.tasks
+                        .show_status("Objective paused".to_string(), false);
+                    self.load_objectives();
+                }
+                Err(e) => {
+                    self.tasks
+                        .show_status(format!("Pause failed: {}", e), true);
+                }
+            },
+            Err(e) => {
+                self.tasks
+                    .show_status(format!("PEA error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_pea_resume(&mut self, objective_id: &str) {
+        use crate::pea::engine::PeaEngine;
+
+        match PeaEngine::open(&self.config.data_dir) {
+            Ok(engine) => match engine.resume(objective_id) {
+                Ok(()) => {
+                    self.tasks
+                        .show_status("Objective resumed".to_string(), false);
+                    self.load_objectives();
+                }
+                Err(e) => {
+                    self.tasks
+                        .show_status(format!("Resume failed: {}", e), true);
+                }
+            },
+            Err(e) => {
+                self.tasks
+                    .show_status(format!("PEA error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_pea_cancel(&mut self, objective_id: &str) {
+        use crate::pea::engine::PeaEngine;
+
+        match PeaEngine::open(&self.config.data_dir) {
+            Ok(engine) => match engine.cancel(objective_id) {
+                Ok(()) => {
+                    self.tasks
+                        .show_status("Objective cancelled".to_string(), false);
+                    self.load_objectives();
+                }
+                Err(e) => {
+                    self.tasks
+                        .show_status(format!("Cancel failed: {}", e), true);
+                }
+            },
+            Err(e) => {
+                self.tasks
+                    .show_status(format!("PEA error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_load_tasks(&mut self, objective_id: &str) {
+        use crate::pea::engine::PeaEngine;
+
+        if let Ok(engine) = PeaEngine::open(&self.config.data_dir) {
+            if let Ok(tasks) = engine.get_tasks(objective_id) {
+                // Build depth map from parent_task_id hierarchy
+                let id_to_parent: std::collections::HashMap<String, Option<String>> = tasks
+                    .iter()
+                    .map(|t| (t.id.clone(), t.parent_task_id.clone()))
+                    .collect();
+
+                fn calc_depth(
+                    id: &str,
+                    map: &std::collections::HashMap<String, Option<String>>,
+                ) -> usize {
+                    match map.get(id) {
+                        Some(Some(parent)) => 1 + calc_depth(parent, map),
+                        _ => 0,
+                    }
+                }
+
+                let summaries: Vec<_> = tasks
+                    .into_iter()
+                    .map(|t| {
+                        let depth = calc_depth(&t.id, &id_to_parent);
+                        super::tabs::tasks::TaskSummary {
+                            id: t.id,
+                            description: t.description,
+                            status: format!("{:?}", t.status),
+                            task_type: format!("{:?}", t.task_type),
+                            depends_on: t.depends_on,
+                            parent_task_id: t.parent_task_id,
+                            depth,
+                            capability: t.capability_required,
+                            retry_count: t.retry_count,
+                            max_retries: t.max_retries,
+                        }
+                    })
+                    .collect();
+                self.tasks.set_tasks(summaries);
+            }
+        }
+    }
+
     /// Update context panel based on active tab and selection.
     fn update_context_panel(&mut self) {
         self.context_panel = match self.active_tab {
@@ -981,6 +1185,9 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
 
         // Process resource actions
         app.process_resource_actions();
+
+        // Process PEA actions
+        app.process_pea_actions();
 
         // Update context panel
         app.update_context_panel();
@@ -1460,6 +1667,25 @@ fn draw_context_objective(
     app: &App,
     idx: usize,
 ) {
+    use super::tabs::tasks::PeaView;
+
+    match &app.tasks.view {
+        PeaView::Tasks(_) => {
+            draw_context_task_detail(frame, area, app);
+        }
+        PeaView::Objectives => {
+            draw_context_objective_detail(frame, area, app, idx);
+        }
+    }
+}
+
+/// Context panel for an objective — budget, milestones, beliefs.
+fn draw_context_objective_detail(
+    frame: &mut ratatui::Frame,
+    area: ratatui::layout::Rect,
+    app: &App,
+    idx: usize,
+) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(BORDER))
@@ -1482,12 +1708,11 @@ fn draw_context_objective(
         } else {
             0.0
         };
-        let bar_w: usize = 15;
+        let bar_w = (area.width.saturating_sub(20)) as usize;
         let filled = (frac * bar_w as f64).round() as usize;
         let empty = bar_w.saturating_sub(filled);
-        let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
 
-        let lines = vec![
+        let mut lines = vec![
             Line::from(""),
             Line::from(vec![Span::styled(
                 format!("  {}", &obj.id[..8.min(obj.id.len())]),
@@ -1500,38 +1725,141 @@ fn draw_context_objective(
                 Span::styled("  Status      ", Style::default().fg(DIM)),
                 Span::styled(status_symbol, Style::default().fg(status_color)),
             ]),
+            context_row("Strategy", &obj.budget_strategy),
             Line::from(""),
             context_row("Budget", &format!("${:.2}", obj.budget)),
-            context_row("Spent", &format!("${:.2}", obj.spent)),
+            context_row("Spent", &format!("${:.2} ({:.0}%)", obj.spent, frac * 100.0)),
             Line::from(vec![
-                Span::styled("  Progress    ", Style::default().fg(DIM)),
+                Span::styled("  ", Style::default()),
                 Span::styled(
-                    bar,
+                    "█".repeat(filled),
                     Style::default().fg(if frac > 0.8 { Color::Yellow } else { GREEN }),
                 ),
                 Span::styled(
-                    format!(" {:.0}%", frac * 100.0),
-                    Style::default().fg(DIM),
+                    "░".repeat(empty),
+                    Style::default().fg(Color::Rgb(60, 60, 80)),
                 ),
             ]),
-            Line::from(""),
-            Line::from(vec![Span::styled(
-                "  Description",
-                Style::default().fg(DIM),
-            )]),
-            Line::from(""),
         ];
 
-        let mut all_lines = lines;
+        // Tasks progress
+        if obj.task_count > 0 {
+            lines.push(Line::from(""));
+            lines.push(context_row(
+                "Tasks",
+                &format!("{}/{} completed", obj.completed_tasks, obj.task_count),
+            ));
+        }
+
+        // Milestones
+        if obj.milestone_count > 0 {
+            lines.push(context_row(
+                "Milestones",
+                &format!("{}/{}", obj.milestones_achieved, obj.milestone_count),
+            ));
+        }
+
+        // Progress score
+        if obj.progress_score > 0.0 {
+            lines.push(context_row(
+                "Progress",
+                &format!("{:.0}%", obj.progress_score * 100.0),
+            ));
+        }
+
+        // Beliefs
+        if !obj.beliefs.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                "  Beliefs:",
+                Style::default().fg(FG),
+            )]));
+            for (key, confidence) in obj.beliefs.iter().take(6) {
+                let conf_bar_w: usize = 8;
+                let conf_filled = (confidence * conf_bar_w as f64).round() as usize;
+                let conf_empty = conf_bar_w.saturating_sub(conf_filled);
+                let conf_color = if *confidence >= 0.8 {
+                    Color::Green
+                } else if *confidence >= 0.5 {
+                    Color::Yellow
+                } else {
+                    Color::Red
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("    {:<12} ", truncate_str(key, 12)),
+                        Style::default().fg(DIM),
+                    ),
+                    Span::styled(
+                        "█".repeat(conf_filled),
+                        Style::default().fg(conf_color),
+                    ),
+                    Span::styled(
+                        "░".repeat(conf_empty),
+                        Style::default().fg(Color::Rgb(60, 60, 80)),
+                    ),
+                    Span::styled(
+                        format!(" {:.0}%", confidence * 100.0),
+                        Style::default().fg(DIM),
+                    ),
+                ]));
+            }
+        }
+
+        // Description
+        lines.push(Line::from(""));
         for line in super::tabs::chat::wrap_text(&obj.description, area.width.saturating_sub(6) as usize) {
-            all_lines.push(Line::from(vec![
+            lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled(line, Style::default().fg(FG)),
+                Span::styled(line, Style::default().fg(DIM)),
             ]));
         }
 
+        // Action hints
+        lines.push(Line::from(""));
+        let mut hints = vec![
+            Span::styled(
+                "  [Enter] ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("tasks  ", Style::default().fg(DIM)),
+            Span::styled(
+                "[n] ",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("new  ", Style::default().fg(DIM)),
+        ];
+        if obj.status == "active" || obj.status == "paused" {
+            hints.push(Span::styled(
+                "[p] ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            hints.push(Span::styled(
+                if obj.status == "active" {
+                    "pause  "
+                } else {
+                    "resume  "
+                },
+                Style::default().fg(DIM),
+            ));
+            hints.push(Span::styled(
+                "[x] ",
+                Style::default()
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            hints.push(Span::styled("cancel", Style::default().fg(DIM)));
+        }
+        lines.push(Line::from(hints));
+
         frame.render_widget(
-            Paragraph::new(all_lines)
+            Paragraph::new(lines)
                 .block(block)
                 .style(Style::default().bg(BG)),
             area,
@@ -1549,6 +1877,128 @@ fn draw_context_objective(
             .style(Style::default().bg(BG)),
             area,
         );
+    }
+}
+
+/// Context panel for a selected task — dependencies, capabilities, retries.
+fn draw_context_task_detail(
+    frame: &mut ratatui::Frame,
+    area: ratatui::layout::Rect,
+    app: &App,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![Span::styled(
+            " Task Detail ",
+            Style::default().fg(HEADING).bg(BG),
+        )]));
+
+    if let Some(task) = app.tasks.selected_task() {
+        let (sym, sc) = super::tabs::tasks::task_status_icon(&task.status);
+
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                format!("  {}", task.id),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Status      ", Style::default().fg(DIM)),
+                Span::styled(format!("{} {}", sym, task.status), Style::default().fg(sc)),
+            ]),
+            context_row("Type", &task.task_type),
+        ];
+
+        if let Some(ref cap) = task.capability {
+            lines.push(context_row("Capability", cap));
+        }
+
+        if task.max_retries > 0 {
+            lines.push(context_row(
+                "Retries",
+                &format!("{}/{}", task.retry_count, task.max_retries),
+            ));
+        }
+
+        // Dependencies
+        if !task.depends_on.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                "  Dependencies:",
+                Style::default().fg(FG),
+            )]));
+            for dep in &task.depends_on {
+                let dep_short = truncate_str(dep, 20);
+                // Find dep task to show its status
+                let dep_status = app
+                    .tasks
+                    .tasks
+                    .iter()
+                    .find(|t| t.id == *dep)
+                    .map(|t| &t.status);
+                let (dep_sym, dep_color) = dep_status
+                    .map(|s| super::tabs::tasks::task_status_icon(s))
+                    .unwrap_or(("?", Color::DarkGray));
+                lines.push(Line::from(vec![
+                    Span::styled(format!("    {} ", dep_sym), Style::default().fg(dep_color)),
+                    Span::styled(dep_short.to_string(), Style::default().fg(DIM)),
+                ]));
+            }
+        }
+
+        // Description
+        lines.push(Line::from(""));
+        for line in super::tabs::chat::wrap_text(
+            &task.description,
+            area.width.saturating_sub(6) as usize,
+        ) {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(line, Style::default().fg(FG)),
+            ]));
+        }
+
+        // Action hints
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "  [Esc] ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("back to objectives", Style::default().fg(DIM)),
+        ]));
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(block)
+                .style(Style::default().bg(BG)),
+            area,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "  No task selected",
+                    Style::default().fg(DIM),
+                )]),
+            ])
+            .block(block)
+            .style(Style::default().bg(BG)),
+            area,
+        );
+    }
+}
+
+fn truncate_str(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        s
+    } else {
+        &s[..max]
     }
 }
 
