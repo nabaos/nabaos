@@ -32,7 +32,7 @@ use crate::core::orchestrator::Orchestrator;
 use super::tabs::agents::{AgentAction, AgentEntry, AgentsTab, DisplayState};
 use super::tabs::chat::ChatTab;
 use super::tabs::history::{HistoryEntry, HistoryTab};
-use super::tabs::resources::ResourcesTab;
+use super::tabs::resources::{ResourceAction, ResourcesTab};
 use super::tabs::settings::{ConfigEntry, SettingsTab};
 use super::tabs::tasks::{ObjectiveSummary, TasksTab};
 use super::tabs::workflows::{WorkflowAction, WorkflowsTab};
@@ -349,12 +349,25 @@ impl App {
                             .iter()
                             .filter(|l| l.resource_id == r.id)
                             .count();
+                        let cost_model = r
+                            .cost_model
+                            .as_ref()
+                            .map(|c| format!("{:?}", c))
+                            .unwrap_or_else(|| "Free".to_string());
+                        let metadata: Vec<(String, String)> = r
+                            .metadata
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
                         super::tabs::resources::ResourceSummary {
                             id: r.id,
                             name: r.name,
                             resource_type: format!("{}", r.resource_type),
                             status: format!("{}", r.status),
                             active_leases: leases_for,
+                            cost_model,
+                            registered_at: r.registered_at,
+                            metadata,
                         }
                     })
                     .collect();
@@ -767,6 +780,113 @@ impl App {
         }
     }
 
+    /// Process pending resource actions from the resources tab.
+    fn process_resource_actions(&mut self) {
+        if let Some(action) = self.resources.take_action() {
+            match action {
+                ResourceAction::Register {
+                    id,
+                    name,
+                    resource_type,
+                } => {
+                    self.do_resource_register(&id, &name, &resource_type);
+                }
+                ResourceAction::Delete { resource_id } => {
+                    self.do_resource_delete(&resource_id);
+                }
+                ResourceAction::LoadLeases { resource_id } => {
+                    self.do_load_leases(&resource_id);
+                }
+            }
+        }
+    }
+
+    fn do_resource_register(&mut self, id: &str, name: &str, resource_type: &str) {
+        use crate::resource::registry::ResourceRegistry;
+        use crate::resource::ResourceType;
+
+        let db_path = self.config.data_dir.join("resources.db");
+        match ResourceRegistry::open(&db_path) {
+            Ok(registry) => {
+                let rtype = match resource_type {
+                    "Compute" => ResourceType::Compute,
+                    "Financial" => ResourceType::Financial,
+                    "Device" => ResourceType::Device,
+                    _ => ResourceType::ApiService,
+                };
+                match registry.register(id, name, &rtype, "{}") {
+                    Ok(()) => {
+                        self.resources
+                            .show_status(format!("Registered \"{}\"", name), false);
+                        self.load_resources();
+                    }
+                    Err(e) => {
+                        self.resources
+                            .show_status(format!("Register failed: {}", e), true);
+                    }
+                }
+            }
+            Err(e) => {
+                self.resources
+                    .show_status(format!("Store error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_resource_delete(&mut self, resource_id: &str) {
+        use crate::resource::registry::ResourceRegistry;
+
+        let db_path = self.config.data_dir.join("resources.db");
+        match ResourceRegistry::open(&db_path) {
+            Ok(registry) => match registry.unregister(resource_id) {
+                Ok(()) => {
+                    self.resources
+                        .show_status(format!("Deleted \"{}\"", resource_id), false);
+                    self.load_resources();
+                }
+                Err(e) => {
+                    self.resources
+                        .show_status(format!("Delete failed: {}", e), true);
+                }
+            },
+            Err(e) => {
+                self.resources
+                    .show_status(format!("Store error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_load_leases(&mut self, resource_id: &str) {
+        use crate::resource::registry::ResourceRegistry;
+
+        let db_path = self.config.data_dir.join("resources.db");
+        if let Ok(registry) = ResourceRegistry::open(&db_path) {
+            let all_leases = registry.list_active_leases().unwrap_or_default();
+            let summaries: Vec<_> = all_leases
+                .into_iter()
+                .filter(|l| l.resource_id == resource_id)
+                .map(|l| super::tabs::resources::LeaseSummary {
+                    lease_id: l.lease_id,
+                    resource_id: l.resource_id,
+                    agent_id: l.agent_id,
+                    capabilities: l
+                        .capabilities
+                        .iter()
+                        .map(|c| format!("{:?}", c))
+                        .collect(),
+                    used_cost_usd: l.used_cost_usd,
+                    max_cost_usd: l.quota.max_cost_usd,
+                    used_calls: l.used_calls,
+                    max_calls: l.quota.max_calls,
+                    started_at: l.started_at,
+                    expires_at: l.expires_at,
+                    status: format!("{:?}", l.status),
+                })
+                .collect();
+            self.resources.set_leases(summaries);
+        }
+    }
+
     /// Update context panel based on active tab and selection.
     fn update_context_panel(&mut self) {
         self.context_panel = match self.active_tab {
@@ -858,6 +978,9 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
 
         // Process workflow actions
         app.process_workflow_actions();
+
+        // Process resource actions
+        app.process_resource_actions();
 
         // Update context panel
         app.update_context_panel();
@@ -1736,6 +1859,25 @@ fn draw_context_resource(
     app: &App,
     idx: usize,
 ) {
+    use super::tabs::resources::ResourceView;
+
+    match &app.resources.view {
+        ResourceView::Leases(_) => {
+            draw_context_lease_detail(frame, area, app);
+        }
+        ResourceView::Resources => {
+            draw_context_resource_detail(frame, area, app, idx);
+        }
+    }
+}
+
+/// Context panel for a resource record.
+fn draw_context_resource_detail(
+    frame: &mut ratatui::Frame,
+    area: ratatui::layout::Rect,
+    app: &App,
+    idx: usize,
+) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(BORDER))
@@ -1745,17 +1887,9 @@ fn draw_context_resource(
         )]));
 
     if let Some(res) = app.resources.resources.get(idx) {
-        let status_color = match res.status.as_str() {
-            "Available" => Color::Green,
-            s if s.starts_with("InUse") => Color::Cyan,
-            "Provisioning" => Color::Yellow,
-            "Degraded" => Color::Yellow,
-            "Offline" => Color::Red,
-            "Terminated" => Color::DarkGray,
-            _ => Color::DarkGray,
-        };
+        let sc = resource_ctx_status_color(&res.status);
 
-        let lines = vec![
+        let mut lines = vec![
             Line::from(""),
             Line::from(vec![Span::styled(
                 format!("  {}", res.name),
@@ -1768,20 +1902,59 @@ fn draw_context_resource(
             context_row("Type", &res.resource_type),
             Line::from(vec![
                 Span::styled("  Status      ", Style::default().fg(DIM)),
-                Span::styled(&res.status, Style::default().fg(status_color)),
+                Span::styled(res.status.to_string(), Style::default().fg(sc)),
             ]),
             context_row(
                 "Leases",
-                &format!(
-                    "{}",
-                    if res.active_leases > 0 {
-                        format!("{} active", res.active_leases)
-                    } else {
-                        "none".to_string()
-                    }
-                ),
+                &if res.active_leases > 0 {
+                    format!("{} active", res.active_leases)
+                } else {
+                    "none".to_string()
+                },
             ),
+            context_row("Cost", &res.cost_model),
         ];
+
+        // Metadata
+        if !res.metadata.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                "  Metadata:",
+                Style::default().fg(FG),
+            )]));
+            for (k, v) in &res.metadata {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("    {} ", k), Style::default().fg(DIM)),
+                    Span::styled(v.to_string(), Style::default().fg(FG)),
+                ]));
+            }
+        }
+
+        // Action hints
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "  [Enter] ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("leases  ", Style::default().fg(DIM)),
+            Span::styled(
+                "[r] ",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("register  ", Style::default().fg(DIM)),
+            Span::styled(
+                "[d] ",
+                Style::default()
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("delete", Style::default().fg(DIM)),
+        ]));
 
         frame.render_widget(
             Paragraph::new(lines)
@@ -1802,6 +1975,144 @@ fn draw_context_resource(
             .style(Style::default().bg(BG)),
             area,
         );
+    }
+}
+
+/// Context panel for a selected lease — shows quota bars and capabilities.
+fn draw_context_lease_detail(
+    frame: &mut ratatui::Frame,
+    area: ratatui::layout::Rect,
+    app: &App,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![Span::styled(
+            " Lease Detail ",
+            Style::default().fg(HEADING).bg(BG),
+        )]));
+
+    if let Some(lease) = app.resources.selected_lease() {
+        let sc = match lease.status.to_lowercase().as_str() {
+            "active" => Color::Green,
+            "expired" => Color::Yellow,
+            "revoked" => Color::Red,
+            _ => Color::DarkGray,
+        };
+
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                format!("  {}", lease.lease_id),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(""),
+            context_row("Agent", &lease.agent_id),
+            Line::from(vec![
+                Span::styled("  Status      ", Style::default().fg(DIM)),
+                Span::styled(lease.status.to_string(), Style::default().fg(sc)),
+            ]),
+        ];
+
+        // Quota bars
+        let bar_w = (area.width.saturating_sub(20)) as usize;
+        if let Some(max_calls) = lease.max_calls {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                format!("  Calls: {}/{}", lease.used_calls, max_calls),
+                Style::default().fg(FG),
+            )]));
+            let (filled, empty, color) = super::tabs::resources::quota_bar(
+                lease.used_calls as f64,
+                max_calls as f64,
+                bar_w,
+            );
+            lines.push(Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(filled, Style::default().fg(color)),
+                Span::styled(empty, Style::default().fg(Color::Rgb(60, 60, 80))),
+            ]));
+        }
+
+        if let Some(max_cost) = lease.max_cost_usd {
+            lines.push(Line::from(vec![Span::styled(
+                format!("  Cost: ${:.2}/${:.2}", lease.used_cost_usd, max_cost),
+                Style::default().fg(FG),
+            )]));
+            let (filled, empty, color) =
+                super::tabs::resources::quota_bar(lease.used_cost_usd, max_cost, bar_w);
+            lines.push(Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(filled, Style::default().fg(color)),
+                Span::styled(empty, Style::default().fg(Color::Rgb(60, 60, 80))),
+            ]));
+        }
+
+        // Capabilities
+        if !lease.capabilities.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                "  Capabilities:",
+                Style::default().fg(FG),
+            )]));
+            for cap in &lease.capabilities {
+                lines.push(Line::from(vec![
+                    Span::styled("    ✓ ", Style::default().fg(Color::Green)),
+                    Span::styled(cap.to_string(), Style::default().fg(FG)),
+                ]));
+            }
+        }
+
+        // Action hints
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "  [Esc] ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("back to resources", Style::default().fg(DIM)),
+        ]));
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(block)
+                .style(Style::default().bg(BG)),
+            area,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "  No lease selected",
+                    Style::default().fg(DIM),
+                )]),
+            ])
+            .block(block)
+            .style(Style::default().bg(BG)),
+            area,
+        );
+    }
+}
+
+fn resource_ctx_status_color(status: &str) -> Color {
+    let s = status.to_lowercase();
+    if s == "available" {
+        Color::Green
+    } else if s.starts_with("inuse") || s.starts_with("in_use") {
+        Color::Cyan
+    } else if s == "provisioning" {
+        Color::Yellow
+    } else if s == "degraded" {
+        Color::Yellow
+    } else if s == "offline" {
+        Color::Red
+    } else if s == "terminated" {
+        Color::DarkGray
+    } else {
+        Color::DarkGray
     }
 }
 
