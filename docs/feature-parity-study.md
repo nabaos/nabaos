@@ -43,7 +43,7 @@
 
 | Feature | TUI | Web UI | Telegram | Notes |
 |---------|-----|--------|----------|-------|
-| Confirmation modal | Y | Y | N | **Gap: Telegram has no interactive confirmation** |
+| Confirmation modal | Y | Y | Y (inline keyboard) | All 3 channels implemented |
 | Allow Once | Y | Y | N | |
 | Allow for Session | Y | Y | N | |
 | Always Allow for Agent | Y | Y | N | |
@@ -57,7 +57,7 @@
 
 | Feature | TUI | Web UI | Telegram | Notes |
 |---------|-----|--------|----------|-------|
-| @agent-name prefix | Y | Y | N | **Gap: Telegram uses /persona command** |
+| @agent-name prefix | Y | Y | Y | All 3 channels parse @agent prefix |
 | Agent save/restore | Y | Y | N/A | Restores previous agent after query |
 | Persona dropdown | N/A | Y (header) | N/A | |
 | Persona switching | Y (command palette) | Y (dropdown) | Y (/persona, talk: callback) | Different UX per channel |
@@ -87,7 +87,7 @@
 | List scheduled jobs | Y (Schedule tab) | Y (API) | Y (/status shows count) | |
 | Create schedule | Y (n key + modal) | Y (API) | Y (/watch command) | |
 | Disable schedule | Y (d key) | Y (API) | Y (/stop disables all) | |
-| Enable schedule | Y (d key toggle) | N | N | **Gap: Web/Telegram can't re-enable** |
+| Enable schedule | Y (d key toggle) | Y (API) | N | Scheduler::enable() added |
 | Job history view | Y (Enter on job) | N | N | TUI-only feature |
 | Search jobs | Y (/ key) | N | N | TUI-only feature |
 | Emergency stop all | N | N | Y (/stop admin) | Telegram-only feature |
@@ -186,11 +186,11 @@
 
 | # | Feature | Missing From | Effort | Priority |
 |---|---------|-------------|--------|----------|
-| 1 | **Confirmation modal** | Telegram | Medium | **HIGH** — security feature |
-| 2 | **@agent inline routing** | Telegram | Low | Medium |
+| 1 | ~~**Confirmation modal**~~ | ~~Telegram~~ | ~~Medium~~ | **DONE** (v0.3.1) — inline keyboard |
+| 2 | ~~**@agent inline routing**~~ | ~~Telegram~~ | ~~Low~~ | **DONE** (v0.3.1) — all 3 channels |
 | 3 | **Agent lifecycle (install/start/stop)** | Web, Telegram | Medium | Medium |
 | 4 | **Resource register/delete** | Web, Telegram | Low | Low |
-| 5 | **Schedule enable** | Web, Telegram | Low | Low |
+| 5 | ~~**Schedule enable**~~ | ~~Web, Telegram~~ | ~~Low~~ | **DONE** (v0.3.1) — TUI Schedule tab |
 | 6 | **Cost period filtering** | TUI | Low | Low |
 | 7 | **Response style selector** | TUI | Low | Low |
 | 8 | **Security scan** | TUI | Low | Low |
@@ -208,8 +208,8 @@
 
 ### Recommended Priority Actions
 
-1. **Telegram confirmation modal** — Use inline keyboard buttons for Allow/Deny (most critical security gap)
-2. **Telegram @agent routing** — Parse `@agent-name` prefix in message text
+1. ~~**Telegram confirmation modal**~~ — **DONE** (v0.3.1)
+2. ~~**Telegram @agent routing**~~ — **DONE** (v0.3.1)
 3. **Web agent lifecycle** — Add install/start/stop to Settings or dedicated Agents page
 4. **TUI response style** — Add style selector to command palette or Settings tab
 5. **TUI cost dashboard** — Add period filtering to History tab or new Costs tab
@@ -223,7 +223,7 @@
 ```
 TUI:    orchestrator → mpsc::channel → AppMessage::ConfirmationNeeded → modal → mpsc response
 Web:    orchestrator → SSE confirm_required event → browser modal → POST /api/v1/confirm/{id}
-Telegram: NOT IMPLEMENTED (constitution Confirm falls through as allowed)
+Telegram: orchestrator → tokio::mpsc → inline keyboard → confirm:{id}:{action} callback → mpsc response
 ```
 
 ### Query Routing Comparison
@@ -231,7 +231,7 @@ Telegram: NOT IMPLEMENTED (constitution Confirm falls through as allowed)
 ```
 TUI:    input → parse_agent_mention → set_active_agent → process_query → restore
 Web:    input → parse_agent_mention (Rust) → set_active_agent → process_query → restore
-Telegram: /persona switch → set_active_agent (persistent, no per-query routing)
+Telegram: input → parse_agent_mention → set_active_agent → process_query → restore
 ```
 
 ### Data Flow
