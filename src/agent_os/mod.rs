@@ -1,6 +1,7 @@
 pub mod agent_constitution;
 pub mod background;
 pub mod catalog;
+pub mod confirmation;
 pub mod message_bus;
 pub mod package;
 pub mod permissions;

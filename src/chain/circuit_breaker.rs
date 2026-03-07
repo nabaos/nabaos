@@ -53,8 +53,10 @@ pub enum BreakerAction {
 /// Result of evaluating circuit breakers.
 #[derive(Debug)]
 pub struct BreakerCheck {
-    /// Whether execution should proceed
+    /// Whether execution should proceed (false if any Abort fired)
     pub proceed: bool,
+    /// Whether interactive confirmation is needed before proceeding
+    pub needs_confirm: bool,
     /// Which breakers fired (if any)
     pub fired: Vec<FiredBreaker>,
 }
@@ -177,15 +179,17 @@ impl BreakerRegistry {
             }
         }
 
-        // SECURITY: Both Abort AND Confirm actions halt execution.
-        // Confirm should require human approval, but since no interactive
-        // confirmation channel is available at this level, treat it as Abort
-        // to prevent silent bypass of safety-critical checks.
-        let proceed = !fired
-            .iter()
-            .any(|f| f.action == BreakerAction::Abort || f.action == BreakerAction::Confirm);
+        // Abort always halts. Confirm is separated so the orchestrator can
+        // present an interactive modal when a confirmation channel is available.
+        let has_abort = fired.iter().any(|f| f.action == BreakerAction::Abort);
+        let needs_confirm = fired.iter().any(|f| f.action == BreakerAction::Confirm);
+        let proceed = !has_abort;
 
-        BreakerCheck { proceed, fired }
+        BreakerCheck {
+            proceed,
+            needs_confirm,
+            fired,
+        }
     }
 
     /// Get all registered breakers for a chain.
@@ -371,7 +375,8 @@ mod tests {
             .unwrap();
 
         let check = reg.evaluate("any_chain", &HashMap::new(), "email.send");
-        assert!(!check.proceed); // C5: Confirm now blocks (no interactive confirmation available)
+        assert!(check.proceed); // Confirm no longer blocks — orchestrator handles interactively
+        assert!(check.needs_confirm);
         assert_eq!(check.fired.len(), 1);
         assert_eq!(check.fired[0].action, BreakerAction::Confirm);
     }

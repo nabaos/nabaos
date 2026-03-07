@@ -446,6 +446,10 @@ pub struct Orchestrator {
     mcp_manager: crate::mcp::manager::McpManager,
     /// Persistent conversation memory store
     memory_store: crate::memory::MemoryStore,
+    /// Optional confirmation callback — set by TUI before process_query().
+    /// When set, `Enforcement::Confirm` and `BreakerAction::Confirm` will
+    /// invoke this to ask the user interactively instead of blocking/allowing silently.
+    confirm_fn: Option<crate::agent_os::confirmation::ConfirmFn>,
 }
 
 /// Extract human-readable content from chain step output.
@@ -688,6 +692,7 @@ impl Orchestrator {
             resource_registry,
             mcp_manager,
             memory_store,
+            confirm_fn: None,
         })
     }
 
@@ -766,6 +771,33 @@ impl Orchestrator {
     /// Get the active agent ID.
     pub fn active_agent(&self) -> &str {
         &self.active_agent
+    }
+
+    /// Set the confirmation callback for interactive user prompts.
+    ///
+    /// Called by the TUI before `process_query()` so that constitution
+    /// `Enforcement::Confirm` and breaker `BreakerAction::Confirm` can
+    /// present an interactive modal rather than silently blocking/allowing.
+    pub(crate) fn set_confirm_tx(&mut self, tx: Option<std::sync::mpsc::Sender<crate::tui::app::AppMessage>>) {
+        // We can't store the raw Sender<AppMessage> because AppMessage is private.
+        // Instead we wrap it in a ConfirmFn closure that bridges the two.
+        use crate::agent_os::confirmation::{ConfirmationRequest, ConfirmationResponse};
+        self.confirm_fn = tx.map(|sender| -> crate::agent_os::confirmation::ConfirmFn {
+            Box::new(move |request: ConfirmationRequest| {
+                let (resp_tx, resp_rx) = std::sync::mpsc::channel::<ConfirmationResponse>();
+                let msg = crate::tui::app::AppMessage::ConfirmationNeeded {
+                    request,
+                    responder: resp_tx,
+                };
+                if sender.send(msg).is_err() {
+                    return None;
+                }
+                // Block until the user responds (up to 120s timeout)
+                resp_rx
+                    .recv_timeout(std::time::Duration::from_secs(120))
+                    .ok()
+            })
+        });
     }
 
     pub fn resource_registry(&self) -> &crate::resource::registry::ResourceRegistry {
@@ -1287,7 +1319,8 @@ impl Orchestrator {
                         let manifest = self.default_manifest();
                         let executor = ChainExecutor::new(&self.ability_registry, &manifest)
                             .with_breakers(&self.breaker_registry)
-                            .with_constitution(&self.constitution_enforcer);
+                            .with_constitution(&self.constitution_enforcer)
+                            .pipe_confirm(&self.confirm_fn);
                         let chain_result = executor.run(&chain, &HashMap::new())?;
 
                         if chain_result.success {
@@ -1417,6 +1450,51 @@ impl Orchestrator {
                 });
             }
 
+            // Interactive confirmation for Enforcement::Confirm rules
+            if check.enforcement == crate::security::constitution::Enforcement::Confirm {
+                if let Some(ref confirm_fn) = self.confirm_fn {
+                    use crate::agent_os::confirmation::*;
+                    let request = ConfirmationRequest::new(
+                        &self.active_agent,
+                        safe_query,
+                        check.reason.as_deref().unwrap_or("Action requires confirmation"),
+                        ConfirmationSource::Constitution {
+                            rule_name: check.matched_rule.clone().unwrap_or_default(),
+                        },
+                    );
+                    match confirm_fn(request) {
+                        Some(ConfirmationResponse::AllowOnce) => {
+                            // Proceed — no persistence needed
+                        }
+                        Some(ConfirmationResponse::AllowSession) => {
+                            // Proceed — future calls in this session are auto-allowed
+                            // (session-level caching handled by constitution cache)
+                        }
+                        Some(ConfirmationResponse::AllowAlwaysAgent) => {
+                            // Proceed — persist permission for this agent
+                            // (PermissionManager integration available for Phase 2)
+                        }
+                        Some(ConfirmationResponse::Deny) | None => {
+                            return Ok(QueryResult {
+                                tier: Tier::Blocked,
+                                intent_key: intent_key.clone(),
+                                confidence: intent.confidence as f64,
+                                allowed: false,
+                                latency_ms: start.elapsed().as_secs_f64() * 1000.0,
+                                description: "User denied confirmation".to_string(),
+                                response_text: None,
+                                nyaya_mode: None,
+                                receipts_generated: 0,
+                                training_signal: None,
+                                security,
+                            });
+                        }
+                    }
+                }
+                // If no confirm_fn is set, Confirm falls through as allowed
+                // (backwards-compatible with non-TUI callers like Telegram)
+            }
+
             // Store in fingerprint cache AFTER constitution check passes
             fp_cache.store(safe_query, &intent_key_obj, intent.confidence)?;
         }
@@ -1534,7 +1612,8 @@ impl Orchestrator {
             let manifest = self.default_manifest();
             let executor = ChainExecutor::new(&self.ability_registry, &manifest)
                 .with_breakers(&self.breaker_registry)
-                .with_constitution(&self.constitution_enforcer);
+                .with_constitution(&self.constitution_enforcer)
+                .pipe_confirm(&self.confirm_fn);
             let chain_result = executor.run(&chain, &HashMap::new())?;
 
             if chain_result.success {

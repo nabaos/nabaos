@@ -117,6 +117,34 @@ impl PermissionManager {
         Ok(())
     }
 
+    /// Hierarchical permission check with scope fallback.
+    ///
+    /// Checks in order:
+    ///   1. `"email.send:bob@example.com"` (exact scoped match)
+    ///   2. `"email.send:*"` (wildcard scope)
+    ///   3. `"email.send"` (base ability without scope)
+    ///
+    /// Returns `None` if no matching grant exists (needs user prompt).
+    pub fn check_scoped(
+        &self,
+        agent_id: &str,
+        ability: &str,
+        target: &str,
+    ) -> Result<Option<PermissionDecision>> {
+        // 1. Exact scoped: "email.send:bob@example.com"
+        let scoped = format!("{}:{}", ability, target);
+        if let Some(decision) = self.check(agent_id, &scoped)? {
+            return Ok(Some(decision));
+        }
+        // 2. Wildcard scope: "email.send:*"
+        let wildcard = format!("{}:*", ability);
+        if let Some(decision) = self.check(agent_id, &wildcard)? {
+            return Ok(Some(decision));
+        }
+        // 3. Base ability: "email.send"
+        self.check(agent_id, ability)
+    }
+
     /// Revoke all permissions for a given agent. Returns the number of rows deleted.
     pub fn revoke_all(&self, agent_id: &str) -> Result<usize> {
         let count = self.db.execute(
@@ -226,6 +254,40 @@ mod tests {
             .unwrap();
         let grants = pm.list("a1").unwrap();
         assert_eq!(grants.len(), 2);
+    }
+
+    #[test]
+    fn test_check_scoped_exact() {
+        let pm = memory_db();
+        pm.grant("a1", "email.send:bob@x.com", PermissionDecision::AllowAlways)
+            .unwrap();
+        let decision = pm.check_scoped("a1", "email.send", "bob@x.com").unwrap();
+        assert_eq!(decision, Some(PermissionDecision::AllowAlways));
+    }
+
+    #[test]
+    fn test_check_scoped_wildcard() {
+        let pm = memory_db();
+        pm.grant("a1", "email.send:*", PermissionDecision::AllowAlways)
+            .unwrap();
+        let decision = pm.check_scoped("a1", "email.send", "anyone@x.com").unwrap();
+        assert_eq!(decision, Some(PermissionDecision::AllowAlways));
+    }
+
+    #[test]
+    fn test_check_scoped_fallback_to_base() {
+        let pm = memory_db();
+        pm.grant("a1", "email.send", PermissionDecision::Deny)
+            .unwrap();
+        let decision = pm.check_scoped("a1", "email.send", "bob@x.com").unwrap();
+        assert_eq!(decision, Some(PermissionDecision::Deny));
+    }
+
+    #[test]
+    fn test_check_scoped_no_match() {
+        let pm = memory_db();
+        let decision = pm.check_scoped("a1", "email.send", "bob@x.com").unwrap();
+        assert_eq!(decision, None);
     }
 
     #[test]

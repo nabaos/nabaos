@@ -244,12 +244,23 @@ impl PrivilegeGuard {
 
     /// Get the required privilege level for an ability.
     ///
+    /// Supports scoped abilities like `"email.send:bob@example.com"` — strips
+    /// the `:scope` suffix and falls back to the base ability lookup.
     /// Unknown abilities default to Open (Level 0).
     pub fn required_level(&self, ability: &str) -> PrivilegeLevel {
-        self.privilege_map
-            .get(ability)
-            .copied()
-            .unwrap_or(PrivilegeLevel::Open)
+        // Try exact match first (supports scoped overrides in the future)
+        if let Some(&level) = self.privilege_map.get(ability) {
+            return level;
+        }
+        // Strip scope suffix and try base ability
+        if let Some(base) = ability.split(':').next() {
+            if base != ability {
+                if let Some(&level) = self.privilege_map.get(base) {
+                    return level;
+                }
+            }
+        }
+        PrivilegeLevel::Open
     }
 }
 

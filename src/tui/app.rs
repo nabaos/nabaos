@@ -53,7 +53,7 @@ const BORDER: Color = Color::Rgb(60, 60, 80);
 const HIGHLIGHT_BG: Color = Color::Rgb(35, 35, 50);
 
 /// Messages from background processing threads.
-enum AppMessage {
+pub(crate) enum AppMessage {
     QueryResult {
         text: String,
         cost_label: String,
@@ -63,6 +63,11 @@ enum AppMessage {
         query: String,
     },
     QueryError(String),
+    /// A sensitive action requires interactive user confirmation.
+    ConfirmationNeeded {
+        request: crate::agent_os::confirmation::ConfirmationRequest,
+        responder: std::sync::mpsc::Sender<crate::agent_os::confirmation::ConfirmationResponse>,
+    },
 }
 
 /// What the right context panel displays.
@@ -75,6 +80,16 @@ enum ContextPanel {
     ResourceDetail(usize),
     HistoryDetail(usize),
     SettingsDetail(usize),
+    ScheduleDetail(usize),
+}
+
+// ── Confirmation Modal ───────────────────────────────────────────────────────
+
+/// State for the interactive permission confirmation modal.
+struct PendingConfirmation {
+    request: crate::agent_os::confirmation::ConfirmationRequest,
+    responder: std::sync::mpsc::Sender<crate::agent_os::confirmation::ConfirmationResponse>,
+    selected: usize, // 0=AllowOnce, 1=AllowSession, 2=AllowAlwaysAgent, 3=Deny
 }
 
 // ── Command Palette ──────────────────────────────────────────────────────────
@@ -250,6 +265,7 @@ pub struct App {
     pub history: HistoryTab,
     pub workflows: WorkflowsTab,
     pub resources: ResourcesTab,
+    pub schedule: super::tabs::schedule::ScheduleTab,
     pub should_quit: bool,
     pub show_help: bool,
     pub stats_queries: u64,
@@ -267,6 +283,8 @@ pub struct App {
     palette: CommandPalette,
     toasts: Vec<Toast>,
     layout: LayoutGeometry,
+    /// Active confirmation modal (if any).
+    pending_confirmation: Option<PendingConfirmation>,
 }
 
 impl App {
@@ -294,6 +312,7 @@ impl App {
             history: HistoryTab::new(),
             workflows: WorkflowsTab::new(),
             resources: ResourcesTab::new(),
+            schedule: super::tabs::schedule::ScheduleTab::new(),
             should_quit: false,
             show_help: false,
             show_logs: true,
@@ -311,6 +330,7 @@ impl App {
             palette: CommandPalette::new(),
             toasts: Vec::new(),
             layout: LayoutGeometry::default(),
+            pending_confirmation: None,
         };
 
         // Seed catalog + workflows if empty (first run)
@@ -323,6 +343,7 @@ impl App {
         app.load_objectives();
         app.load_workflows();
         app.load_resources();
+        app.load_scheduled_jobs();
         app.refresh_stats();
 
         app
@@ -770,6 +791,135 @@ impl App {
         }
     }
 
+    /// Load scheduled jobs from the scheduler database.
+    fn load_scheduled_jobs(&mut self) {
+        use crate::chain::scheduler::Scheduler;
+
+        let db_path = self.config.data_dir.join("scheduler.db");
+        if let Ok(scheduler) = Scheduler::open(&db_path) {
+            if let Ok(jobs) = scheduler.list() {
+                let summaries: Vec<_> = jobs
+                    .into_iter()
+                    .map(|j| {
+                        let schedule_desc = if let Some(ref cron) = j.cron_expr {
+                            if !cron.is_empty() {
+                                format!("cron: {}", cron)
+                            } else if j.interval_secs >= 3600 {
+                                format!("every {}h", j.interval_secs / 3600)
+                            } else {
+                                format!("every {}m", j.interval_secs / 60)
+                            }
+                        } else if j.interval_secs >= 3600 {
+                            format!("every {}h", j.interval_secs / 3600)
+                        } else {
+                            format!("every {}m", j.interval_secs / 60)
+                        };
+                        super::tabs::schedule::JobSummary {
+                            id: j.id,
+                            chain_id: j.chain_id,
+                            enabled: j.enabled,
+                            schedule_desc,
+                            last_run_at: j.last_run_at,
+                            last_output: j.last_output,
+                            run_count: j.run_count,
+                            created_at: j.created_at,
+                        }
+                    })
+                    .collect();
+                self.schedule.set_jobs(summaries);
+            }
+        }
+    }
+
+    /// Process pending schedule tab actions.
+    fn process_schedule_action(&mut self) {
+        use crate::chain::scheduler::{Scheduler, ScheduleSpec};
+
+        let action = match self.schedule.take_action() {
+            Some(a) => a,
+            None => return,
+        };
+
+        let db_path = self.config.data_dir.join("scheduler.db");
+        match action {
+            super::tabs::schedule::ScheduleAction::Create { chain_id, spec } => {
+                match Scheduler::open(&db_path) {
+                    Ok(scheduler) => {
+                        let schedule_spec = if spec.starts_with("cron:") {
+                            ScheduleSpec::Cron(spec.trim_start_matches("cron:").trim().to_string())
+                        } else {
+                            // Parse "every Nm" / "every Nh" / "every Ns"
+                            let secs = parse_interval(&spec);
+                            ScheduleSpec::Interval(secs)
+                        };
+                        match scheduler.schedule(&chain_id, schedule_spec, "{}") {
+                            Ok(id) => {
+                                self.schedule.show_status(
+                                    format!("Created job {}", &id[..id.len().min(20)]),
+                                    false,
+                                );
+                                self.load_scheduled_jobs();
+                            }
+                            Err(e) => {
+                                self.schedule.show_status(format!("Error: {}", e), true);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.schedule.show_status(format!("DB error: {}", e), true);
+                    }
+                }
+            }
+            super::tabs::schedule::ScheduleAction::ToggleEnabled { job_id, enable } => {
+                match Scheduler::open(&db_path) {
+                    Ok(scheduler) => {
+                        let result = if enable {
+                            scheduler.enable(&job_id)
+                        } else {
+                            scheduler.disable(&job_id)
+                        };
+                        match result {
+                            Ok(()) => {
+                                let verb = if enable { "Enabled" } else { "Disabled" };
+                                self.schedule.show_status(
+                                    format!("{} job", verb),
+                                    false,
+                                );
+                                self.load_scheduled_jobs();
+                            }
+                            Err(e) => {
+                                self.schedule.show_status(format!("Error: {}", e), true);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.schedule.show_status(format!("DB error: {}", e), true);
+                    }
+                }
+            }
+            super::tabs::schedule::ScheduleAction::LoadHistory { job_id } => {
+                match Scheduler::open(&db_path) {
+                    Ok(scheduler) => {
+                        if let Ok(entries) = scheduler.history(&job_id, 50) {
+                            let rows: Vec<_> = entries
+                                .into_iter()
+                                .map(|e| super::tabs::schedule::HistoryRow {
+                                    job_id: e.job_id,
+                                    chain_id: e.chain_id,
+                                    output: e.output,
+                                    changed: e.changed,
+                                    run_at: e.run_at,
+                                })
+                                .collect();
+                            self.schedule.set_history(rows);
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+    }
+
     /// Refresh stats from the orchestrator.
     fn refresh_stats(&mut self) {
         if let Some(ref orch) = self.orchestrator {
@@ -794,6 +944,26 @@ impl App {
         }
     }
 
+    /// Parse an `@agent-name` mention from the start of a query.
+    /// Returns `(Some(agent_name), rest_of_query)` or `(None, original_query)`.
+    fn parse_agent_mention(query: &str) -> (Option<String>, String) {
+        let trimmed = query.trim();
+        if let Some(rest) = trimmed.strip_prefix('@') {
+            if let Some(space_idx) = rest.find(char::is_whitespace) {
+                let agent = rest[..space_idx].to_string();
+                let remainder = rest[space_idx..].trim().to_string();
+                if !agent.is_empty() && !remainder.is_empty() {
+                    return (Some(agent), remainder);
+                }
+            }
+            // Bare "@agent" with no query — treat entire string as agent, empty query
+            if !rest.is_empty() && !rest.contains(char::is_whitespace) {
+                return (Some(rest.to_string()), String::new());
+            }
+        }
+        (None, query.to_string())
+    }
+
     /// Submit a query for background processing.
     fn submit_query(&mut self, query: String) {
         self.chat.push_user(query.clone());
@@ -802,7 +972,9 @@ impl App {
         let tx = self.tx.clone();
         let config = self.config.clone();
         let orch_arc = self.orchestrator.clone();
-        let q = query;
+
+        // Parse @agent mention
+        let (target_agent, q) = Self::parse_agent_mention(&query);
 
         std::thread::spawn(move || {
             let start = Instant::now();
@@ -810,7 +982,26 @@ impl App {
             // Try using the shared orchestrator, fall back to creating a new one
             let result = if let Some(ref orch_arc) = orch_arc {
                 if let Ok(mut orch) = orch_arc.lock() {
-                    Some(orch.process_query(&q, None))
+                    // Handle @agent routing
+                    let prev_agent = if let Some(ref agent) = target_agent {
+                        let prev = orch.active_agent().to_string();
+                        orch.set_active_agent(agent);
+                        Some(prev)
+                    } else {
+                        None
+                    };
+
+                    // Pass confirm_tx so orchestrator can request confirmations
+                    orch.set_confirm_tx(Some(tx.clone()));
+                    let res = orch.process_query(&q, None);
+                    orch.set_confirm_tx(None);
+
+                    // Restore previous agent if we did @agent routing
+                    if let Some(prev) = prev_agent {
+                        orch.set_active_agent(&prev);
+                    }
+
+                    Some(res)
                 } else {
                     None
                 }
@@ -897,6 +1088,13 @@ impl App {
                     self.chat
                         .push_agent(format!("Error: {}", e), "error".into());
                     self.push_toast(format!("Query failed: {}", e), true);
+                }
+                AppMessage::ConfirmationNeeded { request, responder } => {
+                    self.pending_confirmation = Some(PendingConfirmation {
+                        request,
+                        responder,
+                        selected: 0,
+                    });
                 }
             }
         }
@@ -1607,6 +1805,13 @@ impl App {
                     ContextPanel::Welcome
                 }
             }
+            TabId::Schedule => {
+                if let Some(i) = self.schedule.state.selected() {
+                    ContextPanel::ScheduleDetail(i)
+                } else {
+                    ContextPanel::Welcome
+                }
+            }
             _ => ContextPanel::Welcome,
         };
     }
@@ -1671,6 +1876,9 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
         // Process PEA actions
         app.process_pea_actions();
 
+        // Process schedule actions
+        app.process_schedule_action();
+
         // Process settings actions
         app.process_settings_actions();
 
@@ -1709,8 +1917,37 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
 
             match ev {
                 Event::Key(key) => {
+                    // Confirmation modal intercepts all keys when active
+                    if let Some(ref mut pending) = app.pending_confirmation {
+                        use crate::agent_os::confirmation::ConfirmationResponse;
+                        match key.code {
+                            KeyCode::Up => {
+                                if pending.selected > 0 {
+                                    pending.selected -= 1;
+                                }
+                            }
+                            KeyCode::Down => {
+                                if pending.selected < 3 {
+                                    pending.selected += 1;
+                                }
+                            }
+                            KeyCode::Char(n @ '1'..='4') => {
+                                pending.selected = (n as usize) - ('1' as usize);
+                            }
+                            KeyCode::Enter => {
+                                let response = ConfirmationResponse::ALL[pending.selected];
+                                let _ = pending.responder.send(response);
+                                app.pending_confirmation = None;
+                            }
+                            KeyCode::Esc => {
+                                let _ = pending.responder.send(ConfirmationResponse::Deny);
+                                app.pending_confirmation = None;
+                            }
+                            _ => {}
+                        }
+                    }
                     // Command palette intercepts all keys when open
-                    if app.palette.open {
+                    else if app.palette.open {
                         match key.code {
                             KeyCode::Esc => {
                                 app.palette.close();
@@ -1779,7 +2016,7 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
                             KeyCode::BackTab => {
                                 app.active_tab = app.active_tab.prev();
                             }
-                            KeyCode::Char(n @ '1'..='7')
+                            KeyCode::Char(n @ '1'..='8')
                                 if key.modifiers.is_empty()
                                     && app.active_tab != TabId::Chat
                                     && app.active_tab != TabId::Agents =>
@@ -1816,6 +2053,9 @@ pub fn run_tui(config: NyayaConfig) -> Result<()> {
                                     }
                                     TabId::Resources => {
                                         app.resources.handle_key(key);
+                                    }
+                                    TabId::Schedule => {
+                                        app.schedule.handle_key(key);
                                     }
                                 }
                             }
@@ -1880,6 +2120,7 @@ fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
                 TabId::History => { app.history.handle_key(key); }
                 TabId::Workflows => { app.workflows.handle_key(key); }
                 TabId::Resources => { app.resources.handle_key(key); }
+                TabId::Schedule => { app.schedule.handle_key(key); }
             }
         }
         MouseEventKind::ScrollDown => {
@@ -1892,6 +2133,7 @@ fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
                 TabId::History => { app.history.handle_key(key); }
                 TabId::Workflows => { app.workflows.handle_key(key); }
                 TabId::Resources => { app.resources.handle_key(key); }
+                TabId::Schedule => { app.schedule.handle_key(key); }
             }
         }
         _ => {}
@@ -2034,8 +2276,88 @@ fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
         draw_command_palette(frame, size, &app.palette);
     }
 
+    // Confirmation modal overlay (highest priority overlay)
+    if let Some(ref pending) = app.pending_confirmation {
+        draw_confirmation_modal(frame, size, pending);
+    }
+
     // Toast notifications (bottom-right)
     draw_toasts(frame, size, &app.toasts);
+}
+
+/// Render the confirmation modal overlay.
+fn draw_confirmation_modal(
+    frame: &mut ratatui::Frame,
+    area: ratatui::layout::Rect,
+    pending: &PendingConfirmation,
+) {
+    use crate::agent_os::confirmation::ConfirmationResponse;
+    use ratatui::widgets::Clear;
+
+    let modal_width = 48_u16.min(area.width.saturating_sub(4));
+    let modal_height = 12_u16.min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(modal_width)) / 2;
+    let y = (area.height.saturating_sub(modal_height)) / 2;
+    let modal_area = ratatui::layout::Rect::new(x, y, modal_width, modal_height);
+
+    // Clear the area behind the modal
+    frame.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            " Permission Required ",
+            Style::default()
+                .fg(ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(BG));
+
+    let inner = block.inner(modal_area);
+    frame.render_widget(block, modal_area);
+
+    // Build modal content
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Agent:  ", Style::default().fg(DIM)),
+            Span::styled(&pending.request.agent_id, Style::default().fg(FG)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Action: ", Style::default().fg(DIM)),
+            Span::styled(&pending.request.ability, Style::default().fg(ACCENT)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Reason: ", Style::default().fg(DIM)),
+            Span::styled(&pending.request.reason, Style::default().fg(FG)),
+        ]),
+        Line::from(""),
+    ];
+
+    for (i, variant) in ConfirmationResponse::ALL.iter().enumerate() {
+        let marker = if i == pending.selected { "\u{25b8} " } else { "  " };
+        let style = if i == pending.selected {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(FG)
+        };
+        lines.push(Line::from(Span::styled(
+            format!("  {}[{}] {}", marker, i + 1, variant.label()),
+            style,
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  [Enter] confirm  [Esc] deny",
+        Style::default().fg(DIM),
+    )));
+
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(BG)),
+        inner,
+    );
 }
 
 /// Render the active tab into the given area.
@@ -2048,6 +2370,7 @@ fn render_active_tab(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, ap
         TabId::History => app.history.render(frame, area),
         TabId::Workflows => app.workflows.render(frame, area),
         TabId::Resources => app.resources.render(frame, area),
+        TabId::Schedule => app.schedule.render(frame, area),
     }
 }
 
@@ -2061,6 +2384,7 @@ fn draw_context_panel(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, a
         ContextPanel::ResourceDetail(i) => draw_context_resource(frame, area, app, *i),
         ContextPanel::HistoryDetail(i) => draw_context_history(frame, area, app, *i),
         ContextPanel::SettingsDetail(i) => draw_context_settings(frame, area, app, *i),
+        ContextPanel::ScheduleDetail(i) => draw_context_schedule(frame, area, app, *i),
     }
 }
 
@@ -3420,6 +3744,173 @@ fn draw_context_settings(
     }
 }
 
+fn draw_context_schedule(
+    frame: &mut ratatui::Frame,
+    area: ratatui::layout::Rect,
+    app: &App,
+    idx: usize,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(BORDER))
+        .title(Line::from(vec![Span::styled(
+            " Job Detail ",
+            Style::default().fg(HEADING).bg(BG),
+        )]));
+
+    if let Some(job) = app.schedule.jobs.get(idx) {
+        let status = if job.enabled { "Enabled" } else { "Disabled" };
+        let status_color = if job.enabled { GREEN } else { Color::DarkGray };
+
+        let last_run = match job.last_run_at {
+            Some(ts) => {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
+                let diff = (now_ms - ts) / 1000;
+                if diff < 60 {
+                    format!("{}s ago", diff)
+                } else if diff < 3600 {
+                    format!("{}m ago", diff / 60)
+                } else {
+                    format!("{}h ago", diff / 3600)
+                }
+            }
+            None => "never".to_string(),
+        };
+
+        let output_preview = job
+            .last_output
+            .as_deref()
+            .unwrap_or("(no output)")
+            .lines()
+            .take(8)
+            .map(|l| {
+                Line::from(vec![Span::styled(
+                    format!("  {}", l),
+                    Style::default().fg(Color::Rgb(150, 150, 170)),
+                )])
+            })
+            .collect::<Vec<_>>();
+
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Job ID      ", Style::default().fg(DIM)),
+                Span::styled(
+                    job.id.clone(),
+                    Style::default().fg(FG).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Chain       ", Style::default().fg(DIM)),
+                Span::styled(
+                    job.chain_id.clone(),
+                    Style::default()
+                        .fg(ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Schedule    ", Style::default().fg(DIM)),
+                Span::styled(job.schedule_desc.clone(), Style::default().fg(Color::Cyan)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Status      ", Style::default().fg(DIM)),
+                Span::styled(
+                    status.to_string(),
+                    Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Last run    ", Style::default().fg(DIM)),
+                Span::styled(last_run, Style::default().fg(Color::Rgb(150, 150, 170))),
+            ]),
+            Line::from(vec![
+                Span::styled("  Total runs  ", Style::default().fg(DIM)),
+                Span::styled(
+                    format!("{}", job.run_count),
+                    Style::default().fg(Color::Rgb(150, 150, 170)),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "  Last Output",
+                Style::default()
+                    .fg(ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+        ];
+        lines.extend(output_preview);
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "  [Enter] ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("View history", Style::default().fg(FG)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "  [d] ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                if job.enabled {
+                    "Disable job"
+                } else {
+                    "Enable job"
+                },
+                Style::default().fg(FG),
+            ),
+        ]));
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(block)
+                .style(Style::default().bg(BG)),
+            area,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "  No job selected",
+                    Style::default().fg(DIM),
+                )]),
+            ])
+            .block(block)
+            .style(Style::default().bg(BG)),
+            area,
+        );
+    }
+}
+
+/// Parse an interval string like "every 10m", "every 1h", "every 30s" into seconds.
+fn parse_interval(spec: &str) -> u64 {
+    let s = spec
+        .trim()
+        .trim_start_matches("every")
+        .trim();
+    if let Some(rest) = s.strip_suffix('h') {
+        rest.trim().parse::<u64>().unwrap_or(3600) * 3600
+    } else if let Some(rest) = s.strip_suffix('m') {
+        rest.trim().parse::<u64>().unwrap_or(60) * 60
+    } else if let Some(rest) = s.strip_suffix('s') {
+        rest.trim().parse::<u64>().unwrap_or(60)
+    } else {
+        // Try parsing as raw seconds
+        s.parse::<u64>().unwrap_or(600)
+    }
+}
+
 /// Draw the top tab bar using ratatui Tabs widget.
 fn draw_tab_bar(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, app: &App) {
     let titles: Vec<Line> = TabId::all()
@@ -3441,6 +3932,9 @@ fn draw_tab_bar(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, app: &A
                 }
                 TabId::Resources if !app.resources.resources.is_empty() => {
                     format!("{} ({})", tab.label(), app.resources.resources.len())
+                }
+                TabId::Schedule if !app.schedule.jobs.is_empty() => {
+                    format!("{} ({})", tab.label(), app.schedule.jobs.len())
                 }
                 _ => tab.label().to_string(),
             };

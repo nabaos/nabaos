@@ -1012,9 +1012,24 @@ impl AbilityRegistry {
             ));
         }
 
+        // Build scoped ability string for granular permission checks.
+        // We do a lightweight parse of input_json here to extract the scope target.
+        let scoped_ability = {
+            let input_val: serde_json::Value = serde_json::from_str(input_json)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            match ability_name {
+                "email.send" | "email.reply" => format_scoped_ability(ability_name, &input_val, "to"),
+                "email.read" | "email.list" => format_scoped_ability(ability_name, &input_val, "from"),
+                "sms.send" => format_scoped_ability(ability_name, &input_val, "to"),
+                "channel.send" => format_scoped_ability(ability_name, &input_val, "channel"),
+                _ => ability_name.to_string(),
+            }
+        };
+
         // Privilege check (only when session_id is provided and guard is set)
+        // Uses scoped ability for scope-aware level lookup
         if let (Some(guard), Some(sid)) = (&self.privilege_guard, session_id) {
-            if let Err(challenge) = guard.check(ability_name, sid) {
+            if let Err(challenge) = guard.check(&scoped_ability, sid) {
                 return Err(format!(
                     "PRIVILEGE_CHALLENGE:{}:{}",
                     challenge.required_level as u8, challenge.message
@@ -1093,6 +1108,9 @@ impl AbilityRegistry {
             "tracking.check" => exec_tracking_check(&input)?,
             "tracking.subscribe" => exec_tracking_subscribe(&input)?,
 
+            "news.headlines" => exec_news_headlines(&input)?,
+            "weather.current" => exec_weather_current(&input)?,
+
             "llm.summarize" => {
                 let text = input.get("text").or_else(|| input.get("input"))
                     .and_then(|v| v.as_str())
@@ -1105,7 +1123,7 @@ impl AbilityRegistry {
                 (response.text.into_bytes(), None, HashMap::new())
             }
 
-            "llm.chat" => {
+            "llm.chat" | "llm.query" => {
                 let prompt = input.get("prompt").or_else(|| input.get("input"))
                     .and_then(|v| v.as_str())
                     .ok_or("llm.chat requires 'prompt' argument")?;
@@ -1601,6 +1619,17 @@ fn validate_url_ssrf(url: &str) -> Result<(String, std::net::SocketAddr), String
     }
 
     Ok((host.to_string(), addrs[0]))
+}
+
+/// Build a scoped ability string like "email.send:bob@example.com".
+/// If the target field is missing from the input, returns the base ability unchanged.
+fn format_scoped_ability(ability: &str, input: &serde_json::Value, field: &str) -> String {
+    if let Some(target) = input.get(field).and_then(|v| v.as_str()) {
+        if !target.is_empty() {
+            return format!("{}:{}", ability, target);
+        }
+    }
+    ability.to_string()
 }
 
 /// Validate and prepare a URL fetch request.
@@ -6189,6 +6218,184 @@ fn exec_tracking_subscribe(input: &serde_json::Value) -> Result<AbilityOutput, S
     facts.insert("interval_secs".into(), interval_secs.to_string());
 
     Ok((serde_json::to_vec(&output).unwrap_or_default(), None, facts))
+}
+
+/// Fetch news headlines via RSS feeds (no API key required).
+fn exec_news_headlines(input: &serde_json::Value) -> Result<AbilityOutput, String> {
+    let category = input
+        .get("category")
+        .and_then(|v| v.as_str())
+        .unwrap_or("general");
+
+    let feed_url = match category {
+        "technology" | "tech" => "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+        "business" => "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+        "science" => "https://rss.nytimes.com/services/xml/rss/nyt/Science.xml",
+        "health" => "https://rss.nytimes.com/services/xml/rss/nyt/Health.xml",
+        "world" => "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+        _ => "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+    };
+
+    let max_items = input
+        .get("max_items")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10) as usize;
+
+    let body = match fetch_url_blocking(feed_url, "GET") {
+        Ok((_status, body)) => body,
+        Err(e) => {
+            let mut facts = HashMap::new();
+            facts.insert("error".into(), e.clone());
+            facts.insert("category".into(), category.to_string());
+            return Ok((
+                serde_json::json!({
+                    "status": "error",
+                    "error": format!("Failed to fetch news feed: {}", e),
+                    "category": category
+                })
+                .to_string()
+                .into_bytes(),
+                None,
+                facts,
+            ));
+        }
+    };
+
+    // Parse RSS XML — extract <item><title> and <link> entries
+    let mut headlines = Vec::new();
+    for item_block in body.split("<item>").skip(1).take(max_items) {
+        let title = extract_xml_tag(item_block, "title").unwrap_or_default();
+        let link = extract_xml_tag(item_block, "link").unwrap_or_default();
+        let description = extract_xml_tag(item_block, "description").unwrap_or_default();
+        let pub_date = extract_xml_tag(item_block, "pubDate").unwrap_or_default();
+        headlines.push(serde_json::json!({
+            "title": title,
+            "link": link,
+            "description": description,
+            "published": pub_date,
+        }));
+    }
+
+    let result = serde_json::json!({
+        "category": category,
+        "count": headlines.len(),
+        "headlines": headlines,
+    });
+
+    let mut facts = HashMap::new();
+    facts.insert("category".into(), category.to_string());
+    facts.insert("count".into(), headlines.len().to_string());
+
+    Ok((result.to_string().into_bytes(), None, facts))
+}
+
+/// Fetch current weather via wttr.in (free, no API key).
+fn exec_weather_current(input: &serde_json::Value) -> Result<AbilityOutput, String> {
+    let location = input
+        .get("location")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
+
+    // wttr.in returns JSON with ?format=j1
+    let url = if location == "auto" || location.is_empty() {
+        "https://wttr.in/?format=j1".to_string()
+    } else {
+        format!("https://wttr.in/{}?format=j1", urlencoding::encode(location))
+    };
+
+    let body = match fetch_url_blocking(&url, "GET") {
+        Ok((_status, body)) => body,
+        Err(e) => {
+            let mut facts = HashMap::new();
+            facts.insert("error".into(), e.clone());
+            return Ok((
+                serde_json::json!({
+                    "status": "error",
+                    "error": format!("Failed to fetch weather: {}", e),
+                    "location": location
+                })
+                .to_string()
+                .into_bytes(),
+                None,
+                facts,
+            ));
+        }
+    };
+
+    // Parse the wttr.in JSON response
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or(serde_json::json!({"raw": body}));
+
+    // Extract key weather fields
+    let current = parsed
+        .get("current_condition")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first());
+
+    let result = if let Some(cc) = current {
+        let temp_c = cc.get("temp_C").and_then(|v| v.as_str()).unwrap_or("?");
+        let temp_f = cc.get("temp_F").and_then(|v| v.as_str()).unwrap_or("?");
+        let humidity = cc.get("humidity").and_then(|v| v.as_str()).unwrap_or("?");
+        let desc = cc
+            .get("weatherDesc")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|d| d.get("value"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+        let wind_kmph = cc.get("windspeedKmph").and_then(|v| v.as_str()).unwrap_or("?");
+        let feels_like = cc.get("FeelsLikeC").and_then(|v| v.as_str()).unwrap_or("?");
+
+        let area = parsed
+            .get("nearest_area")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|a| a.get("areaName"))
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|n| n.get("value"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(location);
+
+        serde_json::json!({
+            "location": area,
+            "temperature_c": temp_c,
+            "temperature_f": temp_f,
+            "feels_like_c": feels_like,
+            "humidity": humidity,
+            "description": desc,
+            "wind_kmph": wind_kmph,
+        })
+    } else {
+        serde_json::json!({
+            "location": location,
+            "raw": body.chars().take(500).collect::<String>(),
+        })
+    };
+
+    let mut facts = HashMap::new();
+    facts.insert("location".into(), location.to_string());
+
+    Ok((result.to_string().into_bytes(), None, facts))
+}
+
+/// Extract text content from an XML tag (simple, non-recursive).
+fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
+    let open = format!("<{}", tag);
+    let close = format!("</{}>", tag);
+    let start = xml.find(&open)?;
+    let after_open = &xml[start..];
+    let content_start = after_open.find('>')? + 1;
+    let content = &after_open[content_start..];
+    let end = content.find(&close)?;
+    let text = &content[..end];
+    // Strip CDATA if present
+    let text = text
+        .trim()
+        .strip_prefix("<![CDATA[")
+        .and_then(|s| s.strip_suffix("]]>"))
+        .unwrap_or(text.trim());
+    Some(text.to_string())
 }
 
 #[cfg(test)]

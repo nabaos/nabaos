@@ -30,6 +30,7 @@ pub struct ChainExecutor<'a> {
     manifest: &'a AgentManifest,
     breaker_registry: Option<&'a BreakerRegistry>,
     constitution: Option<&'a ConstitutionEnforcer>,
+    confirm_fn: Option<&'a crate::agent_os::confirmation::ConfirmFn>,
 }
 
 /// Validate that all required chain parameters are provided.
@@ -55,6 +56,7 @@ impl<'a> ChainExecutor<'a> {
             manifest,
             breaker_registry: None,
             constitution: None,
+            confirm_fn: None,
         }
     }
 
@@ -67,6 +69,18 @@ impl<'a> ChainExecutor<'a> {
     /// Attach constitution enforcer for ability-level checks before each step.
     pub fn with_constitution(mut self, constitution: &'a ConstitutionEnforcer) -> Self {
         self.constitution = Some(constitution);
+        self
+    }
+
+    /// Attach a confirmation callback for interactive user prompts.
+    pub fn with_confirm_fn(mut self, confirm_fn: &'a crate::agent_os::confirmation::ConfirmFn) -> Self {
+        self.confirm_fn = Some(confirm_fn);
+        self
+    }
+
+    /// Conditionally attach a confirmation callback from an `Option<ConfirmFn>`.
+    pub fn pipe_confirm(mut self, confirm_fn: &'a Option<crate::agent_os::confirmation::ConfirmFn>) -> Self {
+        self.confirm_fn = confirm_fn.as_ref();
         self
     }
 
@@ -136,15 +150,50 @@ impl<'a> ChainExecutor<'a> {
                         reasons.join("; ")
                     )));
                 }
-                // Log confirmed breakers (non-abort) as warnings
-                for fired in &check.fired {
-                    if fired.action == BreakerAction::Confirm {
-                        tracing::warn!(
-                            step = %step.id,
-                            breaker = %fired.breaker_id,
-                            "Circuit breaker CONFIRM: {}",
-                            fired.reason
-                        );
+                // Interactive confirmation for Confirm breakers
+                if check.needs_confirm {
+                    if let Some(confirm_fn) = self.confirm_fn {
+                        use crate::agent_os::confirmation::*;
+                        let confirm_breaker = check
+                            .fired
+                            .iter()
+                            .find(|f| f.action == BreakerAction::Confirm);
+                        if let Some(fired) = confirm_breaker {
+                            let request = ConfirmationRequest::new(
+                                self.manifest.name.as_str(),
+                                &step.ability,
+                                &fired.reason,
+                                ConfirmationSource::CircuitBreaker {
+                                    breaker_id: fired.breaker_id.clone(),
+                                },
+                            );
+                            match confirm_fn(request) {
+                                Some(ConfirmationResponse::AllowOnce)
+                                | Some(ConfirmationResponse::AllowSession)
+                                | Some(ConfirmationResponse::AllowAlwaysAgent) => {
+                                    // Proceed — user approved
+                                }
+                                Some(ConfirmationResponse::Deny) | None => {
+                                    return Err(NyayaError::Wasm(format!(
+                                        "User denied confirmation for step '{}': {}",
+                                        step.id, fired.reason
+                                    )));
+                                }
+                            }
+                        }
+                    } else {
+                        // No interactive channel — log warning but allow through
+                        // (backwards-compatible behavior for non-TUI callers)
+                        for fired in &check.fired {
+                            if fired.action == BreakerAction::Confirm {
+                                tracing::warn!(
+                                    step = %step.id,
+                                    breaker = %fired.breaker_id,
+                                    "Circuit breaker CONFIRM (no interactive channel): {}",
+                                    fired.reason
+                                );
+                            }
+                        }
                     }
                 }
             }
