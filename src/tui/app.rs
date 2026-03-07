@@ -4187,3 +4187,146 @@ fn format_money(usd: f64) -> String {
         format!("${:.2}", usd)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_os::confirmation::*;
+
+    #[test]
+    fn test_parse_agent_mention_with_query() {
+        let (agent, query) = App::parse_agent_mention("@morning-briefing check my schedule");
+        assert_eq!(agent, Some("morning-briefing".to_string()));
+        assert_eq!(query, "check my schedule");
+    }
+
+    #[test]
+    fn test_parse_agent_mention_bare() {
+        let (agent, query) = App::parse_agent_mention("@morning-briefing");
+        assert_eq!(agent, Some("morning-briefing".to_string()));
+        assert_eq!(query, "");
+    }
+
+    #[test]
+    fn test_parse_agent_mention_no_at() {
+        let (agent, query) = App::parse_agent_mention("hello world");
+        assert_eq!(agent, None);
+        assert_eq!(query, "hello world");
+    }
+
+    #[test]
+    fn test_confirmation_channel_allow_once() {
+        // Simulate the confirmation flow: background thread sends request,
+        // "TUI" responds with AllowOnce via the channel.
+        let (app_tx, app_rx) = std::sync::mpsc::channel::<AppMessage>();
+
+        let request = ConfirmationRequest::new(
+            "test-agent",
+            "email.send:bob@example.com",
+            "Email send requires approval",
+            ConfirmationSource::Constitution {
+                rule_name: "confirm_send_actions".into(),
+            },
+        );
+
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel::<ConfirmationResponse>();
+
+        // Simulate orchestrator sending confirmation request
+        app_tx
+            .send(AppMessage::ConfirmationNeeded {
+                request: request.clone(),
+                responder: resp_tx,
+            })
+            .unwrap();
+
+        // Simulate TUI receiving and handling it
+        if let Ok(AppMessage::ConfirmationNeeded { request: req, responder }) = app_rx.try_recv() {
+            assert_eq!(req.agent_id, "test-agent");
+            assert_eq!(req.ability, "email.send:bob@example.com");
+            // TUI user selects "Allow once"
+            responder.send(ConfirmationResponse::AllowOnce).unwrap();
+        } else {
+            panic!("Expected ConfirmationNeeded message");
+        }
+
+        // Orchestrator receives the response
+        let response = resp_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+        assert_eq!(response, ConfirmationResponse::AllowOnce);
+    }
+
+    #[test]
+    fn test_confirmation_channel_deny() {
+        let (app_tx, app_rx) = std::sync::mpsc::channel::<AppMessage>();
+
+        let request = ConfirmationRequest::new(
+            "risky-agent",
+            "shell.exec",
+            "Shell execution needs approval",
+            ConfirmationSource::CircuitBreaker {
+                breaker_id: "global_shell".into(),
+            },
+        );
+
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel::<ConfirmationResponse>();
+
+        app_tx
+            .send(AppMessage::ConfirmationNeeded {
+                request,
+                responder: resp_tx,
+            })
+            .unwrap();
+
+        // TUI user denies
+        if let Ok(AppMessage::ConfirmationNeeded { responder, .. }) = app_rx.try_recv() {
+            responder.send(ConfirmationResponse::Deny).unwrap();
+        }
+
+        let response = resp_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+        assert_eq!(response, ConfirmationResponse::Deny);
+    }
+
+    #[test]
+    fn test_pending_confirmation_selection_bounds() {
+        // Verify selection wrapping logic used in key handling
+        let selected: usize = 0;
+        assert_eq!(ConfirmationResponse::ALL[selected], ConfirmationResponse::AllowOnce);
+        assert_eq!(ConfirmationResponse::ALL[3], ConfirmationResponse::Deny);
+    }
+
+    #[test]
+    fn test_confirm_fn_closure_bridges_channels() {
+        // Test the ConfirmFn pattern used by orchestrator.set_confirm_tx()
+        let (app_tx, app_rx) = std::sync::mpsc::channel::<AppMessage>();
+
+        let confirm_fn: ConfirmFn = Box::new(move |request: ConfirmationRequest| {
+            let (resp_tx, resp_rx) = std::sync::mpsc::channel::<ConfirmationResponse>();
+            let msg = AppMessage::ConfirmationNeeded {
+                request,
+                responder: resp_tx,
+            };
+            if app_tx.send(msg).is_err() {
+                return None;
+            }
+            resp_rx.recv_timeout(std::time::Duration::from_secs(5)).ok()
+        });
+
+        // Spawn a "TUI handler" thread that auto-approves
+        let handle = std::thread::spawn(move || {
+            if let Ok(AppMessage::ConfirmationNeeded { responder, .. }) = app_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                responder.send(ConfirmationResponse::AllowAlwaysAgent).unwrap();
+            }
+        });
+
+        let request = ConfirmationRequest::new(
+            "agent-1",
+            "sms.send:+1234567890",
+            "SMS requires confirmation",
+            ConfirmationSource::Privilege { required_level: 1 },
+        );
+
+        let result = confirm_fn(request);
+        assert_eq!(result, Some(ConfirmationResponse::AllowAlwaysAgent));
+
+        handle.join().unwrap();
+    }
+}

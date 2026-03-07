@@ -1820,6 +1820,23 @@ mod tests {
     }
 
     #[test]
+    fn test_check_ability_unknown_blocked_by_default() {
+        // Built-in default constitution is deny-by-default (Block)
+        let enforcer = ConstitutionEnforcer::from_constitution(default_constitution());
+        let result = enforcer.check_ability("unknown_unknown");
+        assert!(!result.allowed, "unknown_unknown should be blocked by deny-by-default");
+        assert_eq!(result.enforcement, Enforcement::Block);
+    }
+
+    #[test]
+    fn test_check_ability_send_email_confirms() {
+        let enforcer = ConstitutionEnforcer::from_constitution(default_constitution());
+        let result = enforcer.check_ability("send_email");
+        assert!(result.allowed, "send_email should be allowed (Confirm is allowed=true)");
+        assert_eq!(result.enforcement, Enforcement::Confirm);
+    }
+
+    #[test]
     fn test_destructive_keywords_blocked() {
         let enforcer = ConstitutionEnforcer::from_constitution(default_constitution());
 
