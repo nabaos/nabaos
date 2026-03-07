@@ -259,6 +259,7 @@ pub fn handle_message(orch: &mut Orchestrator, text: &str, chat_id: i64) -> Stri
             }
             "/persona" => handle_persona_command(orch, &parts),
             "/agents" => handle_agents_command(orch, &parts),
+            "/resource" | "/resources" => handle_resource_command(orch, &parts),
             "/settings" => handle_settings_command(orch, &parts),
             "/memory" => handle_memory_command(orch, &parts),
             "/costs" => handle_costs_dashboard(orch),
@@ -364,6 +365,7 @@ fn handle_help() -> String {
     msg.push_str("  /stop       Emergency stop\n");
     msg.push_str("  /persona    Switch personality\n");
     msg.push_str("  /agents     Manage agents (install/start/stop)\n");
+    msg.push_str("  /resource   Manage resources (register/delete)\n");
     msg.push_str("  /settings   Preferences\n");
     msg.push_str("  /memory     Conversation history\n");
     msg.push_str("\nTry: \"how much have I spent?\" or \"show my workflows\"\n");
@@ -1373,8 +1375,20 @@ fn handle_style_command(orch: &mut Orchestrator, parts: &[&str]) -> String {
     }
 }
 
-/// Handle /resource commands: /resource list, /resource status <id>, /resource leases
+/// Handle /resource commands: /resource list, /resource status <id>, /resource leases,
+/// /resource register <id> <type> [name], /resource delete <id>
 fn handle_resource_command(orch: &Orchestrator, parts: &[&str]) -> String {
+    // Re-split the last element if needed (simple handler uses splitn(3))
+    let expanded: Vec<&str> = if parts.len() == 3 {
+        let mut v: Vec<&str> = Vec::new();
+        v.push(parts[0]);
+        v.push(parts[1]);
+        v.extend(parts[2].split_whitespace());
+        v
+    } else {
+        parts.to_vec()
+    };
+    let parts = &expanded[..];
     let sub = parts.get(1).copied().unwrap_or("list");
     match sub {
         "list" => match orch.resource_registry().list_resources() {
@@ -1431,7 +1445,42 @@ fn handle_resource_command(orch: &Orchestrator, parts: &[&str]) -> String {
             }
             Err(e) => format!("Error: {}", e),
         },
-        _ => "Usage: /resource list|status <id>|leases".to_string(),
+        "register" => {
+            // /resource register <id> <type> [name]
+            let id = parts.get(2).unwrap_or(&"");
+            let rtype = parts.get(3).unwrap_or(&"");
+            if id.is_empty() || rtype.is_empty() {
+                return "Usage: /resource register <id> <type> [name]\nTypes: compute, financial, device, api_service".to_string();
+            }
+            let resource_type = match rtype.to_lowercase().as_str() {
+                "compute" => crate::resource::ResourceType::Compute,
+                "financial" => crate::resource::ResourceType::Financial,
+                "device" => crate::resource::ResourceType::Device,
+                "api_service" | "apiservice" => crate::resource::ResourceType::ApiService,
+                _ => {
+                    return format!(
+                        "Unknown type '{}'. Must be: compute, financial, device, api_service",
+                        rtype
+                    );
+                }
+            };
+            let name = parts.get(4).copied().unwrap_or(id);
+            match orch.resource_registry().register(id, name, &resource_type, "{}") {
+                Ok(()) => format!("Registered resource '{}' [{}].", id, rtype),
+                Err(e) => format!("Register failed: {}", e),
+            }
+        }
+        "delete" | "unregister" => {
+            let id = parts.get(2).unwrap_or(&"");
+            if id.is_empty() {
+                return "Usage: /resource delete <id>".to_string();
+            }
+            match orch.resource_registry().unregister(id) {
+                Ok(()) => format!("Deleted resource '{}'.", id),
+                Err(e) => format!("Delete failed: {}", e),
+            }
+        }
+        _ => "Usage: /resource list|status <id>|leases|register <id> <type>|delete <id>".to_string(),
     }
 }
 
@@ -1645,6 +1694,9 @@ pub fn handle_message_rich(orch: &mut Orchestrator, text: &str, chat_id: i64) ->
                 } else {
                     handle_agents_command_rich(orch)
                 }
+            }
+            "/resource" | "/resources" => {
+                TelegramResponse::text(handle_resource_command(orch, &parts))
             }
             "/settings" => TelegramResponse::text(handle_settings_command(orch, &parts)),
             "/memory" => TelegramResponse::text(handle_memory_command(orch, &parts)),
@@ -3220,5 +3272,75 @@ mod tests {
         let parts = vec!["/agents", "uninstall", "my-agent"];
         let result = handle_agents_command(&orch, &parts);
         assert!(result.contains("Uninstalled"));
+    }
+
+    #[test]
+    fn test_resource_register_and_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = crate::core::config::NyayaConfig {
+            data_dir: dir.path().to_path_buf(),
+            model_path: dir.path().join("models"),
+            constitution_path: None,
+            llm_api_key: None,
+            llm_provider: None,
+            llm_base_url: None,
+            llm_model: None,
+            daily_budget_usd: None,
+            per_task_budget_usd: None,
+            plugin_dir: dir.path().join("plugins"),
+            subprocess_config: None,
+            constitution_template: None,
+            profile: crate::modules::profile::ModuleProfile::default(),
+        };
+        let orch = crate::core::orchestrator::Orchestrator::new(config).unwrap();
+
+        // Register
+        let parts = vec!["/resource", "register", "gpu-01 compute GPU Cluster"];
+        let result = handle_resource_command(&orch, &parts);
+        assert!(result.contains("Registered"), "Got: {}", result);
+
+        // List shows it
+        let parts = vec!["/resource", "list"];
+        let result = handle_resource_command(&orch, &parts);
+        assert!(result.contains("gpu-01"), "Got: {}", result);
+
+        // Delete
+        let parts = vec!["/resource", "delete", "gpu-01"];
+        let result = handle_resource_command(&orch, &parts);
+        assert!(result.contains("Deleted"), "Got: {}", result);
+
+        // List is now empty
+        let parts = vec!["/resource", "list"];
+        let result = handle_resource_command(&orch, &parts);
+        assert!(
+            result.contains("No resources"),
+            "Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_resource_register_invalid_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = crate::core::config::NyayaConfig {
+            data_dir: dir.path().to_path_buf(),
+            model_path: dir.path().join("models"),
+            constitution_path: None,
+            llm_api_key: None,
+            llm_provider: None,
+            llm_base_url: None,
+            llm_model: None,
+            daily_budget_usd: None,
+            per_task_budget_usd: None,
+            plugin_dir: dir.path().join("plugins"),
+            subprocess_config: None,
+            constitution_template: None,
+            profile: crate::modules::profile::ModuleProfile::default(),
+        };
+        let orch = crate::core::orchestrator::Orchestrator::new(config).unwrap();
+
+        let parts = vec!["/resource", "register", "test invalid_type"];
+        let result = handle_resource_command(&orch, &parts);
+        assert!(result.contains("Unknown type"), "Got: {}", result);
     }
 }

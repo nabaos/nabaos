@@ -111,8 +111,8 @@
 |---------|-----|--------|----------|-------|
 | List resources | Y | Y (API) | Y (/resource list) | |
 | Resource status | Y (context panel) | Y (API) | Y (/resource status) | |
-| Register resource | Y (r key + modal) | N | N | **Gap: Web/Telegram can't register** |
-| Delete resource | Y (d key) | N | N | **Gap: Web/Telegram can't delete** |
+| Register resource | Y (r key + modal) | Y (API) | Y (/resource register) | All 3 channels |
+| Delete resource | Y (d key) | Y (API) | Y (/resource delete) | All 3 channels |
 | View leases | Y (Enter on resource) | Y (API) | Y (/resource leases) | |
 | Quota usage bars | Y (context panel) | N | N | TUI-only visual |
 
@@ -189,7 +189,7 @@
 | 1 | ~~**Confirmation modal**~~ | ~~Telegram~~ | ~~Medium~~ | **DONE** (v0.3.1) — inline keyboard |
 | 2 | ~~**@agent inline routing**~~ | ~~Telegram~~ | ~~Low~~ | **DONE** (v0.3.1) — all 3 channels |
 | 3 | ~~**Agent lifecycle (install/start/stop)**~~ | ~~Web, Telegram~~ | ~~Medium~~ | **DONE** (v0.3.1) — API + /agents |
-| 4 | **Resource register/delete** | Web, Telegram | Low | Low |
+| 4 | ~~**Resource register/delete**~~ | ~~Web, Telegram~~ | ~~Low~~ | **DONE** (v0.3.1) — API + /resource |
 | 5 | ~~**Schedule enable**~~ | ~~Web, Telegram~~ | ~~Low~~ | **DONE** (v0.3.1) — TUI Schedule tab |
 | 6 | **Cost period filtering** | TUI | Low | Low |
 | 7 | **Response style selector** | TUI | Low | Low |

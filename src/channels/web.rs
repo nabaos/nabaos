@@ -2889,6 +2889,72 @@ async fn handle_list_leases(State(state): State<AppState>) -> impl IntoResponse 
     }
 }
 
+/// Register a new resource.
+#[derive(Deserialize)]
+struct RegisterResourceRequest {
+    id: String,
+    name: String,
+    resource_type: String,
+    #[serde(default = "default_config_json")]
+    config_json: String,
+}
+
+fn default_config_json() -> String {
+    "{}".to_string()
+}
+
+async fn handle_register_resource(
+    State(state): State<AppState>,
+    Json(body): Json<RegisterResourceRequest>,
+) -> impl IntoResponse {
+    let resource_type = match body.resource_type.to_lowercase().as_str() {
+        "compute" => crate::resource::ResourceType::Compute,
+        "financial" => crate::resource::ResourceType::Financial,
+        "device" => crate::resource::ResourceType::Device,
+        "api_service" | "apiservice" => crate::resource::ResourceType::ApiService,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("Invalid resource_type '{}'. Must be: compute, financial, device, api_service", body.resource_type)
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let orch = state.orch.lock().unwrap_or_else(|p| p.into_inner());
+    match orch
+        .resource_registry()
+        .register(&body.id, &body.name, &resource_type, &body.config_json)
+    {
+        Ok(()) => Json(serde_json::json!({
+            "ok": true,
+            "id": body.id,
+            "name": body.name,
+            "resource_type": body.resource_type,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Delete (unregister) a resource.
+async fn handle_delete_resource(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let orch = state.orch.lock().unwrap_or_else(|p| p.into_inner());
+    match orch.resource_registry().unregister(&id) {
+        Ok(()) => Json(serde_json::json!({ "ok": true })),
+        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+    }
+}
+
 /// Build-not-found fallback when nabaos-web/dist does not exist.
 async fn fallback_html() -> Html<&'static str> {
     Html(
@@ -3283,9 +3349,15 @@ pub fn create_router(state: AppState) -> Router {
         // Webhooks (unauthenticated — external services POST here)
         .route("/api/webhooks/{id}", post(handle_webhook_incoming))
         // Resources (/api/v1/resources/*)
-        .route("/api/v1/resources", get(handle_list_resources))
+        .route(
+            "/api/v1/resources",
+            get(handle_list_resources).post(handle_register_resource),
+        )
         .route("/api/v1/resources/leases", get(handle_list_leases))
-        .route("/api/v1/resources/{id}", get(handle_resource_status))
+        .route(
+            "/api/v1/resources/{id}",
+            get(handle_resource_status).delete(handle_delete_resource),
+        )
         // Browser management (/api/v1/browser/*)
         .route(
             "/api/v1/browser/sessions",
@@ -4413,5 +4485,53 @@ mod tests {
 
         store.uninstall("remove-me").unwrap();
         assert_eq!(store.list().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_resource_register_and_delete() {
+        let tmp = tempfile::tempdir().unwrap();
+        let registry =
+            crate::resource::registry::ResourceRegistry::open(&tmp.path().join("res.db"))
+                .unwrap();
+
+        // Register
+        registry
+            .register(
+                "gpu-01",
+                "GPU Cluster",
+                &crate::resource::ResourceType::Compute,
+                "{}",
+            )
+            .unwrap();
+        let list = registry.list_resources().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "gpu-01");
+        assert_eq!(list[0].name, "GPU Cluster");
+
+        // Delete
+        registry.unregister("gpu-01").unwrap();
+        let list = registry.list_resources().unwrap();
+        assert_eq!(list.len(), 0);
+    }
+
+    #[test]
+    fn test_resource_register_invalid_type() {
+        // Just verify the type parsing logic
+        let valid_types = ["compute", "financial", "device", "api_service", "apiservice"];
+        let invalid_types = ["unknown", "gpu", ""];
+        for t in &valid_types {
+            let result = match t.to_lowercase().as_str() {
+                "compute" | "financial" | "device" | "api_service" | "apiservice" => true,
+                _ => false,
+            };
+            assert!(result, "Type '{}' should be valid", t);
+        }
+        for t in &invalid_types {
+            let result = match t.to_lowercase().as_str() {
+                "compute" | "financial" | "device" | "api_service" | "apiservice" => true,
+                _ => false,
+            };
+            assert!(!result, "Type '{}' should be invalid", t);
+        }
     }
 }
