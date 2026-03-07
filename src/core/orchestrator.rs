@@ -2904,6 +2904,11 @@ impl Orchestrator {
         &self.chain_store
     }
 
+    /// Get the orchestrator configuration.
+    pub fn config(&self) -> &NyayaConfig {
+        &self.config
+    }
+
     /// Get the scheduler for job management.
     pub fn scheduler(&self) -> &Scheduler {
         &self.scheduler

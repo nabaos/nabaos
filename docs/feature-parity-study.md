@@ -62,8 +62,8 @@
 | Persona dropdown | N/A | Y (header) | N/A | |
 | Persona switching | Y (command palette) | Y (dropdown) | Y (/persona, talk: callback) | Different UX per channel |
 | Agent category filter | Y (8 categories) | N | N | TUI-only feature |
-| Agent install/uninstall | Y (i/u keys) | N | N | **Gap: Web/Telegram lack agent lifecycle** |
-| Agent start/stop | Y (s key) | N | N | **Gap: Web/Telegram lack agent lifecycle** |
+| Agent install/uninstall | Y (i/u keys) | Y (API) | Y (/agents) | All 3 channels |
+| Agent start/stop | Y (s key) | Y (API) | Y (/agents) | All 3 channels |
 | Agent search | Y (/ key) | N | Y (/agents lists) | |
 
 ### 4. Workflow Management
@@ -188,7 +188,7 @@
 |---|---------|-------------|--------|----------|
 | 1 | ~~**Confirmation modal**~~ | ~~Telegram~~ | ~~Medium~~ | **DONE** (v0.3.1) — inline keyboard |
 | 2 | ~~**@agent inline routing**~~ | ~~Telegram~~ | ~~Low~~ | **DONE** (v0.3.1) — all 3 channels |
-| 3 | **Agent lifecycle (install/start/stop)** | Web, Telegram | Medium | Medium |
+| 3 | ~~**Agent lifecycle (install/start/stop)**~~ | ~~Web, Telegram~~ | ~~Medium~~ | **DONE** (v0.3.1) — API + /agents |
 | 4 | **Resource register/delete** | Web, Telegram | Low | Low |
 | 5 | ~~**Schedule enable**~~ | ~~Web, Telegram~~ | ~~Low~~ | **DONE** (v0.3.1) — TUI Schedule tab |
 | 6 | **Cost period filtering** | TUI | Low | Low |
@@ -210,7 +210,7 @@
 
 1. ~~**Telegram confirmation modal**~~ — **DONE** (v0.3.1)
 2. ~~**Telegram @agent routing**~~ — **DONE** (v0.3.1)
-3. **Web agent lifecycle** — Add install/start/stop to Settings or dedicated Agents page
+3. ~~**Web agent lifecycle**~~ — **DONE** (v0.3.1)
 4. **TUI response style** — Add style selector to command palette or Settings tab
 5. **TUI cost dashboard** — Add period filtering to History tab or new Costs tab
 

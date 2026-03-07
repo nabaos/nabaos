@@ -12,7 +12,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::agent_os::catalog::AgentCatalog;
 use crate::agent_os::confirmation::{ConfirmationRequest, ConfirmationResponse};
+use crate::agent_os::store::AgentStore;
+use crate::agent_os::types::AgentState;
 use crate::chain::scheduler::parse_interval;
 use crate::core::config::NyayaConfig;
 use crate::core::error::{NyayaError, Result};
@@ -255,6 +258,7 @@ pub fn handle_message(orch: &mut Orchestrator, text: &str, chat_id: i64) -> Stri
                 }
             }
             "/persona" => handle_persona_command(orch, &parts),
+            "/agents" => handle_agents_command(orch, &parts),
             "/settings" => handle_settings_command(orch, &parts),
             "/memory" => handle_memory_command(orch, &parts),
             "/costs" => handle_costs_dashboard(orch),
@@ -359,6 +363,7 @@ fn handle_help() -> String {
     msg.push_str("  /status     What's happening\n");
     msg.push_str("  /stop       Emergency stop\n");
     msg.push_str("  /persona    Switch personality\n");
+    msg.push_str("  /agents     Manage agents (install/start/stop)\n");
     msg.push_str("  /settings   Preferences\n");
     msg.push_str("  /memory     Conversation history\n");
     msg.push_str("\nTry: \"how much have I spent?\" or \"show my workflows\"\n");
@@ -762,6 +767,191 @@ fn handle_talk(orch: &mut Orchestrator, agent_id: &str) -> String {
     }
     orch.set_active_agent(agent_id);
     format!("Switched to agent: {}", agent_id)
+}
+
+/// Handle /agents commands: list, install, uninstall, start, stop.
+fn handle_agents_command(orch: &Orchestrator, parts: &[&str]) -> String {
+    let sub = parts.get(1).copied().unwrap_or("list");
+    let data_dir = &orch.config().data_dir;
+    let catalog_dir = data_dir.join("catalog");
+    let store_db = data_dir.join("agents.db");
+    let agents_dir = data_dir.join("agents");
+
+    match sub {
+        "list" => {
+            let catalog = AgentCatalog::new(&catalog_dir);
+            let entries = catalog.list().unwrap_or_default();
+            if entries.is_empty() {
+                return "No agents in catalog.".to_string();
+            }
+            let installed = AgentStore::open(&store_db, &agents_dir)
+                .and_then(|s| s.list())
+                .unwrap_or_default();
+            let installed_map: HashMap<String, _> =
+                installed.into_iter().map(|a| (a.id.clone(), a)).collect();
+
+            let mut out = String::from("Agents:\n");
+            for entry in &entries {
+                let state_str = if let Some(inst) = installed_map.get(&entry.name) {
+                    match inst.state {
+                        AgentState::Running => "running",
+                        AgentState::Paused => "paused",
+                        AgentState::Stopped => "stopped",
+                        AgentState::Disabled => "disabled",
+                    }
+                } else {
+                    "not installed"
+                };
+                let symbol = match state_str {
+                    "running" => "\u{25cf}", // ●
+                    "paused" => "\u{25cc}",  // ◌
+                    "stopped" => "\u{25c9}", // ◉
+                    "disabled" => "\u{2298}", // ⊘
+                    _ => "\u{25cb}",          // ○
+                };
+                out.push_str(&format!(
+                    "  {} {} [{}] — {}\n",
+                    symbol, entry.name, state_str, entry.description
+                ));
+            }
+            out.push_str(
+                "\n/agents install <name>\n/agents uninstall <name>\n/agents start <name>\n/agents stop <name>",
+            );
+            out
+        }
+        "install" => {
+            let Some(name) = parts.get(2) else {
+                return "Usage: /agents install <name>".to_string();
+            };
+            let agent_src = catalog_dir.join(name);
+            if !agent_src.exists() {
+                return format!("Agent '{}' not found in catalog.", name);
+            }
+            match AgentStore::open(&store_db, &agents_dir) {
+                Ok(store) => match store.install_from_dir(&agent_src) {
+                    Ok(inst) => format!("Installed '{}' v{}.", inst.id, inst.version),
+                    Err(e) => format!("Install failed: {}", e),
+                },
+                Err(e) => format!("Store error: {}", e),
+            }
+        }
+        "uninstall" => {
+            let Some(name) = parts.get(2) else {
+                return "Usage: /agents uninstall <name>".to_string();
+            };
+            match AgentStore::open(&store_db, &agents_dir) {
+                Ok(store) => match store.uninstall(name) {
+                    Ok(()) => format!("Uninstalled '{}'.", name),
+                    Err(e) => format!("Uninstall failed: {}", e),
+                },
+                Err(e) => format!("Store error: {}", e),
+            }
+        }
+        "start" => {
+            let Some(name) = parts.get(2) else {
+                return "Usage: /agents start <name>".to_string();
+            };
+            match AgentStore::open(&store_db, &agents_dir) {
+                Ok(store) => match store.set_state(name, AgentState::Running) {
+                    Ok(()) => format!("Started '{}'.", name),
+                    Err(e) => format!("Start failed: {}", e),
+                },
+                Err(e) => format!("Store error: {}", e),
+            }
+        }
+        "stop" => {
+            let Some(name) = parts.get(2) else {
+                return "Usage: /agents stop <name>".to_string();
+            };
+            match AgentStore::open(&store_db, &agents_dir) {
+                Ok(store) => match store.set_state(name, AgentState::Stopped) {
+                    Ok(()) => format!("Stopped '{}'.", name),
+                    Err(e) => format!("Stop failed: {}", e),
+                },
+                Err(e) => format!("Store error: {}", e),
+            }
+        }
+        _ => "Usage: /agents [list|install|uninstall|start|stop] [name]".to_string(),
+    }
+}
+
+/// Handle /agents in rich mode — returns inline keyboard for agent lifecycle.
+fn handle_agents_command_rich(orch: &Orchestrator) -> TelegramResponse {
+    let data_dir = &orch.config().data_dir;
+    let catalog_dir = data_dir.join("catalog");
+    let store_db = data_dir.join("agents.db");
+    let agents_dir = data_dir.join("agents");
+
+    let catalog = AgentCatalog::new(&catalog_dir);
+    let entries = catalog.list().unwrap_or_default();
+    if entries.is_empty() {
+        return TelegramResponse::text("No agents in catalog.");
+    }
+    let installed = AgentStore::open(&store_db, &agents_dir)
+        .and_then(|s| s.list())
+        .unwrap_or_default();
+    let installed_map: HashMap<String, _> =
+        installed.into_iter().map(|a| (a.id.clone(), a)).collect();
+
+    let mut text = String::from("Agents:\n");
+    let mut keyboard: Vec<Vec<(String, String)>> = Vec::new();
+
+    for entry in &entries {
+        let (state_str, symbol) = if let Some(inst) = installed_map.get(&entry.name) {
+            match inst.state {
+                AgentState::Running => ("running", "\u{25cf}"),
+                AgentState::Paused => ("paused", "\u{25cc}"),
+                AgentState::Stopped => ("stopped", "\u{25c9}"),
+                AgentState::Disabled => ("disabled", "\u{2298}"),
+            }
+        } else {
+            ("not installed", "\u{25cb}")
+        };
+        text.push_str(&format!(
+            "  {} {} [{}]\n",
+            symbol, entry.name, state_str
+        ));
+
+        // Build action buttons for this agent
+        let name = &entry.name;
+        if installed_map.contains_key(name) {
+            let inst = &installed_map[name];
+            let mut row = Vec::new();
+            match inst.state {
+                AgentState::Running => {
+                    row.push((format!("Stop {}", name), format!("agent:stop:{}", name)));
+                }
+                AgentState::Stopped | AgentState::Paused => {
+                    row.push((format!("Start {}", name), format!("agent:start:{}", name)));
+                }
+                AgentState::Disabled => {}
+            }
+            row.push((
+                format!("Uninstall {}", name),
+                format!("agent:uninstall:{}", name),
+            ));
+            if !row.is_empty() {
+                keyboard.push(row);
+            }
+        } else {
+            keyboard.push(vec![(
+                format!("Install {}", name),
+                format!("agent:install:{}", name),
+            )]);
+        }
+    }
+
+    TelegramResponse {
+        text,
+        keyboard: if keyboard.is_empty() {
+            None
+        } else {
+            Some(keyboard)
+        },
+        parse_mode: None,
+        is_streaming: false,
+        tier: None,
+    }
 }
 
 /// Handle /mcp commands: /mcp, /mcp list, /mcp tools <server>, /mcp status
@@ -1449,6 +1639,13 @@ pub fn handle_message_rich(orch: &mut Orchestrator, text: &str, chat_id: i64) ->
                 }
             }
             "/persona" => TelegramResponse::text(handle_persona_command(orch, &parts)),
+            "/agents" => {
+                if parts.len() > 1 {
+                    TelegramResponse::text(handle_agents_command(orch, &parts))
+                } else {
+                    handle_agents_command_rich(orch)
+                }
+            }
             "/settings" => TelegramResponse::text(handle_settings_command(orch, &parts)),
             "/memory" => TelegramResponse::text(handle_memory_command(orch, &parts)),
             "/costs" => handle_costs_dashboard_rich(orch),
@@ -1940,6 +2137,21 @@ pub fn handle_callback_query(
             handle_talk(orch, agent_id);
             TelegramResponse::text(format!("Switched to agent: {}", agent_id))
         }
+        d if d.starts_with("agent:") => {
+            // agent:install:name, agent:uninstall:name, agent:start:name, agent:stop:name
+            let rest = &d[6..];
+            if let Some((action, name)) = rest.split_once(':') {
+                let parts = vec!["/agents", action, name];
+                let result = handle_agents_command(orch, &parts);
+                // Return updated agent list with the result
+                let mut resp = handle_agents_command_rich(orch);
+                resp.text = format!("{}\n\n{}", result, resp.text);
+                resp
+            } else {
+                TelegramResponse::text("Invalid agent action.")
+            }
+        }
+        "cmd:agents" => handle_agents_command_rich(orch),
         _ => TelegramResponse::text("Unknown action."),
     }
 }
@@ -2904,5 +3116,109 @@ mod tests {
 
         let response = resp_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
         assert_eq!(response, ConfirmationResponse::AllowOnce);
+    }
+
+    #[test]
+    fn test_agents_command_list_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = crate::core::config::NyayaConfig {
+            data_dir: dir.path().to_path_buf(),
+            model_path: dir.path().join("models"),
+            constitution_path: None,
+            llm_api_key: None,
+            llm_provider: None,
+            llm_base_url: None,
+            llm_model: None,
+            daily_budget_usd: None,
+            per_task_budget_usd: None,
+            plugin_dir: dir.path().join("plugins"),
+            subprocess_config: None,
+            constitution_template: None,
+            profile: crate::modules::profile::ModuleProfile::default(),
+        };
+        std::fs::create_dir_all(dir.path().join("catalog")).unwrap();
+        let orch = crate::core::orchestrator::Orchestrator::new(config).unwrap();
+        let parts = vec!["/agents"];
+        let result = handle_agents_command(&orch, &parts);
+        assert!(result.contains("No agents in catalog"));
+    }
+
+    #[test]
+    fn test_agents_command_install_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = crate::core::config::NyayaConfig {
+            data_dir: dir.path().to_path_buf(),
+            model_path: dir.path().join("models"),
+            constitution_path: None,
+            llm_api_key: None,
+            llm_provider: None,
+            llm_base_url: None,
+            llm_model: None,
+            daily_budget_usd: None,
+            per_task_budget_usd: None,
+            plugin_dir: dir.path().join("plugins"),
+            subprocess_config: None,
+            constitution_template: None,
+            profile: crate::modules::profile::ModuleProfile::default(),
+        };
+        std::fs::create_dir_all(dir.path().join("catalog")).unwrap();
+        let orch = crate::core::orchestrator::Orchestrator::new(config).unwrap();
+        let parts = vec!["/agents", "install", "nonexistent"];
+        let result = handle_agents_command(&orch, &parts);
+        assert!(result.contains("not found in catalog"));
+    }
+
+    #[test]
+    fn test_agents_command_install_and_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = crate::core::config::NyayaConfig {
+            data_dir: dir.path().to_path_buf(),
+            model_path: dir.path().join("models"),
+            constitution_path: None,
+            llm_api_key: None,
+            llm_provider: None,
+            llm_base_url: None,
+            llm_model: None,
+            daily_budget_usd: None,
+            per_task_budget_usd: None,
+            plugin_dir: dir.path().join("plugins"),
+            subprocess_config: None,
+            constitution_template: None,
+            profile: crate::modules::profile::ModuleProfile::default(),
+        };
+        let catalog_dir = dir.path().join("catalog");
+        let agent_dir = catalog_dir.join("my-agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(
+            agent_dir.join("manifest.yaml"),
+            "name: my-agent\nversion: \"1.0.0\"\ndescription: test\ncategory: testing\nauthor: test\npermissions: []\n",
+        )
+        .unwrap();
+        let orch = crate::core::orchestrator::Orchestrator::new(config).unwrap();
+
+        // Install
+        let parts = vec!["/agents", "install", "my-agent"];
+        let result = handle_agents_command(&orch, &parts);
+        assert!(result.contains("Installed"));
+
+        // Start
+        let parts = vec!["/agents", "start", "my-agent"];
+        let result = handle_agents_command(&orch, &parts);
+        assert!(result.contains("Started"));
+
+        // List shows running
+        let parts = vec!["/agents"];
+        let result = handle_agents_command(&orch, &parts);
+        assert!(result.contains("running"));
+
+        // Stop
+        let parts = vec!["/agents", "stop", "my-agent"];
+        let result = handle_agents_command(&orch, &parts);
+        assert!(result.contains("Stopped"));
+
+        // Uninstall
+        let parts = vec!["/agents", "uninstall", "my-agent"];
+        let result = handle_agents_command(&orch, &parts);
+        assert!(result.contains("Uninstalled"));
     }
 }

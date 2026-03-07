@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::agent_os::catalog::AgentCatalog;
 use crate::agent_os::confirmation::{ConfirmationRequest, ConfirmationResponse};
+use crate::agent_os::store::AgentStore;
+use crate::agent_os::types::AgentState;
 
 /// A pending confirmation waiting for user response via the web UI.
 pub(crate) struct PendingWebConfirmation {
@@ -2530,6 +2533,146 @@ async fn handle_set_agent(
     Json(serde_json::json!({ "active": body.agent_id }))
 }
 
+// --- Agent Lifecycle API ---
+
+/// List all agents from catalog, merged with installed state from AgentStore.
+async fn handle_list_catalog_agents(State(state): State<AppState>) -> impl IntoResponse {
+    let data_dir = &state.config.data_dir;
+    let catalog_dir = data_dir.join("catalog");
+    let catalog = AgentCatalog::new(&catalog_dir);
+
+    let catalog_entries = catalog.list().unwrap_or_default();
+
+    let store_db = data_dir.join("agents.db");
+    let agents_dir = data_dir.join("agents");
+    let installed = AgentStore::open(&store_db, &agents_dir)
+        .and_then(|s| s.list())
+        .unwrap_or_default();
+
+    let installed_map: HashMap<String, _> = installed
+        .into_iter()
+        .map(|a| (a.id.clone(), a))
+        .collect();
+
+    let agents: Vec<serde_json::Value> = catalog_entries
+        .iter()
+        .map(|entry| {
+            let (state_str, installed) = if let Some(inst) = installed_map.get(&entry.name) {
+                (format!("{:?}", inst.state).to_lowercase(), true)
+            } else {
+                ("not_installed".to_string(), false)
+            };
+            serde_json::json!({
+                "name": entry.name,
+                "version": entry.version,
+                "description": entry.description,
+                "category": entry.category,
+                "author": entry.author,
+                "permissions": entry.permissions,
+                "installed": installed,
+                "state": state_str,
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({ "agents": agents }))
+}
+
+/// Install an agent from the catalog.
+async fn handle_install_agent(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> impl IntoResponse {
+    let data_dir = &state.config.data_dir;
+    let catalog_dir = data_dir.join("catalog");
+    let agent_src = catalog_dir.join(&agent_id);
+
+    if !agent_src.exists() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("Agent '{}' not found in catalog", agent_id) })),
+        );
+    }
+
+    let store_db = data_dir.join("agents.db");
+    let agents_dir = data_dir.join("agents");
+
+    match AgentStore::open(&store_db, &agents_dir) {
+        Ok(store) => match store.install_from_dir(&agent_src) {
+            Ok(installed) => (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "ok": true,
+                    "agent": installed.id,
+                    "version": installed.version,
+                })),
+            ),
+            Err(e) => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": format!("{}", e) })),
+            ),
+        },
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("Store error: {}", e) })),
+        ),
+    }
+}
+
+/// Uninstall an installed agent.
+async fn handle_uninstall_agent(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> impl IntoResponse {
+    let data_dir = &state.config.data_dir;
+    let store_db = data_dir.join("agents.db");
+    let agents_dir = data_dir.join("agents");
+
+    match AgentStore::open(&store_db, &agents_dir) {
+        Ok(store) => match store.uninstall(&agent_id) {
+            Ok(()) => Json(serde_json::json!({ "ok": true })),
+            Err(e) => Json(serde_json::json!({ "error": format!("{}", e) })),
+        },
+        Err(e) => Json(serde_json::json!({ "error": format!("Store error: {}", e) })),
+    }
+}
+
+/// Start an installed agent (set state to Running).
+async fn handle_start_agent(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> impl IntoResponse {
+    let data_dir = &state.config.data_dir;
+    let store_db = data_dir.join("agents.db");
+    let agents_dir = data_dir.join("agents");
+
+    match AgentStore::open(&store_db, &agents_dir) {
+        Ok(store) => match store.set_state(&agent_id, AgentState::Running) {
+            Ok(()) => Json(serde_json::json!({ "ok": true, "state": "running" })),
+            Err(e) => Json(serde_json::json!({ "error": format!("{}", e) })),
+        },
+        Err(e) => Json(serde_json::json!({ "error": format!("Store error: {}", e) })),
+    }
+}
+
+/// Stop a running agent (set state to Stopped).
+async fn handle_stop_agent(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> impl IntoResponse {
+    let data_dir = &state.config.data_dir;
+    let store_db = data_dir.join("agents.db");
+    let agents_dir = data_dir.join("agents");
+
+    match AgentStore::open(&store_db, &agents_dir) {
+        Ok(store) => match store.set_state(&agent_id, AgentState::Stopped) {
+            Ok(()) => Json(serde_json::json!({ "ok": true, "state": "stopped" })),
+            Err(e) => Json(serde_json::json!({ "error": format!("{}", e) })),
+        },
+        Err(e) => Json(serde_json::json!({ "error": format!("Store error: {}", e) })),
+    }
+}
+
 // --- Providers API ---
 
 async fn handle_list_providers(State(state): State<AppState>) -> impl IntoResponse {
@@ -3093,6 +3236,15 @@ pub fn create_router(state: AppState) -> Router {
         // Personas (/api/v1/personas/*)
         .route("/api/v1/personas", get(handle_list_agents))
         .route("/api/v1/personas/active", post(handle_set_agent))
+        // Agents lifecycle (/api/v1/agents/*)
+        .route("/api/v1/agents", get(handle_list_catalog_agents))
+        .route("/api/v1/agents/{id}/install", post(handle_install_agent))
+        .route(
+            "/api/v1/agents/{id}/uninstall",
+            post(handle_uninstall_agent),
+        )
+        .route("/api/v1/agents/{id}/start", post(handle_start_agent))
+        .route("/api/v1/agents/{id}/stop", post(handle_stop_agent))
         // Vault (/api/v1/vault/*)
         .route("/api/v1/vault", get(handle_list_providers))
         .route("/api/v1/vault/store", post(handle_set_provider_key))
@@ -4170,5 +4322,96 @@ mod tests {
 
         let response = resp_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
         assert_eq!(response, ConfirmationResponse::AllowOnce);
+    }
+
+    #[test]
+    fn test_agent_lifecycle_list_empty_catalog() {
+        let state = test_state();
+        let data_dir = &state.config.data_dir;
+        let catalog_dir = data_dir.join("catalog");
+        std::fs::create_dir_all(&catalog_dir).unwrap();
+
+        let catalog = AgentCatalog::new(&catalog_dir);
+        assert_eq!(catalog.list().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_agent_lifecycle_install_and_list() {
+        let state = test_state();
+        let data_dir = &state.config.data_dir;
+        let catalog_dir = data_dir.join("catalog");
+        let agent_dir = catalog_dir.join("test-agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(
+            agent_dir.join("manifest.yaml"),
+            "name: test-agent\nversion: \"1.0.0\"\ndescription: A test agent\ncategory: testing\nauthor: test\npermissions: []\n",
+        )
+        .unwrap();
+
+        let store_db = data_dir.join("agents.db");
+        let agents_dir = data_dir.join("agents");
+        let store = AgentStore::open(&store_db, &agents_dir).unwrap();
+        let installed = store.install_from_dir(&agent_dir).unwrap();
+        assert_eq!(installed.id, "test-agent");
+
+        let list = store.list().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "test-agent");
+    }
+
+    #[test]
+    fn test_agent_lifecycle_start_stop() {
+        let state = test_state();
+        let data_dir = &state.config.data_dir;
+        let catalog_dir = data_dir.join("catalog");
+        let agent_dir = catalog_dir.join("lifecycle-agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(
+            agent_dir.join("manifest.yaml"),
+            "name: lifecycle-agent\nversion: \"1.0.0\"\ndescription: test\ncategory: testing\nauthor: test\npermissions: []\n",
+        )
+        .unwrap();
+
+        let store_db = data_dir.join("agents.db");
+        let agents_dir = data_dir.join("agents");
+        let store = AgentStore::open(&store_db, &agents_dir).unwrap();
+        store.install_from_dir(&agent_dir).unwrap();
+
+        // Start
+        store
+            .set_state("lifecycle-agent", AgentState::Running)
+            .unwrap();
+        let agent = store.get("lifecycle-agent").unwrap().unwrap();
+        assert_eq!(agent.state, AgentState::Running);
+
+        // Stop
+        store
+            .set_state("lifecycle-agent", AgentState::Stopped)
+            .unwrap();
+        let agent = store.get("lifecycle-agent").unwrap().unwrap();
+        assert_eq!(agent.state, AgentState::Stopped);
+    }
+
+    #[test]
+    fn test_agent_lifecycle_uninstall() {
+        let state = test_state();
+        let data_dir = &state.config.data_dir;
+        let catalog_dir = data_dir.join("catalog");
+        let agent_dir = catalog_dir.join("remove-me");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(
+            agent_dir.join("manifest.yaml"),
+            "name: remove-me\nversion: \"1.0.0\"\ndescription: test\ncategory: testing\nauthor: test\npermissions: []\n",
+        )
+        .unwrap();
+
+        let store_db = data_dir.join("agents.db");
+        let agents_dir = data_dir.join("agents");
+        let store = AgentStore::open(&store_db, &agents_dir).unwrap();
+        store.install_from_dir(&agent_dir).unwrap();
+        assert_eq!(store.list().unwrap().len(), 1);
+
+        store.uninstall("remove-me").unwrap();
+        assert_eq!(store.list().unwrap().len(), 0);
     }
 }
