@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import {
     sendQuery, sendQueryStream, type QueryResponse,
+    sendConfirmation, type ConfirmationInfo,
     getPersonas, setActivePersona, type PersonaList,
     getStyle, setStyle, clearStyle,
   } from '../lib/api';
@@ -48,6 +49,11 @@
 
   // PEA mode
   let peaMode = $state(false);
+
+  // Confirmation modal
+  let pendingConfirmation = $state<ConfirmationInfo | null>(null);
+  let confirmSelected = $state(0);
+  let confirmSending = $state(false);
 
   // Build Workflow modal
   let showWorkflowModal = $state(false);
@@ -221,6 +227,10 @@
           messages[agentIdx].error = true;
           messages = [...messages];
         },
+        onConfirmRequired(info: ConfirmationInfo) {
+          pendingConfirmation = info;
+          confirmSelected = 0;
+        },
       });
     } catch {
       try {
@@ -284,6 +294,42 @@
     workflowDone = false;
   }
 
+  async function handleConfirmResponse(value: string) {
+    if (!pendingConfirmation || confirmSending) return;
+    confirmSending = true;
+    try {
+      await sendConfirmation(pendingConfirmation.id, value);
+    } catch (e: any) {
+      showToast(`Confirmation failed: ${e.message}`, 'error');
+    }
+    pendingConfirmation = null;
+    confirmSelected = 0;
+    confirmSending = false;
+  }
+
+  function handleConfirmKeydown(e: KeyboardEvent) {
+    if (!pendingConfirmation) return;
+    const opts = pendingConfirmation.options;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      confirmSelected = Math.min(confirmSelected + 1, opts.length - 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      confirmSelected = Math.max(confirmSelected - 1, 0);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      handleConfirmResponse(opts[confirmSelected].value);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      handleConfirmResponse('deny');
+    } else if (e.key >= '1' && e.key <= String(opts.length)) {
+      e.preventDefault();
+      const idx = parseInt(e.key) - 1;
+      confirmSelected = idx;
+      handleConfirmResponse(opts[idx].value);
+    }
+  }
+
   // Close dropdowns on outside click
   function handleWindowClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
@@ -292,7 +338,7 @@
   }
 </script>
 
-<svelte:window onclick={handleWindowClick} />
+<svelte:window onclick={handleWindowClick} onkeydown={handleConfirmKeydown} />
 
 <div class="chat-container">
   <!-- Header with controls -->
@@ -606,6 +652,46 @@
     </div>
   {/if}
 </Modal>
+
+<!-- Confirmation Modal Overlay -->
+{#if pendingConfirmation}
+  <div class="confirm-overlay" role="dialog" aria-label="Permission Required">
+    <div class="confirm-modal">
+      <div class="confirm-header">Permission Required</div>
+      <div class="confirm-body">
+        <div class="confirm-field">
+          <span class="confirm-label">Agent</span>
+          <span class="confirm-value">{pendingConfirmation.agent_id}</span>
+        </div>
+        <div class="confirm-field">
+          <span class="confirm-label">Action</span>
+          <span class="confirm-value">{pendingConfirmation.ability}</span>
+        </div>
+        <div class="confirm-field">
+          <span class="confirm-label">Reason</span>
+          <span class="confirm-value">{pendingConfirmation.reason}</span>
+        </div>
+      </div>
+      <div class="confirm-options">
+        {#each pendingConfirmation.options as opt, i}
+          <button
+            class="confirm-option"
+            class:selected={i === confirmSelected}
+            disabled={confirmSending}
+            onclick={() => handleConfirmResponse(opt.value)}
+            onmouseenter={() => { confirmSelected = i; }}
+          >
+            <span class="confirm-option-num">{i + 1}</span>
+            <span>{opt.label}</span>
+          </button>
+        {/each}
+      </div>
+      <div class="confirm-hint">
+        <kbd>Enter</kbd> confirm &middot; <kbd>Esc</kbd> deny &middot; <kbd>1</kbd>-<kbd>4</kbd> quick-select
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   /* ── Layout ────────────────────────────────────── */
@@ -1258,11 +1344,125 @@
     color: var(--text);
   }
 
+  /* ── Confirmation Modal ──────────────────────────── */
+  .confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+  }
+
+  .confirm-modal {
+    background: var(--surface, #1e1e2e);
+    border: 1px solid var(--border, #333);
+    border-radius: 12px;
+    padding: 1.5rem;
+    min-width: 400px;
+    max-width: 520px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  }
+
+  .confirm-header {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--accent, #ffaf5f);
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border, #333);
+  }
+
+  .confirm-body {
+    margin-bottom: 1rem;
+  }
+
+  .confirm-field {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+  }
+
+  .confirm-label {
+    color: var(--text-secondary, #888);
+    min-width: 60px;
+    font-weight: 500;
+  }
+
+  .confirm-value {
+    color: var(--text, #c8c8d2);
+    word-break: break-all;
+  }
+
+  .confirm-options {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+  }
+
+  .confirm-option {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    background: transparent;
+    border: 1px solid var(--border, #333);
+    border-radius: 8px;
+    color: var(--text, #c8c8d2);
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .confirm-option:hover,
+  .confirm-option.selected {
+    background: var(--surface-hover, #2a2a3e);
+    border-color: var(--accent, #ffaf5f);
+  }
+
+  .confirm-option:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .confirm-option-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    background: var(--surface-hover, #2a2a3e);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--accent, #ffaf5f);
+  }
+
+  .confirm-hint {
+    font-size: 0.78rem;
+    color: var(--text-secondary, #666);
+    text-align: center;
+  }
+
+  .confirm-hint kbd {
+    background: var(--surface-hover, #2a2a3e);
+    border: 1px solid var(--border, #444);
+    border-radius: 3px;
+    padding: 0.1rem 0.3rem;
+    font-size: 0.75rem;
+    font-family: inherit;
+  }
+
   /* ── Responsive ────────────────────────────────── */
   @media (max-width: 768px) {
     .control-label { display: none; }
     .header-controls { gap: 0.25rem; }
     .control-btn { padding: 0.3rem 0.4rem; }
     .dropdown-menu { min-width: 180px; }
+    .confirm-modal { min-width: 300px; max-width: 95vw; }
   }
 </style>

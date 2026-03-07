@@ -16,6 +16,18 @@ use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::agent_os::confirmation::{ConfirmationRequest, ConfirmationResponse};
+
+/// A pending confirmation waiting for user response via the web UI.
+pub(crate) struct PendingWebConfirmation {
+    #[allow(dead_code)]
+    request: ConfirmationRequest,
+    responder: std::sync::mpsc::Sender<ConfirmationResponse>,
+}
+
+/// Thread-safe map of pending confirmations keyed by request ID.
+pub(crate) type PendingConfirmations = Arc<Mutex<HashMap<u64, PendingWebConfirmation>>>;
+
 #[derive(rust_embed::Embed)]
 #[folder = "nabaos-web/dist/"]
 struct WebAssets;
@@ -61,6 +73,8 @@ pub struct AppState {
     pub rate_limits: Arc<Mutex<HashMap<String, (std::time::Instant, u32)>>>,
     /// Pending OAuth flows keyed by state parameter.
     pub(crate) oauth_pending: Arc<Mutex<HashMap<String, PendingOAuthFlow>>>,
+    /// Pending confirmation requests waiting for user response.
+    pub(crate) pending_confirmations: PendingConfirmations,
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +123,19 @@ pub struct ErrorResponse {
 #[derive(Deserialize)]
 pub struct QueryRequest {
     pub query: String,
+}
+
+/// Request body for `POST /api/v1/confirm/{id}`.
+#[derive(Deserialize)]
+struct ConfirmRequest {
+    /// One of: "allow_once", "allow_session", "allow_always", "deny"
+    response: String,
+}
+
+/// Response for `POST /api/v1/confirm/{id}`.
+#[derive(Serialize)]
+struct PermissionConfirmResponse {
+    ok: bool,
 }
 
 #[derive(Serialize)]
@@ -777,6 +804,16 @@ async fn handle_query(
         Err(e) => return e,
     };
 
+    // Parse @agent-name prefix for inline agent routing
+    let (target_agent, clean_query) = parse_agent_mention(&body.query);
+    let saved_agent = if let Some(ref agent) = target_agent {
+        let prev = orch.active_agent().to_string();
+        orch.set_active_agent(agent);
+        Some(prev)
+    } else {
+        None
+    };
+
     let ctx = crate::core::orchestrator::ChannelContext {
         channel: "web".into(),
         user_id: headers
@@ -785,7 +822,14 @@ async fn handle_query(
             .map(|s| s.to_string()),
         ..Default::default()
     };
-    match orch.process_query(&body.query, Some(&ctx)) {
+    let query_result = orch.process_query(&clean_query, Some(&ctx));
+
+    // Restore previous agent
+    if let Some(prev) = saved_agent {
+        orch.set_active_agent(&prev);
+    }
+
+    match query_result {
         Ok(result) => {
             let resp = QueryResponse {
                 tier: format!("{}", result.tier),
@@ -815,6 +859,7 @@ async fn handle_query(
 /// - `tier`  — tier name and confidence after classification
 /// - `delta` — response text chunk(s)
 /// - `done`  — full metadata JSON (latency, confidence, security, etc.)
+/// - `confirm_required` — interactive confirmation needed (user must POST /api/v1/confirm/{id})
 /// - `error` — on failure
 async fn handle_query_stream(
     State(state): State<AppState>,
@@ -829,11 +874,17 @@ async fn handle_query_stream(
     let (tx, rx) = tokio::sync::mpsc::channel::<std::result::Result<Event, Infallible>>(32);
 
     let orch = state.orch.clone();
-    let query = body.query;
+    let query = body.query.clone();
     let user_id = headers
         .get("x-user-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+
+    // Shared pending confirmations map for the confirm_fn closure
+    let pending = state.pending_confirmations.clone();
+
+    // SSE sender for confirm_required events (needs to be cloned into closure)
+    let confirm_tx = tx.clone();
 
     tokio::spawn(async move {
         // Run the blocking orchestrator call on a blocking thread to avoid
@@ -843,14 +894,86 @@ async fn handle_query_stream(
                 Ok(g) => g,
                 Err(_) => return Err("Internal lock error".to_string()),
             };
+
+            // Parse @agent-name prefix for inline agent routing
+            let (target_agent, clean_query) = parse_agent_mention(&query);
+            let saved_agent = if let Some(ref agent) = target_agent {
+                let prev = guard.active_agent().to_string();
+                guard.set_active_agent(agent);
+                Some(prev)
+            } else {
+                None
+            };
+
+            // Build a web-compatible ConfirmFn that sends SSE events and waits
+            // for the user to POST /api/v1/confirm/{id}.
+            let confirm_fn: crate::agent_os::confirmation::ConfirmFn = {
+                let pending = pending.clone();
+                let confirm_tx = confirm_tx.clone();
+                Box::new(move |request: ConfirmationRequest| {
+                    let req_id = request.id;
+                    let (resp_tx, resp_rx) = std::sync::mpsc::channel::<ConfirmationResponse>();
+
+                    // Send confirm_required SSE event to the browser
+                    let confirm_json = serde_json::json!({
+                        "id": req_id,
+                        "agent_id": request.agent_id,
+                        "ability": request.ability,
+                        "reason": request.reason,
+                        "options": [
+                            {"value": "allow_once", "label": "Allow once"},
+                            {"value": "allow_session", "label": "Allow for this session"},
+                            {"value": "allow_always", "label": "Always allow for this agent"},
+                            {"value": "deny", "label": "Deny"},
+                        ],
+                    });
+                    let event = Event::default()
+                        .event("confirm_required")
+                        .data(confirm_json.to_string());
+                    // Use a blocking send on the tokio channel
+                    let _ = confirm_tx.blocking_send(Ok(event));
+
+                    // Store in pending map so POST /api/v1/confirm/{id} can resolve it
+                    if let Ok(mut map) = pending.lock() {
+                        map.insert(req_id, PendingWebConfirmation {
+                            request,
+                            responder: resp_tx,
+                        });
+                    }
+
+                    // Block until the user responds (up to 120s timeout)
+                    let result = resp_rx
+                        .recv_timeout(std::time::Duration::from_secs(120))
+                        .ok();
+
+                    // Clean up pending map
+                    if let Ok(mut map) = pending.lock() {
+                        map.remove(&req_id);
+                    }
+
+                    result
+                })
+            };
+
+            // Set the confirm_fn on the orchestrator for this request
+            guard.confirm_fn = Some(confirm_fn);
+
             let ctx = crate::core::orchestrator::ChannelContext {
                 channel: "web".into(),
                 user_id,
                 ..Default::default()
             };
-            guard
-                .process_query(&query, Some(&ctx))
-                .map_err(|e| format!("{}", e))
+            let result = guard
+                .process_query(&clean_query, Some(&ctx))
+                .map_err(|e| format!("{}", e));
+
+            // Clear confirm_fn and restore agent
+            guard.confirm_fn = None;
+            if let Some(prev) = saved_agent {
+                guard.set_active_agent(&prev);
+            }
+
+            result
         })
         .await;
 
@@ -915,6 +1038,70 @@ async fn handle_query_stream(
     Ok(Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new().interval(std::time::Duration::from_secs(15)),
     ))
+}
+
+/// Parse `@agent-name query text` into (Some("agent-name"), "query text").
+/// Returns (None, original) if no @-mention is found.
+fn parse_agent_mention(query: &str) -> (Option<String>, String) {
+    let trimmed = query.trim();
+    if !trimmed.starts_with('@') {
+        return (None, query.to_string());
+    }
+    if let Some(space_pos) = trimmed.find(|c: char| c.is_whitespace()) {
+        let agent = trimmed[1..space_pos].to_string();
+        let rest = trimmed[space_pos..].trim().to_string();
+        if agent.is_empty() {
+            (None, query.to_string())
+        } else {
+            (Some(agent), rest)
+        }
+    } else {
+        // "@agent" with no query text
+        let agent = trimmed[1..].to_string();
+        if agent.is_empty() {
+            (None, query.to_string())
+        } else {
+            (Some(agent), String::new())
+        }
+    }
+}
+
+/// Handle user confirmation response for a pending confirmation request.
+///
+/// The browser calls this after receiving a `confirm_required` SSE event.
+async fn handle_confirm(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<u64>,
+    Json(body): Json<ConfirmRequest>,
+) -> Response {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e;
+    }
+
+    let response = match body.response.as_str() {
+        "allow_once" => ConfirmationResponse::AllowOnce,
+        "allow_session" => ConfirmationResponse::AllowSession,
+        "allow_always" => ConfirmationResponse::AllowAlwaysAgent,
+        "deny" => ConfirmationResponse::Deny,
+        _ => return json_error(StatusCode::BAD_REQUEST, String::from("Invalid response value")),
+    };
+
+    let responder = {
+        let mut map = match state.pending_confirmations.lock() {
+            Ok(m) => m,
+            Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, String::from("Lock error")),
+        };
+        map.remove(&id).map(|p| p.responder)
+    };
+
+    match responder {
+        Some(tx) => {
+            let _ = tx.send(response);
+            (StatusCode::OK, Json(PermissionConfirmResponse { ok: true })).into_response()
+        }
+        None => json_error(StatusCode::NOT_FOUND, format!("No pending confirmation with id {}", id)),
+    }
 }
 
 #[allow(dead_code)] // Superseded by handle_list_workflows_combined
@@ -2875,6 +3062,7 @@ pub fn create_router(state: AppState) -> Router {
         // Query
         .route("/api/v1/ask", post(handle_query))
         .route("/api/v1/ask/stream", post(handle_query_stream))
+        .route("/api/v1/confirm/{id}", post(handle_confirm))
         // Workflows (/api/v1/workflows/*) — combined chains + workflows
         .route("/api/v1/workflows", get(handle_list_workflows_combined))
         .route("/api/v1/workflows/schedule", get(handle_list_schedule))
@@ -3035,6 +3223,7 @@ pub async fn run_server_with_engine(
         trigger_engine: None,
         rate_limits: Arc::new(Mutex::new(HashMap::new())),
         oauth_pending: Arc::new(Mutex::new(HashMap::new())),
+        pending_confirmations: Arc::new(Mutex::new(HashMap::new())),
     };
 
     spawn_oauth_cleanup(state.oauth_pending.clone());
@@ -3156,6 +3345,7 @@ mod tests {
             trigger_engine: None,
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
             oauth_pending: Arc::new(Mutex::new(HashMap::new())),
+            pending_confirmations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -3451,6 +3641,7 @@ mod tests {
             trigger_engine: None,
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
             oauth_pending: Arc::new(Mutex::new(HashMap::new())),
+            pending_confirmations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -3922,5 +4113,62 @@ mod tests {
         flows.retain(|_, flow| now.saturating_sub(flow.created_at) < 600);
         assert_eq!(flows.len(), 1);
         assert!(flows.contains_key("fresh"));
+    }
+
+    #[test]
+    fn test_parse_agent_mention_with_query() {
+        let (agent, query) = parse_agent_mention("@morning-briefing check my schedule");
+        assert_eq!(agent.as_deref(), Some("morning-briefing"));
+        assert_eq!(query, "check my schedule");
+    }
+
+    #[test]
+    fn test_parse_agent_mention_no_mention() {
+        let (agent, query) = parse_agent_mention("hello world");
+        assert!(agent.is_none());
+        assert_eq!(query, "hello world");
+    }
+
+    #[test]
+    fn test_parse_agent_mention_only_agent() {
+        let (agent, query) = parse_agent_mention("@my-agent");
+        assert_eq!(agent.as_deref(), Some("my-agent"));
+        assert_eq!(query, "");
+    }
+
+    #[test]
+    fn test_parse_agent_mention_bare_at() {
+        let (agent, query) = parse_agent_mention("@ something");
+        assert!(agent.is_none());
+        assert_eq!(query, "@ something");
+    }
+
+    #[test]
+    fn test_confirmation_channel_roundtrip() {
+        let pending: PendingConfirmations = Arc::new(Mutex::new(HashMap::new()));
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel::<ConfirmationResponse>();
+
+        let req = ConfirmationRequest::new(
+            "test-agent",
+            "email.send:bob@example.com",
+            "Test confirmation",
+            crate::agent_os::confirmation::ConfirmationSource::Constitution {
+                rule_name: "test_rule".into(),
+            },
+        );
+        let req_id = req.id;
+
+        pending.lock().unwrap().insert(req_id, PendingWebConfirmation {
+            request: req,
+            responder: resp_tx,
+        });
+
+        // Simulate browser POST /api/v1/confirm/{id}
+        let responder = pending.lock().unwrap().remove(&req_id).map(|p| p.responder);
+        assert!(responder.is_some());
+        responder.unwrap().send(ConfirmationResponse::AllowOnce).unwrap();
+
+        let response = resp_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+        assert_eq!(response, ConfirmationResponse::AllowOnce);
     }
 }

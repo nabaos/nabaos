@@ -449,7 +449,7 @@ pub struct Orchestrator {
     /// Optional confirmation callback — set by TUI before process_query().
     /// When set, `Enforcement::Confirm` and `BreakerAction::Confirm` will
     /// invoke this to ask the user interactively instead of blocking/allowing silently.
-    confirm_fn: Option<crate::agent_os::confirmation::ConfirmFn>,
+    pub(crate) confirm_fn: Option<crate::agent_os::confirmation::ConfirmFn>,
 }
 
 /// Extract human-readable content from chain step output.

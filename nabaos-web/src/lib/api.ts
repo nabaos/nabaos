@@ -229,11 +229,20 @@ export async function sendQuery(query: string): Promise<QueryResponse> {
 
 // ── Streaming Query (SSE) ──────────────────────────────────────────────
 
+export interface ConfirmationInfo {
+  id: number;
+  agent_id: string;
+  ability: string;
+  reason: string;
+  options: { value: string; label: string }[];
+}
+
 export interface StreamCallbacks {
   onDelta: (text: string) => void;
   onTier?: (info: { tier: string; confidence: number }) => void;
   onDone?: (meta: QueryResponse) => void;
   onError?: (error: string) => void;
+  onConfirmRequired?: (info: ConfirmationInfo) => void;
 }
 
 export async function sendQueryStream(query: string, callbacks: StreamCallbacks): Promise<void> {
@@ -298,6 +307,11 @@ export async function sendQueryStream(query: string, callbacks: StreamCallbacks)
                 try { callbacks.onDone(JSON.parse(data)); } catch { /* ignore */ }
               }
               break;
+            case 'confirm_required':
+              if (callbacks.onConfirmRequired) {
+                try { callbacks.onConfirmRequired(JSON.parse(data)); } catch { /* ignore */ }
+              }
+              break;
             case 'error':
               if (callbacks.onError) callbacks.onError(data);
               break;
@@ -308,6 +322,12 @@ export async function sendQueryStream(query: string, callbacks: StreamCallbacks)
       }
     }
   }
+}
+
+// ── Confirmation ──────────────────────────────────────────────────────
+
+export async function sendConfirmation(id: number, response: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('POST', `/api/v1/confirm/${id}`, { response });
 }
 
 // ── Workflows ──────────────────────────────────────────────────────────
