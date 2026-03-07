@@ -126,14 +126,14 @@
 | Vault/provider config | Y (settings) | Y (modals) | N | |
 | Tool/MCP management | N | Y (discover, secrets) | Y (/mcp commands) | |
 | Constitution rules view | N | Y (rules list) | N | **Web advantage** |
-| Response style | N | Y (6 options) | Y (/style commands) | **Gap: TUI lacks style selector** |
+| Response style | Y (palette) | Y (6 options) | Y (/style commands) | All 3 channels |
 | Reload config | Y (r key) | N | N | TUI-only feature |
 
 ### 9. Security & Safety
 
 | Feature | TUI | Web UI | Telegram | Notes |
 |---------|-----|--------|----------|-------|
-| Security scan | N | Y (settings) | Y (/scan) | **Gap: TUI lacks manual scan** |
+| Security scan | Y (palette) | Y (settings) | Y (/scan) | All 3 channels |
 | PII redaction | Y (in responses) | Y (in responses) | Y (in responses) | All channels |
 | Injection detection | Y (orchestrator) | Y (orchestrator) | Y (orchestrator) | All channels |
 | 2FA authentication | N | Y (weblink confirm) | Y (TOTP/password) | **Gap: TUI has no 2FA** |
@@ -150,7 +150,7 @@
 | Cost dashboard | N | Y (daily/weekly/monthly) | Y (/costs dashboard) | **Gap: TUI only shows totals** |
 | Cache hit rate | Y (status bar %) | Y (dashboard) | Y (/costs) | |
 | Savings percentage | Y (status bar) | Y (pie chart) | Y (/costs) | |
-| Period filtering | N | Y (multi-period) | Y (24h/7d/30d buttons) | **Gap: TUI lacks period filter** |
+| Period filtering | Y (palette cycle) | Y (multi-period) | Y (24h/7d/30d buttons) | All 3 channels |
 | Token usage | N | Y (dashboard) | N | Web-only |
 
 ### 11. Navigation & UX
@@ -191,9 +191,9 @@
 | 3 | ~~**Agent lifecycle (install/start/stop)**~~ | ~~Web, Telegram~~ | ~~Medium~~ | **DONE** (v0.3.1) — API + /agents |
 | 4 | ~~**Resource register/delete**~~ | ~~Web, Telegram~~ | ~~Low~~ | **DONE** (v0.3.1) — API + /resource |
 | 5 | ~~**Schedule enable**~~ | ~~Web, Telegram~~ | ~~Low~~ | **DONE** (v0.3.1) — TUI Schedule tab |
-| 6 | **Cost period filtering** | TUI | Low | Low |
-| 7 | **Response style selector** | TUI | Low | Low |
-| 8 | **Security scan** | TUI | Low | Low |
+| 6 | ~~**Cost period filtering**~~ | ~~TUI~~ | ~~Low~~ | **DONE** (v0.3.1) — palette + status bar |
+| 7 | ~~**Response style selector**~~ | ~~TUI~~ | ~~Low~~ | **DONE** (v0.3.1) — palette: 4 styles |
+| 8 | ~~**Security scan**~~ | ~~TUI~~ | ~~Low~~ | **DONE** (v0.3.1) — palette: Run Security Scan |
 
 ### Notable Asymmetries
 
@@ -211,8 +211,8 @@
 1. ~~**Telegram confirmation modal**~~ — **DONE** (v0.3.1)
 2. ~~**Telegram @agent routing**~~ — **DONE** (v0.3.1)
 3. ~~**Web agent lifecycle**~~ — **DONE** (v0.3.1)
-4. **TUI response style** — Add style selector to command palette or Settings tab
-5. **TUI cost dashboard** — Add period filtering to History tab or new Costs tab
+4. ~~**TUI response style**~~ — **DONE** (v0.3.1)
+5. ~~**TUI cost dashboard**~~ — **DONE** (v0.3.1)
 
 ---
 

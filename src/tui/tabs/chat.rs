@@ -136,6 +136,15 @@ impl ChatTab {
         }
     }
 
+    /// Return the text of the most recent user message, if any.
+    pub fn last_user_message(&self) -> Option<String> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .map(|m| m.text.clone())
+    }
+
     /// Clear visible chat messages.
     pub fn clear(&mut self) {
         self.messages.clear();
@@ -604,4 +613,25 @@ pub fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
         lines.push(String::new());
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_last_user_message_empty() {
+        let chat = ChatTab::new();
+        assert!(chat.last_user_message().is_none());
+    }
+
+    #[test]
+    fn test_last_user_message_returns_most_recent() {
+        let mut chat = ChatTab::new();
+        chat.push_user("first query".into());
+        chat.push_agent("response 1".into(), "$0.01".into());
+        chat.push_user("second query".into());
+        chat.push_agent("response 2".into(), "$0.02".into());
+        assert_eq!(chat.last_user_message().unwrap(), "second query");
+    }
 }

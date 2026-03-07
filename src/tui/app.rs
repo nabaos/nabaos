@@ -110,6 +110,10 @@ enum PaletteAction {
     Quit,
     ReloadSettings,
     ClearChat,
+    SetStyle(String),
+    ClearStyle,
+    CycleCostPeriod,
+    RunSecurityScan,
 }
 
 /// Fuzzy command palette state.
@@ -135,6 +139,13 @@ impl CommandPalette {
             PaletteCommand { label: "Show Help".into(), category: "View", action: PaletteAction::ToggleHelp },
             PaletteCommand { label: "Clear Chat".into(), category: "Chat", action: PaletteAction::ClearChat },
             PaletteCommand { label: "Reload Settings".into(), category: "Settings", action: PaletteAction::ReloadSettings },
+            PaletteCommand { label: "Style: Children".into(), category: "Style", action: PaletteAction::SetStyle("children".into()) },
+            PaletteCommand { label: "Style: Young Adults".into(), category: "Style", action: PaletteAction::SetStyle("young_adults".into()) },
+            PaletteCommand { label: "Style: Seniors".into(), category: "Style", action: PaletteAction::SetStyle("seniors".into()) },
+            PaletteCommand { label: "Style: Technical".into(), category: "Style", action: PaletteAction::SetStyle("technical".into()) },
+            PaletteCommand { label: "Clear Style".into(), category: "Style", action: PaletteAction::ClearStyle },
+            PaletteCommand { label: "Cycle Cost Period".into(), category: "Stats", action: PaletteAction::CycleCostPeriod },
+            PaletteCommand { label: "Run Security Scan".into(), category: "Security", action: PaletteAction::RunSecurityScan },
             PaletteCommand { label: "Quit".into(), category: "System", action: PaletteAction::Quit },
         ];
         let filtered: Vec<usize> = (0..commands.len()).collect();
@@ -272,6 +283,8 @@ pub struct App {
     pub stats_saved: f64,
     pub stats_spent: f64,
     pub stats_cache_pct: f64,
+    /// Cost period filter: 0=All, 1=24h, 2=7d, 3=30d
+    pub cost_period: u8,
     pub show_logs: bool,
     context_panel: ContextPanel,
     log_buffer: Arc<Mutex<VecDeque<String>>>,
@@ -323,6 +336,7 @@ impl App {
             stats_saved: 0.0,
             stats_spent: 0.0,
             stats_cache_pct: 0.0,
+            cost_period: 0,
             config,
             orchestrator,
             rx,
@@ -920,11 +934,36 @@ impl App {
         }
     }
 
+    /// Compute the `since_ms` filter for the current cost period.
+    fn cost_since_ms(&self) -> Option<i64> {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        match self.cost_period {
+            1 => Some(now_ms - 86_400_000),        // 24h
+            2 => Some(now_ms - 7 * 86_400_000),    // 7d
+            3 => Some(now_ms - 30 * 86_400_000),   // 30d
+            _ => None,                              // All time
+        }
+    }
+
+    /// Human label for the current cost period.
+    fn cost_period_label(&self) -> &'static str {
+        match self.cost_period {
+            1 => "24h",
+            2 => "7d",
+            3 => "30d",
+            _ => "all",
+        }
+    }
+
     /// Refresh stats from the orchestrator.
     fn refresh_stats(&mut self) {
+        let since = self.cost_since_ms();
         if let Some(ref orch) = self.orchestrator {
             if let Ok(orch) = orch.lock() {
-                if let Ok(summary) = orch.cost_summary(None) {
+                if let Ok(summary) = orch.cost_summary(since) {
                     self.stats_queries = summary.total_llm_calls + summary.total_cache_hits;
                     self.stats_saved = summary.total_saved_usd;
                     self.stats_spent = summary.total_spent_usd;
@@ -934,7 +973,7 @@ impl App {
         } else {
             // Fallback: create a temporary orchestrator for stats
             if let Ok(orch) = Orchestrator::new(self.config.clone()) {
-                if let Ok(summary) = orch.cost_summary(None) {
+                if let Ok(summary) = orch.cost_summary(since) {
                     self.stats_queries = summary.total_llm_calls + summary.total_cache_hits;
                     self.stats_saved = summary.total_saved_usd;
                     self.stats_spent = summary.total_spent_usd;
@@ -1134,6 +1173,57 @@ impl App {
             }
             PaletteAction::ClearChat => {
                 self.chat.clear();
+            }
+            PaletteAction::SetStyle(name) => {
+                let result = self.orchestrator.as_ref().and_then(|o| {
+                    o.lock().ok().map(|mut orch| orch.set_style(&name))
+                });
+                match result {
+                    Some(Ok(())) => self.push_toast(format!("Style set to '{}'", name), false),
+                    Some(Err(e)) => self.push_toast(format!("Style error: {}", e), true),
+                    None => {}
+                }
+            }
+            PaletteAction::ClearStyle => {
+                if let Some(ref orch) = self.orchestrator {
+                    let _ = orch.lock().map(|mut o| o.clear_style());
+                }
+                self.push_toast("Style cleared".into(), false);
+            }
+            PaletteAction::CycleCostPeriod => {
+                self.cost_period = (self.cost_period + 1) % 4;
+                let label = self.cost_period_label();
+                self.push_toast(format!("Cost period: {}", label), false);
+                self.refresh_stats();
+            }
+            PaletteAction::RunSecurityScan => {
+                use crate::security::{credential_scanner, pattern_matcher};
+                // Scan the last user message from chat
+                let text = self
+                    .chat
+                    .last_user_message()
+                    .unwrap_or_default();
+                if text.is_empty() {
+                    self.push_toast("No message to scan.".into(), true);
+                } else {
+                    let creds = credential_scanner::scan_summary(&text);
+                    let injection = pattern_matcher::assess(&text);
+                    let mut msg = String::from("Scan: ");
+                    if creds.credential_count == 0 && creds.pii_count == 0 && !injection.likely_injection {
+                        msg.push_str("clean");
+                    } else {
+                        if creds.credential_count > 0 {
+                            msg.push_str(&format!("{} creds ", creds.credential_count));
+                        }
+                        if creds.pii_count > 0 {
+                            msg.push_str(&format!("{} PII ", creds.pii_count));
+                        }
+                        if injection.likely_injection {
+                            msg.push_str("INJECTION ");
+                        }
+                    }
+                    self.push_toast(msg, injection.likely_injection || creds.credential_count > 0);
+                }
             }
         }
     }
@@ -2147,8 +2237,10 @@ fn draw_ui(frame: &mut ratatui::Frame, app: &App) {
     frame.render_widget(Block::default().style(Style::default().bg(BG)), size);
 
     // Build live stats for title bar
+    let period_label = app.cost_period_label();
     let stats_text = format!(
-        " saved {} · cache {:.0}% · {} queries ",
+        " [{}] saved {} · cache {:.0}% · {} queries ",
+        period_label,
         format_money(app.stats_saved),
         app.stats_cache_pct,
         app.stats_queries,
@@ -2420,6 +2512,7 @@ fn draw_context_welcome(frame: &mut ratatui::Frame, area: ratatui::layout::Rect,
                 .add_modifier(Modifier::BOLD),
         )]),
         Line::from(""),
+        context_row("Period", app.cost_period_label()),
         context_row("Queries", &format!("{}", app.stats_queries)),
         context_row("Cache", &format!("{:.0}%", app.stats_cache_pct)),
         context_row("Saved", &format_money(app.stats_saved)),
@@ -4328,5 +4421,41 @@ mod tests {
         assert_eq!(result, Some(ConfirmationResponse::AllowAlwaysAgent));
 
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_cost_period_label() {
+        // Verify period labels map correctly
+        let labels = [(0u8, "all"), (1, "24h"), (2, "7d"), (3, "30d")];
+        for (period, expected) in labels {
+            let label = match period {
+                1 => "24h",
+                2 => "7d",
+                3 => "30d",
+                _ => "all",
+            };
+            assert_eq!(label, expected);
+        }
+    }
+
+    #[test]
+    fn test_cost_period_cycle() {
+        // Verify cycling: 0 -> 1 -> 2 -> 3 -> 0
+        let mut period: u8 = 0;
+        for expected in [1, 2, 3, 0] {
+            period = (period + 1) % 4;
+            assert_eq!(period, expected);
+        }
+    }
+
+    #[test]
+    fn test_palette_has_style_commands() {
+        let palette = CommandPalette::new();
+        let labels: Vec<&str> = palette.commands.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"Style: Children"), "Missing style command");
+        assert!(labels.contains(&"Style: Technical"), "Missing style command");
+        assert!(labels.contains(&"Clear Style"), "Missing clear style");
+        assert!(labels.contains(&"Run Security Scan"), "Missing scan command");
+        assert!(labels.contains(&"Cycle Cost Period"), "Missing cost period");
     }
 }
