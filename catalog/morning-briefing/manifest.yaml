@@ -9,6 +9,7 @@ permissions:
 - gmail.read
 - news.headlines
 - llm.query
+- email.send
 triggers:
   scheduled:
   - chain: morning-briefing

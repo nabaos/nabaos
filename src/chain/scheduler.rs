@@ -313,6 +313,17 @@ impl Scheduler {
         Ok(())
     }
 
+    /// Enable a previously disabled scheduled job.
+    pub fn enable(&self, job_id: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE scheduled_jobs SET enabled = 1 WHERE id = ?1",
+                rusqlite::params![job_id],
+            )
+            .map_err(|e| NyayaError::Cache(format!("Enable failed: {}", e)))?;
+        Ok(())
+    }
+
     /// List all scheduled jobs.
     pub fn list(&self) -> Result<Vec<ScheduledJob>> {
         let mut stmt = self

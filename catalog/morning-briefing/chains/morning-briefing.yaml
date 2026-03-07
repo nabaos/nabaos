@@ -33,3 +33,12 @@ steps:
   - get-emails
   - get-news
   on_failure: abort
+- id: send-digest
+  ability: email.send
+  params:
+    to: '{{input.email}}'
+    subject: 'Morning Digest - {{input.date}}'
+    body: '{{summarize.output}}'
+  depends_on:
+  - summarize
+  on_failure: continue

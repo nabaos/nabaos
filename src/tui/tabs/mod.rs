@@ -12,6 +12,7 @@ pub enum TabId {
     Workflows,
     Resources,
     Pea,
+    Schedule,
     Settings,
     History,
 }
@@ -24,6 +25,7 @@ impl TabId {
             Self::Workflows => "Workflows",
             Self::Resources => "Resources",
             Self::Pea => "PEA",
+            Self::Schedule => "Schedule",
             Self::Settings => "Settings",
             Self::History => "History",
         }
@@ -36,6 +38,7 @@ impl TabId {
             TabId::Workflows,
             TabId::Resources,
             TabId::Pea,
+            TabId::Schedule,
             TabId::Settings,
             TabId::History,
         ]
@@ -48,8 +51,9 @@ impl TabId {
             Self::Workflows => 2,
             Self::Resources => 3,
             Self::Pea => 4,
-            Self::Settings => 5,
-            Self::History => 6,
+            Self::Schedule => 5,
+            Self::Settings => 6,
+            Self::History => 7,
         }
     }
 
@@ -60,8 +64,9 @@ impl TabId {
             2 => Self::Workflows,
             3 => Self::Resources,
             4 => Self::Pea,
-            5 => Self::Settings,
-            6 => Self::History,
+            5 => Self::Schedule,
+            6 => Self::Settings,
+            7 => Self::History,
             _ => Self::Chat,
         }
     }
@@ -83,6 +88,7 @@ impl TabId {
             Self::Workflows => "[Enter] detail  [n] new  [c] cancel",
             Self::Resources => "[Enter] detail  [r] register  [d] delete",
             Self::Pea => "[Enter] detail  [n] new objective  [p] pause  [x] cancel",
+            Self::Schedule => "[Enter] history  [n] new  [d] disable/enable  [/] search",
             Self::Settings => "[Enter] edit  [r] reload",
             Self::History => "[Enter] detail  [/] search",
         }
@@ -99,6 +105,7 @@ pub mod agents;
 pub mod chat;
 pub mod history;
 pub mod resources;
+pub mod schedule;
 pub mod settings;
 pub mod tasks;
 pub mod workflows;

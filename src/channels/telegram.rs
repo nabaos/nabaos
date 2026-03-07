@@ -12,12 +12,31 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::agent_os::confirmation::{ConfirmationRequest, ConfirmationResponse};
 use crate::chain::scheduler::parse_interval;
 use crate::core::config::NyayaConfig;
 use crate::core::error::{NyayaError, Result};
 use crate::core::orchestrator::Orchestrator;
 use crate::security::two_factor::TwoFactorAuth;
 use crate::security::{credential_scanner, pattern_matcher};
+
+// ---------------------------------------------------------------------------
+// Telegram confirmation types
+// ---------------------------------------------------------------------------
+
+/// A pending confirmation waiting for a Telegram inline-keyboard callback.
+struct PendingTgConfirmation {
+    responder: std::sync::mpsc::Sender<ConfirmationResponse>,
+}
+
+/// Thread-safe map of pending Telegram confirmations keyed by request ID.
+type PendingTgConfirmations = Arc<Mutex<HashMap<u64, PendingTgConfirmation>>>;
+
+/// Message sent from the blocking confirm_fn to the async Telegram sender task.
+struct TgConfirmMsg {
+    chat_id: i64,
+    request: ConfirmationRequest,
+}
 
 // ---------------------------------------------------------------------------
 // TelegramResponse — rich response with optional inline keyboard
@@ -1754,13 +1773,54 @@ fn handle_agents_rich(orch: &Orchestrator) -> TelegramResponse {
     TelegramResponse::text(text).with_keyboard(rows)
 }
 
+/// Parse `@agent-name query text` into (Some("agent-name"), "query text").
+fn parse_agent_mention(query: &str) -> (Option<String>, String) {
+    let trimmed = query.trim();
+    if !trimmed.starts_with('@') {
+        return (None, query.to_string());
+    }
+    if let Some(space_pos) = trimmed.find(|c: char| c.is_whitespace()) {
+        let agent = trimmed[1..space_pos].to_string();
+        let rest = trimmed[space_pos..].trim().to_string();
+        if agent.is_empty() {
+            (None, query.to_string())
+        } else {
+            (Some(agent), rest)
+        }
+    } else {
+        let agent = trimmed[1..].to_string();
+        if agent.is_empty() {
+            (None, query.to_string())
+        } else {
+            (Some(agent), String::new())
+        }
+    }
+}
+
 fn handle_query_rich(orch: &mut Orchestrator, query: &str, chat_id: i64) -> TelegramResponse {
+    // Parse @agent-name prefix for inline agent routing
+    let (target_agent, clean_query) = parse_agent_mention(query);
+    let saved_agent = if let Some(ref agent) = target_agent {
+        let prev = orch.active_agent().to_string();
+        orch.set_active_agent(agent);
+        Some(prev)
+    } else {
+        None
+    };
+
     let ctx = crate::core::orchestrator::ChannelContext {
         channel: "telegram".into(),
         user_id: Some(chat_id.to_string()),
         ..Default::default()
     };
-    match orch.process_query(query, Some(&ctx)) {
+    let query_result = orch.process_query(&clean_query, Some(&ctx));
+
+    // Restore previous agent
+    if let Some(prev) = saved_agent {
+        orch.set_active_agent(&prev);
+    }
+
+    match query_result {
         Ok(result) => {
             let mut msg = String::new();
 
@@ -1926,6 +1986,13 @@ pub async fn run_bot(config: NyayaConfig) -> Result<()> {
     let orch = Arc::new(Mutex::new(Orchestrator::new(config)?));
     let two_fa = Arc::new(TwoFactorAuth::from_env());
 
+    // Pending confirmations map (separate from orch mutex to avoid deadlock)
+    let pending_confirms: PendingTgConfirmations = Arc::new(Mutex::new(HashMap::new()));
+
+    // Channel for the blocking confirm_fn to request sending Telegram messages
+    let (confirm_msg_tx, mut confirm_msg_rx) =
+        tokio::sync::mpsc::channel::<TgConfirmMsg>(16);
+
     // Log warning if no chat ID allowlist is configured
     if std::env::var("NABA_ALLOWED_CHAT_IDS")
         .unwrap_or_default()
@@ -1947,23 +2014,102 @@ pub async fn run_bot(config: NyayaConfig) -> Result<()> {
 
     let bot = Bot::new(bot_token);
 
+    // Spawn async task that sends Telegram confirmation messages
+    // (receives from the blocking confirm_fn via the channel)
+    {
+        let bot_confirm = bot.clone();
+        tokio::spawn(async move {
+            use teloxide::prelude::*;
+            while let Some(msg) = confirm_msg_rx.recv().await {
+                let kb = vec![
+                    vec![
+                        ("Allow once".to_string(), format!("confirm:{}:allow_once", msg.request.id)),
+                        ("Allow session".to_string(), format!("confirm:{}:allow_session", msg.request.id)),
+                    ],
+                    vec![
+                        ("Always allow".to_string(), format!("confirm:{}:allow_always", msg.request.id)),
+                        ("Deny".to_string(), format!("confirm:{}:deny", msg.request.id)),
+                    ],
+                ];
+                let text = format!(
+                    "Permission Required\n\n\
+                     Agent: {}\n\
+                     Action: {}\n\
+                     Reason: {}",
+                    msg.request.agent_id, msg.request.ability, msg.request.reason
+                );
+                let markup = build_keyboard(&kb);
+                let _ = bot_confirm
+                    .send_message(teloxide::types::ChatId(msg.chat_id), &text)
+                    .reply_markup(markup)
+                    .await;
+            }
+        });
+    }
+
     // Message handler
     let orch_msg = Arc::clone(&orch);
     let two_fa_msg = Arc::clone(&two_fa);
+    let pending_msg = Arc::clone(&pending_confirms);
+    let confirm_tx_msg = confirm_msg_tx.clone();
     let message_handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
         let orch = Arc::clone(&orch_msg);
         let two_fa = Arc::clone(&two_fa_msg);
+        let pending = Arc::clone(&pending_msg);
+        let confirm_tx = confirm_tx_msg.clone();
         async move {
             if let Some(text) = msg.text() {
+                let chat_id = msg.chat.id.0;
                 let response = {
                     match orch.lock() {
-                        Ok(mut orch) => {
-                            handle_message_with_2fa_rich(&mut orch, &two_fa, text, msg.chat.id.0)
+                        Ok(mut guard) => {
+                            // Set up a Telegram-compatible confirm_fn
+                            let confirm_fn: crate::agent_os::confirmation::ConfirmFn = {
+                                let pending = pending.clone();
+                                let tx = confirm_tx.clone();
+                                Box::new(move |request: ConfirmationRequest| {
+                                    let req_id = request.id;
+                                    let (resp_tx, resp_rx) =
+                                        std::sync::mpsc::channel::<ConfirmationResponse>();
+
+                                    // Store pending confirmation
+                                    if let Ok(mut map) = pending.lock() {
+                                        map.insert(
+                                            req_id,
+                                            PendingTgConfirmation { responder: resp_tx },
+                                        );
+                                    }
+
+                                    // Ask async task to send the confirmation message
+                                    let _ = tx.blocking_send(TgConfirmMsg {
+                                        chat_id,
+                                        request,
+                                    });
+
+                                    // Block until user clicks a button (120s timeout)
+                                    let result = resp_rx
+                                        .recv_timeout(std::time::Duration::from_secs(120))
+                                        .ok();
+
+                                    // Clean up
+                                    if let Ok(mut map) = pending.lock() {
+                                        map.remove(&req_id);
+                                    }
+
+                                    result
+                                })
+                            };
+                            guard.confirm_fn = Some(confirm_fn);
+                            let result = handle_message_with_2fa_rich(
+                                &mut guard, &two_fa, text, chat_id,
+                            );
+                            guard.confirm_fn = None;
+                            result
                         }
                         Err(poisoned) => {
                             tracing::error!("Orchestrator mutex poisoned — recovering");
-                            let mut orch = poisoned.into_inner();
-                            handle_message_with_2fa_rich(&mut orch, &two_fa, text, msg.chat.id.0)
+                            let mut guard = poisoned.into_inner();
+                            handle_message_with_2fa_rich(&mut guard, &two_fa, text, chat_id)
                         }
                     }
                 };
@@ -2012,15 +2158,51 @@ pub async fn run_bot(config: NyayaConfig) -> Result<()> {
 
     // Callback query handler
     let orch_cb = Arc::clone(&orch);
+    let pending_cb = Arc::clone(&pending_confirms);
     let callback_handler = Update::filter_callback_query().endpoint(
         move |bot: Bot, q: teloxide::types::CallbackQuery| {
             let orch = Arc::clone(&orch_cb);
+            let pending = Arc::clone(&pending_cb);
             async move {
                 // Acknowledge the callback query (removes loading indicator)
                 bot.answer_callback_query(&q.id).await?;
 
                 if let Some(ref data) = q.data {
                     let chat_id = q.regular_message().map(|m| m.chat.id.0).unwrap_or(0);
+
+                    // Handle confirmation callbacks WITHOUT locking orch (avoids deadlock)
+                    if data.starts_with("confirm:") {
+                        let parts: Vec<&str> = data.splitn(3, ':').collect();
+                        if parts.len() == 3 {
+                            let req_id: u64 = parts[1].parse().unwrap_or(0);
+                            let cr = match parts[2] {
+                                "allow_once" => ConfirmationResponse::AllowOnce,
+                                "allow_session" => ConfirmationResponse::AllowSession,
+                                "allow_always" => ConfirmationResponse::AllowAlwaysAgent,
+                                _ => ConfirmationResponse::Deny,
+                            };
+
+                            let resolved = if let Ok(mut map) = pending.lock() {
+                                map.remove(&req_id)
+                                    .map(|p| p.responder.send(cr).is_ok())
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            };
+
+                            if let Some(msg) = q.regular_message() {
+                                let text = if resolved {
+                                    format!("Permission: {}", cr.label())
+                                } else {
+                                    "Confirmation expired or already handled.".to_string()
+                                };
+                                bot.send_message(msg.chat.id, &text).await?;
+                            }
+                        }
+                        return respond(());
+                    }
+
+                    // Normal callback handling (locks orch)
                     let response = {
                         match orch.lock() {
                             Ok(mut orch) => handle_callback_query(&mut orch, data, chat_id),
@@ -2669,5 +2851,58 @@ mod tests {
         let parts = vec!["/browser", "captcha"];
         let msg = handle_browser_command(&parts);
         assert!(msg.contains("disabled"), "should report disabled: {}", msg);
+    }
+
+    #[test]
+    fn test_parse_agent_mention_with_query() {
+        let (agent, query) = parse_agent_mention("@morning-briefing check schedule");
+        assert_eq!(agent.as_deref(), Some("morning-briefing"));
+        assert_eq!(query, "check schedule");
+    }
+
+    #[test]
+    fn test_parse_agent_mention_no_mention() {
+        let (agent, query) = parse_agent_mention("hello world");
+        assert!(agent.is_none());
+        assert_eq!(query, "hello world");
+    }
+
+    #[test]
+    fn test_parse_agent_mention_bare_at() {
+        let (agent, query) = parse_agent_mention("@ something");
+        assert!(agent.is_none());
+    }
+
+    #[test]
+    fn test_pending_tg_confirmation_roundtrip() {
+        let pending: PendingTgConfirmations = Arc::new(Mutex::new(HashMap::new()));
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel::<ConfirmationResponse>();
+
+        let req = ConfirmationRequest::new(
+            "test-agent",
+            "email.send:bob@test.com",
+            "Test reason",
+            crate::agent_os::confirmation::ConfirmationSource::Constitution {
+                rule_name: "test".into(),
+            },
+        );
+        let req_id = req.id;
+
+        pending.lock().unwrap().insert(
+            req_id,
+            PendingTgConfirmation { responder: resp_tx },
+        );
+
+        // Simulate callback: confirm:123:allow_once
+        let resolved = pending
+            .lock()
+            .unwrap()
+            .remove(&req_id)
+            .map(|p| p.responder.send(ConfirmationResponse::AllowOnce).is_ok())
+            .unwrap_or(false);
+        assert!(resolved);
+
+        let response = resp_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+        assert_eq!(response, ConfirmationResponse::AllowOnce);
     }
 }
