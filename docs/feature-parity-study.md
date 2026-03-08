@@ -1,7 +1,7 @@
 # NabaOS Feature Parity Study: TUI vs Web UI vs Telegram
 
 **Date**: 2026-03-08
-**Version**: v0.3.1 (all gaps closed)
+**Version**: v0.3.2 (all gaps closed)
 
 ## Executive Summary
 
