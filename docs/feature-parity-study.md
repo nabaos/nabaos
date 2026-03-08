@@ -1,16 +1,17 @@
 # NabaOS Feature Parity Study: TUI vs Web UI vs Telegram
 
-**Date**: 2026-03-07
-**Version**: v0.3.1 (post-confirmation modal)
+**Date**: 2026-03-08
+**Version**: v0.3.1 (all gaps closed)
 
 ## Executive Summary
 
 | Metric | TUI | Web UI | Telegram |
 |--------|-----|--------|----------|
-| **Total Features** | 75 | 65+ | 45+ |
-| **Interactive Elements** | 57 | 40+ | 25+ |
-| **API Endpoints Used** | N/A (direct) | 43+ | N/A (direct) |
-| **Pages/Tabs** | 8 tabs | 6 pages | N/A (flat) |
+| **Total Features** | 80+ | 70+ | 55+ |
+| **Interactive Elements** | 62 | 45+ | 35+ |
+| **API Endpoints Used** | N/A (direct) | 50+ | N/A (direct) |
+| **Pages/Tabs** | 9 tabs | 6 pages | N/A (flat) |
+| **Critical Gaps** | **0** | **0** | **0** |
 
 ---
 
@@ -182,7 +183,9 @@
 
 ## Gap Analysis: Priority Fixes
 
-### Critical Gaps (Feature completely missing)
+### Critical Gaps — All Resolved
+
+All 8 critical gaps identified on 2026-03-07 have been closed in v0.3.1.
 
 | # | Feature | Missing From | Effort | Priority |
 |---|---------|-------------|--------|----------|
@@ -195,24 +198,26 @@
 | 7 | ~~**Response style selector**~~ | ~~TUI~~ | ~~Low~~ | **DONE** (v0.3.1) — palette: 4 styles |
 | 8 | ~~**Security scan**~~ | ~~TUI~~ | ~~Low~~ | **DONE** (v0.3.1) — palette: Run Security Scan |
 
-### Notable Asymmetries
+### Remaining Asymmetries (by design, not gaps)
 
 | Advantage | Channel | Features |
 |-----------|---------|----------|
-| **Richest keyboard UX** | TUI | Command palette, vim keys, help overlay, logs panel, 75 features |
+| **Richest keyboard UX** | TUI | Command palette (20 cmds), vim keys, help overlay, logs panel |
 | **Richest visual UX** | Web UI | Theme toggle, charts, responsive, workflow builder, quick actions |
 | **Most portable** | Telegram | Mobile-first, inline keyboards, WebApp bridge, 2FA, rate limiting |
 | **Best security** | Telegram | 2FA, rate limiting, chat ID auth, admin-only commands |
-| **Best agent management** | TUI | 8 category filters, install/uninstall, start/stop, search |
-| **Best cost analytics** | Web UI | Multi-period dashboard, pie chart, token breakdown |
+| **Best agent management** | TUI | 8 category filters, install/uninstall, start/stop, search (all channels now support lifecycle) |
+| **Best cost analytics** | Web UI | Multi-period dashboard, pie chart, token breakdown (TUI now has period filtering) |
 
-### Recommended Priority Actions
+### Completion Log
 
-1. ~~**Telegram confirmation modal**~~ — **DONE** (v0.3.1)
-2. ~~**Telegram @agent routing**~~ — **DONE** (v0.3.1)
-3. ~~**Web agent lifecycle**~~ — **DONE** (v0.3.1)
-4. ~~**TUI response style**~~ — **DONE** (v0.3.1)
-5. ~~**TUI cost dashboard**~~ — **DONE** (v0.3.1)
+| Date | Commit | Change |
+|------|--------|--------|
+| 2026-03-07 | `06eadcc` | Web UI: confirmation modal + @agent routing |
+| 2026-03-07 | `0552f67` | Telegram: confirmation modal + @agent routing + Schedule tab |
+| 2026-03-08 | `16a35f3` | Web + Telegram: agent lifecycle (install/start/stop) |
+| 2026-03-08 | `99373a3` | Web + Telegram: resource register/delete |
+| 2026-03-08 | `3fa6a30` | TUI: cost period filtering, style selector, security scan |
 
 ---
 
