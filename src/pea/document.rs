@@ -251,7 +251,7 @@ pub fn generate_infographic(
 
 /// Safe LaTeX skeleton with only packages guaranteed to be in TeX Live / tectonic.
 /// NO pgfornament, NO lettrine, NO draftwatermark — these cause compilation failures.
-const LATEX_SKELETON: &str = r#"\documentclass[12pt,a4paper]{report}
+pub(crate) const LATEX_SKELETON: &str = r#"\documentclass[12pt,a4paper]{report}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage[margin=2.5cm]{geometry}
@@ -430,7 +430,7 @@ fn build_title_page(objective_desc: &str, style: &StyleConfig) -> String {
 }
 
 /// Sanitize LaTeX output from LLM to prevent compilation failures.
-fn sanitize_latex(tex: &str) -> String {
+pub(crate) fn sanitize_latex(tex: &str) -> String {
     let mut result = tex.to_string();
 
     // Strip any preamble/document wrapper the LLM might have emitted
@@ -510,7 +510,7 @@ fn latex_escape(text: &str) -> String {
 // Post-processing
 // ---------------------------------------------------------------------------
 
-fn postprocess_latex(tex: &str, images: &[ImageEntry], output_dir: &Path) -> String {
+pub(crate) fn postprocess_latex(tex: &str, images: &[ImageEntry], output_dir: &Path) -> String {
     let mut result = tex.to_string();
 
     // Fix image paths: replace any absolute/relative paths with just filenames
@@ -532,7 +532,7 @@ fn postprocess_latex(tex: &str, images: &[ImageEntry], output_dir: &Path) -> Str
 }
 
 /// Ask the LLM to fix LaTeX compilation errors, then sanitize the result.
-fn diagnose_and_fix_latex(
+pub(crate) fn diagnose_and_fix_latex(
     registry: &AbilityRegistry,
     manifest: &AgentManifest,
     tex_source: &str,

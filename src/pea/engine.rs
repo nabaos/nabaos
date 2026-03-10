@@ -980,15 +980,58 @@ impl PeaEngine {
                         actions.push(format!("Fetched {} images", images.len()));
                     }
 
-                    match crate::pea::document::assemble_document(
-                        registry,
-                        manifest,
-                        &obj.description,
-                        &task_results,
-                        &images,
-                        Some(&style_config),
-                        &output_dir,
-                    ) {
+                    // Use DocumentComposer for intelligent multi-level composition,
+                    // with ResearchEngine-powered corpus for grounding.
+                    // Falls back to legacy assemble_document if composer fails.
+                    let compose_result = {
+                        use crate::pea::composer::{ComposerConfig, DocumentComposer};
+                        use crate::pea::research::{ResearchConfig, ResearchEngine};
+
+                        let research = ResearchEngine::new(
+                            registry,
+                            manifest,
+                            ResearchConfig::default(),
+                        );
+                        let corpus = research.execute(&obj.description, "compile final document");
+                        actions.push(format!(
+                            "Research: {} sources from {} candidates",
+                            corpus.sources.len(),
+                            corpus.total_candidates,
+                        ));
+
+                        let composer = DocumentComposer::new(
+                            registry,
+                            manifest,
+                            ComposerConfig::default(),
+                        );
+                        composer.compose_document(
+                            &obj.description,
+                            &corpus,
+                            &task_results,
+                            &images,
+                            &style_config,
+                            &output_dir,
+                        )
+                    };
+
+                    // Fall back to legacy assembly if composer fails
+                    let doc_result = match compose_result {
+                        Ok(path) => Ok(path),
+                        Err(e) => {
+                            actions.push(format!("Composer failed ({}), using legacy assembly", e));
+                            crate::pea::document::assemble_document(
+                                registry,
+                                manifest,
+                                &obj.description,
+                                &task_results,
+                                &images,
+                                Some(&style_config),
+                                &output_dir,
+                            )
+                        }
+                    };
+
+                    match doc_result {
                         Ok(path) => {
                             actions.push(format!(
                                 "Document assembled: {}",
