@@ -186,6 +186,10 @@ pub struct WizardResult {
     pub pea_budget_usd: f64,
     pub pea_budget_strategy: String,
     pub pea_heartbeat_secs: u64,
+    pub pea_search_backend: String,
+    pub pea_brave_api_key: String,
+    pub pea_searxng_url: String,
+    pub pea_searxng_autoinstall: bool,
     pub web_port: String,
     pub web_access: String,
     pub web_allowed_ips: String,
@@ -355,6 +359,13 @@ const PEA_STRATEGIES: &[(&str, &str)] = &[
     ("minimal", "Minimizes spending, stays on cache/cheap layer as much as possible"),
 ];
 
+const PEA_SEARCH_BACKENDS: &[(&str, &str, &str)] = &[
+    ("scrape_rotation", "Scrape Rotation",  "Rotates Bing/DDG/Brave/Google HTML scraping"),
+    ("chrome_pool",     "Chrome Pool",      "Real headless Chrome browser (avoids bot detection)"),
+    ("brave_api",       "Brave API",        "Brave Search JSON API (free 2000/mo, needs key)"),
+    ("searxng",         "SearXNG",          "Self-hosted meta-search (unlimited, needs Docker)"),
+];
+
 struct WizardState {
     step: Step,
     should_quit: bool,
@@ -417,7 +428,11 @@ struct WizardState {
     pea_strategy_idx: usize,
     pea_budget_input: String,
     pea_heartbeat_input: String,
-    pea_field: usize, // 0=strategy, 1=budget, 2=heartbeat
+    pea_backend_idx: usize,
+    pea_api_key_input: String,
+    pea_searxng_url_input: String,
+    pea_searxng_autoinstall: bool,
+    pea_field: usize, // 0=strategy, 1=budget, 2=heartbeat, 3=backend, 4=backend-config
 
     // Watcher settings
     watcher_enabled: bool,
@@ -739,6 +754,10 @@ impl WizardState {
             pea_strategy_idx: 0,
             pea_budget_input: "50.00".into(),
             pea_heartbeat_input: "300".into(),
+            pea_backend_idx: 0,
+            pea_api_key_input: String::new(),
+            pea_searxng_url_input: "http://localhost:8888".into(),
+            pea_searxng_autoinstall: false,
             pea_field: 0,
             watcher_enabled: false,
             watcher_alert_idx: 1,   // 0.7 default
@@ -919,6 +938,12 @@ impl WizardState {
             .map(|(id, _)| id.to_string())
             .unwrap_or_else(|| "adaptive".to_string());
         let pea_heartbeat_secs = self.pea_heartbeat_input.parse::<u64>().unwrap_or(300);
+        let pea_search_backend = PEA_SEARCH_BACKENDS.get(self.pea_backend_idx)
+            .map(|(id, _, _)| id.to_string())
+            .unwrap_or_else(|| "scrape_rotation".to_string());
+        let pea_brave_api_key = self.pea_api_key_input.clone();
+        let pea_searxng_url = self.pea_searxng_url_input.clone();
+        let pea_searxng_autoinstall = self.pea_searxng_autoinstall;
         // Persona: custom or wikipedia prefix
         let persona = match self.persona_edit_mode {
             PersonaEdit::Custom if !self.custom_persona_text.is_empty() => {
@@ -960,6 +985,10 @@ impl WizardState {
             pea_budget_usd,
             pea_budget_strategy,
             pea_heartbeat_secs,
+            pea_search_backend,
+            pea_brave_api_key,
+            pea_searxng_url,
+            pea_searxng_autoinstall,
             web_port: self.web_port,
             web_access,
             web_allowed_ips: self.web_allowed_ips,
@@ -1311,22 +1340,41 @@ fn handle_studio(state: &mut WizardState, key: crossterm::event::KeyEvent) {
     }
 }
 
+fn pea_max_field(state: &WizardState) -> usize {
+    let backend_id = PEA_SEARCH_BACKENDS.get(state.pea_backend_idx).map(|(id, _, _)| *id).unwrap_or("scrape_rotation");
+    match backend_id {
+        "brave_api" | "searxng" => 4, // 0=strategy, 1=budget, 2=heartbeat, 3=backend, 4=config
+        _ => 3,                        // 0=strategy, 1=budget, 2=heartbeat, 3=backend
+    }
+}
+
 fn handle_pea(state: &mut WizardState, key: crossterm::event::KeyEvent) {
+    let max_field = pea_max_field(state);
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => {
             state.pea_field = state.pea_field.saturating_sub(1);
         }
         KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-            state.pea_field = (state.pea_field + 1).min(2);
+            state.pea_field = (state.pea_field + 1).min(max_field);
         }
         KeyCode::Left => {
             if state.pea_field == 0 {
                 state.pea_strategy_idx = state.pea_strategy_idx.checked_sub(1).unwrap_or(PEA_STRATEGIES.len() - 1);
+            } else if state.pea_field == 3 {
+                state.pea_backend_idx = state.pea_backend_idx.checked_sub(1).unwrap_or(PEA_SEARCH_BACKENDS.len() - 1);
             }
         }
         KeyCode::Right => {
             if state.pea_field == 0 {
                 state.pea_strategy_idx = (state.pea_strategy_idx + 1) % PEA_STRATEGIES.len();
+            } else if state.pea_field == 3 {
+                state.pea_backend_idx = (state.pea_backend_idx + 1) % PEA_SEARCH_BACKENDS.len();
+            }
+        }
+        KeyCode::Char(' ') if state.pea_field == 4 => {
+            let backend_id = PEA_SEARCH_BACKENDS.get(state.pea_backend_idx).map(|(id, _, _)| *id).unwrap_or("");
+            if backend_id == "searxng" {
+                state.pea_searxng_autoinstall = !state.pea_searxng_autoinstall;
             }
         }
         KeyCode::Char(c) if c.is_ascii_digit() || c == '.' => {
@@ -1336,10 +1384,26 @@ fn handle_pea(state: &mut WizardState, key: crossterm::event::KeyEvent) {
                 _ => {}
             }
         }
+        KeyCode::Char(c) if state.pea_field == 4 => {
+            let backend_id = PEA_SEARCH_BACKENDS.get(state.pea_backend_idx).map(|(id, _, _)| *id).unwrap_or("");
+            match backend_id {
+                "brave_api" => state.pea_api_key_input.push(c),
+                "searxng" => state.pea_searxng_url_input.push(c),
+                _ => {}
+            }
+        }
         KeyCode::Backspace => {
             match state.pea_field {
                 1 => { state.pea_budget_input.pop(); }
                 2 => { state.pea_heartbeat_input.pop(); }
+                4 => {
+                    let backend_id = PEA_SEARCH_BACKENDS.get(state.pea_backend_idx).map(|(id, _, _)| *id).unwrap_or("");
+                    match backend_id {
+                        "brave_api" => { state.pea_api_key_input.pop(); }
+                        "searxng" => { state.pea_searxng_url_input.pop(); }
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
         }
@@ -2323,7 +2387,7 @@ fn draw_pea(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     ]).split(area);
     draw_step_indicator(frame, chunks[0], Step::Pea);
 
-    let content_area = centered_rect(55, 55, chunks[2]);
+    let content_area = centered_rect(58, 65, chunks[2]);
     let block = Block::default()
         .borders(Borders::ALL).border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BORDER))
@@ -2337,6 +2401,7 @@ fn draw_pea(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     frame.render_widget(block, content_area);
 
     let (strategy_id, strategy_desc) = PEA_STRATEGIES.get(state.pea_strategy_idx).unwrap_or(&("adaptive", ""));
+    let (backend_id, backend_name, backend_desc) = PEA_SEARCH_BACKENDS.get(state.pea_backend_idx).unwrap_or(&("scrape_rotation", "Scrape Rotation", ""));
 
     let field_style = |idx: usize| -> (Color, Color) {
         if state.pea_field == idx { (ACCENT, HIGHLIGHT_BG) } else { (FG, BG) }
@@ -2390,10 +2455,69 @@ fn draw_pea(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
         Span::styled(hb_display, Style::default().fg(fg2).bg(bg2).add_modifier(Modifier::BOLD)),
         Span::styled(" seconds", Style::default().fg(DIM).bg(bg2)),
     ]));
+    lines.push(Line::from(""));
+
+    // Search backend field
+    let (fg3, bg3) = field_style(3);
+    let marker3 = if state.pea_field == 3 { "▸" } else { " " };
+    lines.push(Line::from(vec![
+        Span::styled(format!("  {} ", marker3), Style::default().fg(ACCENT).bg(bg3)),
+        Span::styled("Search      ", Style::default().fg(HEADING).bg(bg3).add_modifier(Modifier::BOLD)),
+        Span::styled("◄ ", Style::default().fg(DIM).bg(bg3)),
+        Span::styled(backend_name.to_string(), Style::default().fg(fg3).bg(bg3).add_modifier(Modifier::BOLD)),
+        Span::styled(" ►", Style::default().fg(DIM).bg(bg3)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(format!("               {}", backend_desc), Style::default().fg(DIM).bg(BG)),
+    ]));
+
+    // Conditional field 4: backend-specific config
+    let max_field = pea_max_field(state);
+    if max_field >= 4 {
+        lines.push(Line::from(""));
+        let (fg4, bg4) = field_style(4);
+        let marker4 = if state.pea_field == 4 { "▸" } else { " " };
+
+        match *backend_id {
+            "brave_api" => {
+                let key_display = if state.pea_field == 4 {
+                    format!("{}_", state.pea_api_key_input)
+                } else if state.pea_api_key_input.is_empty() {
+                    "(enter API key)".to_string()
+                } else {
+                    let k = &state.pea_api_key_input;
+                    if k.len() > 8 { format!("{}...{}", &k[..4], &k[k.len()-4..]) } else { k.clone() }
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {} ", marker4), Style::default().fg(ACCENT).bg(bg4)),
+                    Span::styled("API Key     ", Style::default().fg(HEADING).bg(bg4).add_modifier(Modifier::BOLD)),
+                    Span::styled(key_display, Style::default().fg(fg4).bg(bg4)),
+                ]));
+            }
+            "searxng" => {
+                let url_display = if state.pea_field == 4 {
+                    format!("{}_", state.pea_searxng_url_input)
+                } else {
+                    state.pea_searxng_url_input.clone()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {} ", marker4), Style::default().fg(ACCENT).bg(bg4)),
+                    Span::styled("URL         ", Style::default().fg(HEADING).bg(bg4).add_modifier(Modifier::BOLD)),
+                    Span::styled(url_display, Style::default().fg(fg4).bg(bg4)),
+                ]));
+                let check = if state.pea_searxng_autoinstall { "[x]" } else { "[ ]" };
+                lines.push(Line::from(vec![
+                    Span::styled("               ", Style::default().bg(BG)),
+                    Span::styled(format!("{} Auto-install via Docker", check), Style::default().fg(DIM).bg(BG)),
+                ]));
+            }
+            _ => {}
+        }
+    }
 
     frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), block_inner);
 
-    draw_hint_bar(frame, chunks[3], &[("↑↓", "field"), ("←→", "strategy"), ("type", "edit value"), ("Enter", "next"), ("Esc", "back")]);
+    draw_hint_bar(frame, chunks[3], &[("↑↓", "field"), ("←→", "select"), ("type", "edit value"), ("Space", "toggle"), ("Enter", "next"), ("Esc", "back")]);
 }
 
 fn draw_agent_detail(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
@@ -2764,6 +2888,8 @@ fn draw_summary(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     lines.push(row("PEA Strategy", strategy, FG));
     lines.push(row("PEA Budget", &format!("${}/mo", state.pea_budget_input), FG));
     lines.push(row("PEA Heartbeat", &format!("{}s", state.pea_heartbeat_input), FG));
+    let search_backend = PEA_SEARCH_BACKENDS.get(state.pea_backend_idx).map(|(_, name, _)| *name).unwrap_or("Scrape Rotation");
+    lines.push(row("PEA Search", search_backend, FG));
 
     let selected_agents = state.selected_agents();
     if !selected_agents.is_empty() {
