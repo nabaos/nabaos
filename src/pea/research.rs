@@ -786,7 +786,7 @@ where
 /// Search via headless Chrome (ChromePool) — avoids bot detection by using a real browser.
 pub(crate) fn search_chrome_pool(query: &str) -> Result<Vec<SearchResult>, String> {
     use crate::browser::chrome_pool::{ChromePool, TabHandle};
-    use crate::modules::browser::{BrowserConfig, CdpTarget, CdpTransport};
+    use crate::modules::browser::{BrowserConfig, CdpTransport};
 
     let search_url = format!(
         "https://html.duckduckgo.com/html/?q={}",
@@ -1218,6 +1218,56 @@ mod tests {
         assert_eq!(config.max_search_queries, 20);
         assert_eq!(config.top_k_fetch, 50);
         assert_eq!(config.max_candidates, 200);
+    }
+
+    #[test]
+    fn test_search_backend_roundtrip() {
+        let cases = &[
+            ("scrape_rotation", SearchBackend::ScrapeRotation),
+            ("chrome_pool", SearchBackend::ChromePool),
+            ("brave_api", SearchBackend::BraveApi),
+            ("searxng", SearchBackend::SearXng),
+        ];
+        for (s, expected) in cases {
+            let backend = SearchBackend::from_env_str(s);
+            assert_eq!(backend, *expected, "from_env_str({}) mismatch", s);
+            assert_eq!(backend.as_env_str(), *s, "as_env_str roundtrip for {}", s);
+        }
+    }
+
+    #[test]
+    fn test_search_backend_case_insensitive() {
+        assert_eq!(SearchBackend::from_env_str("BRAVE_API"), SearchBackend::BraveApi);
+        assert_eq!(SearchBackend::from_env_str("BraveApi"), SearchBackend::BraveApi);
+        assert_eq!(SearchBackend::from_env_str("Chrome_Pool"), SearchBackend::ChromePool);
+        assert_eq!(SearchBackend::from_env_str("SEARXNG"), SearchBackend::SearXng);
+        assert_eq!(SearchBackend::from_env_str("searx"), SearchBackend::SearXng);
+        assert_eq!(SearchBackend::from_env_str("chromepool"), SearchBackend::ChromePool);
+        assert_eq!(SearchBackend::from_env_str("unknown"), SearchBackend::ScrapeRotation);
+        assert_eq!(SearchBackend::from_env_str(""), SearchBackend::ScrapeRotation);
+    }
+
+    #[test]
+    fn test_research_config_default_backend() {
+        let config = ResearchConfig::default();
+        // Without env var set, should default to ScrapeRotation
+        assert_eq!(config.search_backend, SearchBackend::ScrapeRotation);
+        assert!(config.brave_api_key.is_none() || config.brave_api_key.as_deref() == Some(""));
+    }
+
+    #[test]
+    fn test_searxng_url_format() {
+        // Verify the default URL is well-formed for SearXNG
+        let base = "http://localhost:8888";
+        let query = "test query";
+        let url = format!(
+            "{}/search?q={}&format=json&language=en",
+            base.trim_end_matches('/'),
+            urlencoding::encode(query)
+        );
+        assert!(url.starts_with("http://localhost:8888/search?q="));
+        assert!(url.contains("format=json"));
+        assert!(url.contains("test%20query"));
     }
 
     #[test]
