@@ -99,6 +99,7 @@ pub const KNOWN_PERMISSIONS: &[&str] = &[
     "llm.chat",
     "script.run",
     "docs.generate",
+    "media.fetch_stock_image",
 ];
 
 impl AgentManifest {

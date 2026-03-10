@@ -819,6 +819,21 @@ impl AbilityRegistry {
                     "required": ["data", "operations"]
                 })),
             },
+            // --- Media abilities ---
+            AbilitySpec {
+                name: "media.fetch_stock_image".into(),
+                description: "Fetch a royalty-free stock image by query (Unsplash → Pexels → TikZ fallback)".into(),
+                permission: "media.fetch_stock_image".into(),
+                source: AbilitySource::BuiltIn,
+                input_schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query for the image (e.g. 'sunset over ocean')"},
+                        "output_dir": {"type": "string", "description": "Directory to save the image into (an images/ subdirectory is created)"}
+                    },
+                    "required": ["query", "output_dir"]
+                })),
+            },
             // --- Coupon abilities ---
             AbilitySpec {
                 name: "coupon.generate".into(),
@@ -1103,6 +1118,7 @@ impl AbilityRegistry {
             "data.extract_json" => exec_extract_json(&input)?,
             "data.template" => exec_template(&input)?,
             "data.transform" => exec_transform(&input)?,
+            "media.fetch_stock_image" => exec_fetch_stock_image(&input)?,
             "coupon.generate" => exec_coupon_generate(&input)?,
             "coupon.validate" => exec_coupon_validate(&input)?,
             "tracking.check" => exec_tracking_check(&input)?,
@@ -1938,6 +1954,224 @@ fn exec_download(input: &serde_json::Value) -> Result<AbilityOutput, String> {
     });
 
     Ok((output.to_string().into_bytes(), None, facts))
+}
+
+// ---------------------------------------------------------------------------
+// media.fetch_stock_image — Unsplash → Pexels → TikZ fallback chain
+// ---------------------------------------------------------------------------
+
+/// Default Unsplash demo client_id for NabaOS (open-source, attributed).
+const UNSPLASH_DEFAULT_CLIENT_ID: &str = "nabaos-demo-key";
+
+fn exec_fetch_stock_image(
+    input: &serde_json::Value,
+) -> Result<AbilityOutput, String> {
+    let query = input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or("media.fetch_stock_image requires 'query' string field")?;
+    let output_dir = input
+        .get("output_dir")
+        .and_then(|v| v.as_str())
+        .ok_or("media.fetch_stock_image requires 'output_dir' string field")?;
+
+    let output_path = std::path::Path::new(output_dir);
+    let images_dir = output_path.join("images");
+    std::fs::create_dir_all(&images_dir)
+        .map_err(|e| format!("Failed to create images dir: {}", e))?;
+
+    // Generate a filename from query hash
+    let query_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        query.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    };
+    let image_path = images_dir.join(format!("{}.jpg", query_hash));
+
+    // Check cache — if file already exists, return it
+    if image_path.exists() {
+        let mut facts = HashMap::new();
+        facts.insert("source".into(), "cache".into());
+        facts.insert("path".into(), image_path.display().to_string());
+        return Ok((
+            image_path.display().to_string().into_bytes(),
+            Some(1),
+            facts,
+        ));
+    }
+
+    let mut facts = HashMap::new();
+
+    // --- Try Unsplash ---
+    let unsplash_key = std::env::var("NABA_UNSPLASH_KEY")
+        .unwrap_or_else(|_| UNSPLASH_DEFAULT_CLIENT_ID.to_string());
+    {
+        let search_url = format!(
+            "https://api.unsplash.com/search/photos?query={}&per_page=1&orientation=landscape",
+            urlencoding::encode(query)
+        );
+        if let Ok(attribution) = try_unsplash_download(&search_url, &unsplash_key, &image_path) {
+            facts.insert("source".into(), "unsplash".into());
+            facts.insert("attribution".into(), attribution);
+            facts.insert("path".into(), image_path.display().to_string());
+            return Ok((
+                image_path.display().to_string().into_bytes(),
+                Some(1),
+                facts,
+            ));
+        }
+    }
+
+    // --- Try Pexels ---
+    if let Ok(pexels_key) = std::env::var("NABA_PEXELS_KEY") {
+        let search_url = format!(
+            "https://api.pexels.com/v1/search?query={}&per_page=1&orientation=landscape",
+            urlencoding::encode(query)
+        );
+        if let Ok(attribution) = try_pexels_download(&search_url, &pexels_key, &image_path) {
+            facts.insert("source".into(), "pexels".into());
+            facts.insert("attribution".into(), attribution);
+            facts.insert("path".into(), image_path.display().to_string());
+            return Ok((
+                image_path.display().to_string().into_bytes(),
+                Some(1),
+                facts,
+            ));
+        }
+    }
+
+    // --- TikZ fallback ---
+    let tikz_path = images_dir.join(format!("{}.tikz", query_hash));
+    let tikz_code = format!(
+        "% TikZ placeholder for: {}\n\\begin{{tikzpicture}}\n\\node[draw, rounded corners, fill=gray!10, minimum width=8cm, minimum height=5cm, align=center, font=\\large] {{{}}};\n\\end{{tikzpicture}}",
+        query, query
+    );
+    std::fs::write(&tikz_path, &tikz_code)
+        .map_err(|e| format!("Failed to write TikZ fallback: {}", e))?;
+
+    facts.insert("source".into(), "tikz_fallback".into());
+    facts.insert("path".into(), tikz_path.display().to_string());
+    Ok((
+        tikz_path.display().to_string().into_bytes(),
+        Some(1),
+        facts,
+    ))
+}
+
+fn try_unsplash_download(
+    search_url: &str,
+    client_id: &str,
+    save_path: &std::path::Path,
+) -> std::result::Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp = client
+        .get(search_url)
+        .header("Authorization", format!("Client-ID {}", client_id))
+        .header("User-Agent", "nabaos/0.3 (+https://github.com/nabaos/nabaos)")
+        .send()
+        .map_err(|e| format!("Unsplash request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Unsplash returned {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("Unsplash JSON parse failed: {}", e))?;
+
+    let results = body.get("results").and_then(|r| r.as_array())
+        .ok_or("No results array in Unsplash response")?;
+
+    let first = results.first().ok_or("No images found on Unsplash")?;
+
+    let image_url = first
+        .get("urls")
+        .and_then(|u| u.get("regular"))
+        .and_then(|v| v.as_str())
+        .ok_or("No regular URL in Unsplash result")?;
+
+    let photographer = first
+        .get("user")
+        .and_then(|u| u.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+
+    // Download the image
+    let img_resp = client
+        .get(image_url)
+        .send()
+        .map_err(|e| format!("Image download failed: {}", e))?;
+
+    let bytes = img_resp
+        .bytes()
+        .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+
+    std::fs::write(save_path, &bytes)
+        .map_err(|e| format!("Failed to save image: {}", e))?;
+
+    Ok(format!("Photo by {} on Unsplash", photographer))
+}
+
+fn try_pexels_download(
+    search_url: &str,
+    api_key: &str,
+    save_path: &std::path::Path,
+) -> std::result::Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp = client
+        .get(search_url)
+        .header("Authorization", api_key)
+        .header("User-Agent", "nabaos/0.3 (+https://github.com/nabaos/nabaos)")
+        .send()
+        .map_err(|e| format!("Pexels request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Pexels returned {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("Pexels JSON parse failed: {}", e))?;
+
+    let photos = body.get("photos").and_then(|r| r.as_array())
+        .ok_or("No photos array in Pexels response")?;
+
+    let first = photos.first().ok_or("No images found on Pexels")?;
+
+    let image_url = first
+        .get("src")
+        .and_then(|u| u.get("large"))
+        .and_then(|v| v.as_str())
+        .ok_or("No large URL in Pexels result")?;
+
+    let photographer = first
+        .get("photographer")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+
+    // Download the image
+    let img_resp = client
+        .get(image_url)
+        .send()
+        .map_err(|e| format!("Image download failed: {}", e))?;
+
+    let bytes = img_resp
+        .bytes()
+        .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+
+    std::fs::write(save_path, &bytes)
+        .map_err(|e| format!("Failed to save image: {}", e))?;
+
+    Ok(format!("Photo by {} on Pexels", photographer))
 }
 
 /// Rule-based sentiment analysis (no LLM needed for basic classification).
@@ -8364,5 +8598,41 @@ startxref
         let manifest = test_manifest(vec!["tracking.check", "tracking.subscribe"]);
         assert!(reg.check_permission(&manifest, "tracking.check"));
         assert!(reg.check_permission(&manifest, "tracking.subscribe"));
+    }
+
+    // -----------------------------------------------------------------------
+    // media.fetch_stock_image tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_fetch_stock_image_missing_query() {
+        let reg = reg();
+        let manifest = test_manifest(vec!["media.fetch_stock_image"]);
+        let result = reg.execute_ability(
+            &manifest,
+            "media.fetch_stock_image",
+            r#"{"output_dir": "/tmp"}"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fetch_stock_image_tikz_fallback() {
+        let reg = reg();
+        let manifest = test_manifest(vec!["media.fetch_stock_image"]);
+        let dir = std::env::temp_dir().join("nabaos_test_stock_img");
+        let _ = std::fs::remove_dir_all(&dir);
+        let result = reg.execute_ability(
+            &manifest,
+            "media.fetch_stock_image",
+            &format!(r#"{{"query": "test sunset", "output_dir": "{}"}}"#, dir.display()),
+        );
+        // Should succeed with TikZ fallback (no API keys configured in test)
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        let facts = &output.facts;
+        assert_eq!(facts.get("source").map(|s| s.as_str()), Some("tikz_fallback"));
+        // Clean up
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
