@@ -79,14 +79,36 @@ pub struct PramanaRecord {
 // PramanaValidator
 // ---------------------------------------------------------------------------
 
+/// Configurable weights for each pramana source.
+#[derive(Debug, Clone)]
+pub struct PramanaWeights {
+    pub pratyaksha: f64,
+    pub anumana: f64,
+    pub upamana: f64,
+    pub shabda: f64,
+}
+
+impl Default for PramanaWeights {
+    fn default() -> Self {
+        Self {
+            pratyaksha: 1.0,
+            anumana: 1.0,
+            upamana: 1.0,
+            shabda: 1.0,
+        }
+    }
+}
+
 pub struct PramanaValidator {
     pub confidence_threshold: f64,
+    pub weights: PramanaWeights,
 }
 
 impl Default for PramanaValidator {
     fn default() -> Self {
         Self {
             confidence_threshold: 0.7,
+            weights: PramanaWeights::default(),
         }
     }
 }
@@ -95,6 +117,14 @@ impl PramanaValidator {
     pub fn new(confidence_threshold: f64) -> Self {
         Self {
             confidence_threshold,
+            weights: PramanaWeights::default(),
+        }
+    }
+
+    pub fn with_weights(confidence_threshold: f64, weights: PramanaWeights) -> Self {
+        Self {
+            confidence_threshold,
+            weights,
         }
     }
 
@@ -186,11 +216,11 @@ impl PramanaValidator {
 
     /// Aggregate all four pramana results into a single PramanaRecord.
     ///
-    /// Weighted average:
-    /// - pratyaksha: 1.0 if matches, 0.0 if not
-    /// - anumana: 1.0 if sound, 0.2 if not
-    /// - upamana: relevance_score
-    /// - shabda: 0.9 if not pending
+    /// Weighted average using configurable weights per source:
+    /// - pratyaksha: 1.0 if matches, 0.0 if not (weight: W_PRATYAKSHA)
+    /// - anumana: 1.0 if sound, 0.2 if not (weight: W_ANUMANA)
+    /// - upamana: relevance_score (weight: W_UPAMANA)
+    /// - shabda: 0.9 if not pending (weight: W_SHABDA)
     ///
     /// If confidence < threshold and no shabda provided, auto-creates a shabda request.
     pub fn aggregate(
@@ -201,27 +231,34 @@ impl PramanaValidator {
         upamana: Option<UpamanaResult>,
         shabda: Option<ShabdaResult>,
     ) -> PramanaRecord {
-        let mut scores: Vec<f64> = Vec::new();
+        let mut weighted_sum: f64 = 0.0;
+        let mut total_weight: f64 = 0.0;
 
         if let Some(ref p) = pratyaksha {
-            scores.push(if p.matches_expectation { 1.0 } else { 0.0 });
+            let score = if p.matches_expectation { 1.0 } else { 0.0 };
+            weighted_sum += score * self.weights.pratyaksha;
+            total_weight += self.weights.pratyaksha;
         }
         if let Some(ref a) = anumana {
-            scores.push(if a.sound { 1.0 } else { 0.2 });
+            let score = if a.sound { 1.0 } else { 0.2 };
+            weighted_sum += score * self.weights.anumana;
+            total_weight += self.weights.anumana;
         }
         if let Some(ref u) = upamana {
-            scores.push(u.relevance_score);
+            weighted_sum += u.relevance_score * self.weights.upamana;
+            total_weight += self.weights.upamana;
         }
         if let Some(ref s) = shabda {
             if !s.pending {
-                scores.push(0.9);
+                weighted_sum += 0.9 * self.weights.shabda;
+                total_weight += self.weights.shabda;
             }
         }
 
-        let confidence = if scores.is_empty() {
+        let confidence = if total_weight == 0.0 {
             0.0
         } else {
-            scores.iter().sum::<f64>() / scores.len() as f64
+            weighted_sum / total_weight
         };
 
         // If confidence is below threshold and no shabda was provided,
@@ -348,6 +385,64 @@ mod tests {
         assert!(shabda.pending);
         assert_eq!(shabda.authority, "human_reviewer");
         assert!(!record.validated);
+    }
+
+    #[test]
+    fn test_weighted_aggregate() {
+        let weights = PramanaWeights {
+            pratyaksha: 2.0,
+            anumana: 1.0,
+            upamana: 1.0,
+            shabda: 1.0,
+        };
+        let v = PramanaValidator::with_weights(0.7, weights);
+        // pratyaksha matches (1.0 * 2.0 = 2.0), anumana sound (1.0 * 1.0 = 1.0)
+        // total = 3.0 / 3.0 = 1.0
+        let record = v.aggregate(
+            "test decision",
+            Some(PratyakshaResult {
+                observation: "ok".to_string(),
+                matches_expectation: true,
+            }),
+            Some(AnumanaResult {
+                reasoning: "sound".to_string(),
+                fallacies_detected: vec![],
+                sound: true,
+            }),
+            None,
+            None,
+        );
+        assert!((record.confidence - 1.0).abs() < f64::EPSILON);
+        assert!(record.validated);
+    }
+
+    #[test]
+    fn test_weighted_aggregate_with_unequal_weights() {
+        let weights = PramanaWeights {
+            pratyaksha: 3.0,
+            anumana: 1.0,
+            upamana: 1.0,
+            shabda: 1.0,
+        };
+        let v = PramanaValidator::with_weights(0.7, weights);
+        // pratyaksha fails (0.0 * 3.0 = 0.0), anumana sound (1.0 * 1.0 = 1.0)
+        // total = 1.0 / 4.0 = 0.25
+        let record = v.aggregate(
+            "weighted test",
+            Some(PratyakshaResult {
+                observation: "bad".to_string(),
+                matches_expectation: false,
+            }),
+            Some(AnumanaResult {
+                reasoning: "ok".to_string(),
+                fallacies_detected: vec![],
+                sound: true,
+            }),
+            None,
+            None,
+        );
+        assert!((record.confidence - 0.25).abs() < f64::EPSILON);
+        assert!(!record.validated); // 0.25 < 0.7
     }
 
     #[test]

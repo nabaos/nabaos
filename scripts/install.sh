@@ -361,6 +361,44 @@ install_onnx_runtime() {
     rm -rf "$tmp_dir"
 }
 
+# ─── Install LaTeX (for PEA document generation) ────────────────────────────
+install_texlive() {
+    # Skip if pdflatex or tectonic already available
+    if command -v pdflatex &>/dev/null || command -v tectonic &>/dev/null || command -v xelatex &>/dev/null; then
+        ok "LaTeX compiler already installed ($(command -v pdflatex || command -v tectonic || command -v xelatex))"
+        return
+    fi
+
+    info "Installing LaTeX packages (for PEA document generation)..."
+    local pkg_list="texlive-latex-base texlive-latex-extra texlive-fonts-recommended texlive-latex-recommended texlive-pictures poppler-utils"
+
+    if command -v apt-get &>/dev/null; then
+        if [ -w /var/lib/dpkg ]; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $pkg_list 2>/dev/null && ok "LaTeX packages installed via apt" && return
+        else
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $pkg_list 2>/dev/null && ok "LaTeX packages installed via apt" && return
+        fi
+    elif command -v dnf &>/dev/null; then
+        local rpm_list="texlive-scheme-basic texlive-collection-latexextra texlive-collection-fontsrecommended texlive-pgf poppler-utils"
+        sudo dnf install -y -q $rpm_list 2>/dev/null && ok "LaTeX packages installed via dnf" && return
+    elif command -v pacman &>/dev/null; then
+        sudo pacman -S --noconfirm --needed texlive-core texlive-latexextra texlive-fontsextra texlive-pictures poppler 2>/dev/null && ok "LaTeX packages installed via pacman" && return
+    fi
+
+    # If none worked, try tectonic as a lightweight alternative
+    if command -v cargo &>/dev/null; then
+        info "Trying tectonic (lightweight LaTeX engine)..."
+        cargo install tectonic 2>/dev/null && ok "Tectonic installed via cargo" && return
+    fi
+
+    warn "Could not install LaTeX automatically. PEA documents will use HTML fallback."
+    info "To enable PDF output, install manually:"
+    info "  Ubuntu/Debian: sudo apt install texlive-latex-extra texlive-pictures"
+    info "  Fedora/RHEL:   sudo dnf install texlive-scheme-basic texlive-collection-latexextra"
+    info "  Arch:          sudo pacman -S texlive-core texlive-latexextra"
+    info "  Or install tectonic: cargo install tectonic"
+}
+
 # ─── Download default constitution if not present ───────────────────────────
 ensure_default_constitution() {
     local dest="${DATA_DIR}/config/constitutions/default.yaml"
@@ -497,6 +535,12 @@ main() {
     if [ "$OS" = "linux" ]; then
         printf "\n"
         install_onnx_runtime
+    fi
+
+    # Install LaTeX for PEA document generation (Linux only)
+    if [ "$OS" = "linux" ]; then
+        printf "\n"
+        install_texlive
     fi
 
     printf "\n"

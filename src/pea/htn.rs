@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::pea::objective::*;
+use crate::runtime::host_functions::AbilityRegistry;
+use crate::runtime::manifest::AgentManifest;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,6 +138,130 @@ impl HtnDecomposer {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// LLM-driven decomposition
+// ---------------------------------------------------------------------------
+
+/// A single subtask returned by the LLM decomposition.
+#[derive(Debug, Clone, Deserialize)]
+struct LlmSubtask {
+    description: String,
+    depends_on: Vec<usize>,
+    #[allow(dead_code)]
+    capability: Option<String>,
+}
+
+/// Decompose a task using the LLM when keyword-based HTN matching fails.
+///
+/// Calls `llm.chat` with a planning prompt and parses the JSON array response
+/// into concrete `PeaTask` entries.  Falls back to `None` if the LLM call
+/// or parsing fails.
+pub fn decompose_with_llm(
+    registry: &AbilityRegistry,
+    manifest: &AgentManifest,
+    task: &PeaTask,
+    objective_id: &str,
+    desire_id: &str,
+) -> Option<Vec<PeaTask>> {
+    let prompt = format!(
+        r#"You are a project planner. Decompose this objective into 5-10 concrete,
+sequential subtasks. Each subtask must be independently executable.
+
+Objective: {}
+
+Output a JSON array (no other text):
+[
+  {{"description": "...", "depends_on": [], "capability": null}},
+  {{"description": "...", "depends_on": [0], "capability": null}}
+]
+
+Rules:
+- Each task should produce a concrete deliverable
+- Research tasks should come before writing tasks
+- Include a final "Compile and format final document" task
+- For academic work: include literature search, PRISMA screening, analysis, writing
+- For creative work: include research, content creation, illustrations, assembly
+- For reports: include data gathering, analysis, writing, visualization, formatting"#,
+        task.description
+    );
+
+    let input = serde_json::json!({
+        "system": "You are a precise project planner. Output ONLY valid JSON arrays with no surrounding text or markdown fences.",
+        "prompt": prompt,
+    });
+
+    let result = registry
+        .execute_ability(manifest, "llm.chat", &input.to_string())
+        .ok()?;
+
+    let raw_output = String::from_utf8_lossy(&result.output);
+
+    // Extract JSON array from response (handle markdown fences)
+    let json_str = extract_json_array(&raw_output)?;
+    let subtask_defs: Vec<LlmSubtask> = serde_json::from_str(&json_str).ok()?;
+
+    if subtask_defs.is_empty() {
+        return None;
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let subtasks: Vec<PeaTask> = subtask_defs
+        .iter()
+        .enumerate()
+        .map(|(i, def)| {
+            let id = format!("{}.{}", task.id, i);
+
+            let depends_on: Vec<String> = def
+                .depends_on
+                .iter()
+                .filter(|&&idx| idx < subtask_defs.len())
+                .map(|&idx| format!("{}.{}", task.id, idx))
+                .collect();
+
+            let status = if depends_on.is_empty() {
+                TaskStatus::Ready
+            } else {
+                TaskStatus::Pending
+            };
+
+            PeaTask {
+                id,
+                objective_id: objective_id.to_string(),
+                desire_id: desire_id.to_string(),
+                parent_task_id: Some(task.id.clone()),
+                description: def.description.clone(),
+                task_type: TaskType::Primitive,
+                status,
+                ordering: i as i32,
+                depends_on,
+                capability_required: def.capability.clone(),
+                result_json: None,
+                pramana_record_json: None,
+                retry_count: 0,
+                max_retries: 3,
+                created_at: now,
+                completed_at: None,
+            }
+        })
+        .collect();
+
+    Some(subtasks)
+}
+
+/// Extract a JSON array from LLM output that may contain markdown fences.
+fn extract_json_array(raw: &str) -> Option<String> {
+    let first_bracket = raw.find('[')?;
+    let last_bracket = raw.rfind(']')?;
+    if last_bracket <= first_bracket {
+        return None;
+    }
+    Some(raw[first_bracket..=last_bracket].to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +492,28 @@ mod tests {
         let task = make_task("t1", "unrelated gibberish");
         let result = decomposer.decompose(&task, "obj-1", "d-1");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_json_array_plain() {
+        let raw = r#"[{"description": "task1", "depends_on": [], "capability": null}]"#;
+        let result = extract_json_array(raw).unwrap();
+        assert!(result.starts_with('['));
+        assert!(result.ends_with(']'));
+    }
+
+    #[test]
+    fn test_extract_json_array_with_markdown() {
+        let raw = "Here is the plan:\n```json\n[{\"description\": \"task1\", \"depends_on\": [], \"capability\": null}]\n```\nDone.";
+        let result = extract_json_array(raw).unwrap();
+        let parsed: Vec<LlmSubtask> = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].description, "task1");
+    }
+
+    #[test]
+    fn test_extract_json_array_no_match() {
+        assert!(extract_json_array("no json here").is_none());
     }
 
     #[test]

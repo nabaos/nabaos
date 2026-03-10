@@ -152,7 +152,7 @@ pub fn builtin_providers() -> Vec<ProviderDef> {
     providers.push(openai_compat(
         "openrouter",
         "OpenRouter",
-        "https://openrouter.ai/api",
+        "https://openrouter.ai/api/v1",
     ));
     providers.push(openai_compat(
         "together",

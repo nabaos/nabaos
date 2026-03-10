@@ -170,7 +170,7 @@ impl<'a> DocumentComposer<'a> {
             .iter()
             .take(5)
             .map(|(desc, text)| {
-                let preview = if text.len() > 300 { &text[..300] } else { text.as_str() };
+                let preview = crate::pea::research::safe_slice(text, 300);
                 format!("- {}: {}", desc, preview)
             })
             .collect::<Vec<_>>()
@@ -270,7 +270,7 @@ impl<'a> DocumentComposer<'a> {
                 .iter()
                 .take(3)
                 .map(|(desc, text)| {
-                    let preview = if text.len() > 500 { &text[..500] } else { text.as_str() };
+                    let preview = crate::pea::research::safe_slice(text, 500);
                     format!("### {}\n{}", desc, preview)
                 })
                 .collect::<Vec<_>>()
@@ -359,7 +359,7 @@ impl<'a> DocumentComposer<'a> {
             .iter()
             .map(|s| {
                 let preview = if s.content.len() > 1000 {
-                    format!("{}...", &s.content[..1000])
+                    format!("{}...", crate::pea::research::safe_slice(&s.content, 1000))
                 } else {
                     s.content.clone()
                 };
@@ -701,7 +701,7 @@ fn select_relevant_sources(corpus: &ResearchCorpus, description: &str, title: &s
                 .iter()
                 .filter(|kw| {
                     s.title.to_lowercase().contains(&kw.to_lowercase())
-                        || s.content[..s.content.len().min(2000)]
+                        || crate::pea::research::safe_slice(&s.content, 2000)
                             .to_lowercase()
                             .contains(&kw.to_lowercase())
                 })
@@ -718,7 +718,7 @@ fn select_relevant_sources(corpus: &ResearchCorpus, description: &str, title: &s
         .filter(|(_, score)| *score > 0)
         .map(|(s, _)| {
             let preview = if s.content.len() > 800 {
-                format!("{}...", &s.content[..800])
+                format!("{}...", crate::pea::research::safe_slice(&s.content, 800))
             } else {
                 s.content.clone()
             };

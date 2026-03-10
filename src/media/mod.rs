@@ -1,4 +1,4 @@
-//! NyayaStudio — unified multimodal creative engine.
+//! NabaStudio — unified multimodal creative engine.
 //!
 //! Provides image, video, audio, and slide generation through
 //! trait-based provider abstraction. Users describe the output;

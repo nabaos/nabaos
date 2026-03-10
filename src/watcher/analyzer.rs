@@ -273,6 +273,16 @@ fn summarize_event_redacted(kind: &WatchEventKind) -> String {
                 redact_secrets(truncate(error, 80))
             )
         }
+        WatchEventKind::PrivilegeEscalation {
+            agent_id,
+            attempted_level,
+            current_level,
+        } => {
+            format!(
+                "Privilege escalation: agent {} tried {} (has {})",
+                agent_id, attempted_level, current_level
+            )
+        }
     }
 }
 

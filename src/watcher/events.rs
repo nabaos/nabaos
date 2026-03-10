@@ -94,6 +94,13 @@ pub enum WatchEventKind {
         reason: String,
     },
 
+    // Privilege escalation
+    PrivilegeEscalation {
+        agent_id: String,
+        attempted_level: String,
+        current_level: String,
+    },
+
     // System health
     HighMemory {
         used_mb: u64,
@@ -114,7 +121,7 @@ impl WatchEventKind {
         match self {
             Self::Error { module, .. } | Self::Panic { module, .. } => module,
             Self::InjectionDetected { .. } | Self::CredentialLeak { .. } => "security",
-            Self::ConstitutionViolation { .. } => "constitution",
+            Self::ConstitutionViolation { .. } | Self::PrivilegeEscalation { .. } => "constitution",
             Self::OutboundRequest { .. }
             | Self::UnusualDestination { .. }
             | Self::DataVolumeSpike { .. } => "network",
@@ -134,7 +141,8 @@ impl WatchEventKind {
             Self::Error { .. } | Self::Panic { .. } => "logs",
             Self::InjectionDetected { .. }
             | Self::CredentialLeak { .. }
-            | Self::ConstitutionViolation { .. } => "security",
+            | Self::ConstitutionViolation { .. }
+            | Self::PrivilegeEscalation { .. } => "security",
             Self::OutboundRequest { .. }
             | Self::UnusualDestination { .. }
             | Self::DataVolumeSpike { .. } => "network",
@@ -156,6 +164,7 @@ impl WatchEventKind {
             Self::InjectionDetected { confidence, .. } => 0.3 * confidence,
             Self::CredentialLeak { .. } => 0.8,
             Self::ConstitutionViolation { .. } => 0.6,
+            Self::PrivilegeEscalation { .. } => 0.7,
             Self::OutboundRequest { .. } => 0.0, // informational
             Self::UnusualDestination { .. } => 0.2,
             Self::DataVolumeSpike {
@@ -231,6 +240,43 @@ mod tests {
             projected_overshoot: 1.5,
         };
         assert_eq!(e2.component(), "pea");
+    }
+
+    #[test]
+    fn test_privilege_escalation_event() {
+        let e = WatchEventKind::PrivilegeEscalation {
+            agent_id: "agent-1".into(),
+            attempted_level: "Admin".into(),
+            current_level: "Open".into(),
+        };
+        assert_eq!(e.component(), "constitution");
+        assert_eq!(e.monitor_category(), "security");
+        assert!((e.base_score() - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_event_kind_count_is_17() {
+        // Ensure we have exactly 17 event types by checking all categories
+        let events: Vec<WatchEventKind> = vec![
+            WatchEventKind::Error { module: "m".into(), message: "e".into() },
+            WatchEventKind::Panic { module: "m".into(), backtrace: None },
+            WatchEventKind::InjectionDetected { pattern: "p".into(), confidence: 0.9, source: "s".into() },
+            WatchEventKind::CredentialLeak { credential_type: "c".into(), destination: "d".into() },
+            WatchEventKind::ConstitutionViolation { rule: "r".into(), action_attempted: "a".into() },
+            WatchEventKind::PrivilegeEscalation { agent_id: "a".into(), attempted_level: "Admin".into(), current_level: "Open".into() },
+            WatchEventKind::OutboundRequest { destination: "d".into(), bytes: 100, status: 200 },
+            WatchEventKind::UnusualDestination { destination: "d".into(), reason: "r".into() },
+            WatchEventKind::DataVolumeSpike { bytes_last_minute: 1000, baseline: 100 },
+            WatchEventKind::PramanaValidationFailed { objective_id: "o".into(), decision: "d".into(), reason: "r".into() },
+            WatchEventKind::BudgetAnomaly { objective_id: "o".into(), burn_rate: 1.0, projected_overshoot: 0.5 },
+            WatchEventKind::TaskRetriesExhausted { objective_id: "o".into(), task_id: "t".into() },
+            WatchEventKind::CacheConfidenceDrift { entry_id: "e".into(), old_confidence: 0.9, new_confidence: 0.5 },
+            WatchEventKind::SuspiciousCacheEntry { entry_id: "e".into(), reason: "r".into() },
+            WatchEventKind::HighMemory { used_mb: 8000, total_mb: 16000 },
+            WatchEventKind::HighCpu { percent: 95.0 },
+            WatchEventKind::ComponentFailure { component: "c".into(), error: "e".into() },
+        ];
+        assert_eq!(events.len(), 17);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // Svelte 5 shared reactive state using $state runes
 // This file uses .svelte.ts extension to enable runes in module context
 
-export type Page = 'chat' | 'dashboard' | 'pea' | 'workflows' | 'watcher' | 'settings';
+export type Page = 'chat' | 'dashboard' | 'pea' | 'outputs' | 'workflows' | 'watcher' | 'settings';
 
 // ── App state ────────────────────────────────────────────────────────
 export let appState = $state({

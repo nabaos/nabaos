@@ -35,6 +35,7 @@ pub struct ObjectiveSummary {
     pub budget_strategy: String,
     pub beliefs: Vec<(String, f64)>, // (key, confidence)
     pub created_at: u64,
+    pub output_id: Option<String>,
 }
 
 /// Displayable task in the task tree.
@@ -100,6 +101,12 @@ pub enum PeaAction {
         objective_id: String,
     },
     LoadTasks {
+        objective_id: String,
+    },
+    ViewOutput {
+        objective_id: String,
+    },
+    ImproveOutput {
         objective_id: String,
     },
 }
@@ -285,6 +292,7 @@ impl Tab for TasksTab {
                             "pause" => PeaAction::Pause { objective_id: id },
                             "resume" => PeaAction::Resume { objective_id: id },
                             "cancel" => PeaAction::Cancel { objective_id: id },
+                            "improve" => PeaAction::ImproveOutput { objective_id: id },
                             _ => return true,
                         });
                     }
@@ -359,6 +367,11 @@ impl TasksTab {
                         Style::default().fg(Color::DarkGray),
                     ),
                     Span::styled(task_info, Style::default().fg(Color::Rgb(100, 100, 120))),
+                    if obj.output_id.is_some() {
+                        Span::styled(" [PDF]", Style::default().fg(Color::Rgb(255, 175, 95)))
+                    } else {
+                        Span::raw("")
+                    },
                 ]))
             })
             .collect();
@@ -607,6 +620,29 @@ impl TasksTab {
                         self.modal = PeaModal::ActionConfirm {
                             objective_id: obj.id.clone(),
                             action: "cancel".to_string(),
+                        };
+                    }
+                }
+                true
+            }
+            // o — view output (completed objectives with output)
+            KeyCode::Char('o') => {
+                if let Some(obj) = self.selected() {
+                    if obj.status == "completed" && obj.output_id.is_some() {
+                        self.pending_action = Some(PeaAction::ViewOutput {
+                            objective_id: obj.id.clone(),
+                        });
+                    }
+                }
+                true
+            }
+            // i — improve output (completed objectives)
+            KeyCode::Char('i') => {
+                if let Some(obj) = self.selected() {
+                    if obj.status == "completed" {
+                        self.modal = PeaModal::ActionConfirm {
+                            objective_id: obj.id.clone(),
+                            action: "improve".to_string(),
                         };
                     }
                 }

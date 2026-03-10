@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::core::error::Result;
+use crate::core::error::{NyayaError, Result};
 use crate::w5h2::types::W5H2Intent;
 
 /// Enforcement action when a rule matches
@@ -123,6 +123,12 @@ pub struct Constitution {
     /// Advanced CAPTCHA solver configuration (opt-in)
     #[serde(default)]
     pub captcha_solver: Option<CaptchaSolverConfig>,
+    /// Ed25519 signature over the YAML content (hex-encoded, optional for backward compat)
+    #[serde(default)]
+    pub signature: Option<String>,
+    /// Ed25519 public key used to sign this constitution (hex-encoded)
+    #[serde(default)]
+    pub public_key: Option<String>,
 }
 
 /// SECURITY: Default to Block (deny-by-default) so unmatched intents are rejected.
@@ -146,16 +152,38 @@ pub struct ConstitutionEnforcer {
 }
 
 impl ConstitutionEnforcer {
-    /// Load constitution from a YAML file
+    /// Load constitution from a YAML file.
+    /// If the constitution has a signature, it is verified against the public key.
+    /// If signature is present but invalid, loading fails.
+    /// If signature is absent, a warning is logged (backward compat).
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let constitution: Constitution = serde_yaml::from_str(&content)?;
 
-        tracing::info!(
-            name = %constitution.name,
-            rules = constitution.rules.len(),
-            "Constitution loaded"
-        );
+        // Verify signature if present
+        if let (Some(sig_hex), Some(pk_hex)) =
+            (&constitution.signature, &constitution.public_key)
+        {
+            // Strip signature/public_key fields from YAML to get the signed content
+            let signable = ConstitutionSigner::strip_signature_fields(&content);
+            if !ConstitutionSigner::verify_hex(&signable, sig_hex, pk_hex) {
+                return Err(NyayaError::Config(
+                    "Constitution signature verification failed — file may have been tampered with"
+                        .to_string(),
+                ));
+            }
+            tracing::info!(
+                name = %constitution.name,
+                rules = constitution.rules.len(),
+                "Constitution loaded (signature verified)"
+            );
+        } else {
+            tracing::warn!(
+                name = %constitution.name,
+                rules = constitution.rules.len(),
+                "Constitution loaded (unsigned — consider signing with `nabaos constitution sign`)"
+            );
+        }
 
         Ok(Self { constitution })
     }
@@ -363,6 +391,96 @@ impl ConstitutionEnforcer {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Ed25519 Constitution Signing
+// ---------------------------------------------------------------------------
+
+/// Handles Ed25519 signing and verification of constitution YAML files.
+pub struct ConstitutionSigner;
+
+impl ConstitutionSigner {
+    /// Generate a new Ed25519 keypair. Returns (signing_key_bytes, verifying_key_bytes).
+    pub fn generate_keypair() -> ([u8; 32], [u8; 32]) {
+        use ed25519_dalek::SigningKey;
+        use rand::rngs::OsRng;
+
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let verifying_key = signing_key.verifying_key();
+        (signing_key.to_bytes(), verifying_key.to_bytes())
+    }
+
+    /// Sign YAML bytes with an Ed25519 signing key. Returns signature bytes.
+    pub fn sign(yaml_bytes: &[u8], signing_key_bytes: &[u8; 32]) -> Vec<u8> {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let signing_key = SigningKey::from_bytes(signing_key_bytes);
+        let signature = signing_key.sign(yaml_bytes);
+        signature.to_bytes().to_vec()
+    }
+
+    /// Verify a signature over YAML bytes using an Ed25519 verifying key.
+    pub fn verify(
+        yaml_bytes: &[u8],
+        signature_bytes: &[u8],
+        verifying_key_bytes: &[u8; 32],
+    ) -> bool {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+        let Ok(verifying_key) = VerifyingKey::from_bytes(verifying_key_bytes) else {
+            return false;
+        };
+        let Ok(signature) = Signature::from_slice(signature_bytes) else {
+            return false;
+        };
+        verifying_key.verify(yaml_bytes, &signature).is_ok()
+    }
+
+    /// Verify using hex-encoded signature and public key strings.
+    pub fn verify_hex(yaml_content: &str, sig_hex: &str, pk_hex: &str) -> bool {
+        let Ok(sig_bytes) = hex::decode(sig_hex) else {
+            return false;
+        };
+        let Ok(pk_bytes) = hex::decode(pk_hex) else {
+            return false;
+        };
+        if pk_bytes.len() != 32 {
+            return false;
+        }
+        let pk: [u8; 32] = pk_bytes.try_into().unwrap();
+        Self::verify(yaml_content.as_bytes(), &sig_bytes, &pk)
+    }
+
+    /// Strip `signature:` and `public_key:` fields from YAML content
+    /// to produce the canonical content that was signed.
+    pub fn strip_signature_fields(yaml_content: &str) -> String {
+        yaml_content
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !trimmed.starts_with("signature:") && !trimmed.starts_with("public_key:")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Sign a constitution YAML file and return the updated YAML with signature and public_key.
+    pub fn sign_file(
+        yaml_content: &str,
+        signing_key_bytes: &[u8; 32],
+    ) -> (String, String, String) {
+        use ed25519_dalek::SigningKey;
+
+        let signable = Self::strip_signature_fields(yaml_content);
+        let sig_bytes = Self::sign(signable.as_bytes(), signing_key_bytes);
+        let sig_hex = hex::encode(&sig_bytes);
+
+        let signing_key = SigningKey::from_bytes(signing_key_bytes);
+        let pk_hex = hex::encode(signing_key.verifying_key().to_bytes());
+
+        (signable, sig_hex, pk_hex)
+    }
+}
+
 /// Load the default constitution (built-in safe defaults)
 pub fn default_constitution() -> Constitution {
     Constitution {
@@ -537,6 +655,8 @@ pub fn default_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -599,6 +719,8 @@ pub fn solopreneur_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -661,6 +783,8 @@ pub fn freelancer_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -723,6 +847,8 @@ pub fn marketer_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -774,6 +900,8 @@ pub fn student_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -836,6 +964,8 @@ pub fn sales_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -896,6 +1026,8 @@ pub fn support_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -957,6 +1089,8 @@ pub fn legal_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1012,6 +1146,8 @@ pub fn ecommerce_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1074,6 +1210,8 @@ pub fn hr_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1135,6 +1273,8 @@ pub fn finance_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1196,6 +1336,8 @@ pub fn healthcare_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1259,6 +1401,8 @@ pub fn engineering_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1318,6 +1462,8 @@ pub fn media_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1379,6 +1525,8 @@ pub fn government_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1442,6 +1590,8 @@ pub fn ngo_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1505,6 +1655,8 @@ pub fn logistics_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1567,6 +1719,8 @@ pub fn research_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1630,6 +1784,8 @@ pub fn consulting_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1689,6 +1845,8 @@ pub fn creative_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1751,6 +1909,8 @@ pub fn agriculture_constitution() -> Constitution {
         swarm_config: None,
         ollama_config: None,
         captcha_solver: None,
+        signature: None,
+        public_key: None,
     }
 }
 
@@ -1887,6 +2047,8 @@ mod tests {
             swarm_config: None,
             ollama_config: None,
             captcha_solver: None,
+            signature: None,
+            public_key: None,
         };
 
         let enforcer = ConstitutionEnforcer::from_constitution(constitution);
@@ -2024,6 +2186,8 @@ default_enforcement: block
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let perms = ChannelPermissions {
@@ -2041,6 +2205,8 @@ default_enforcement: block
             swarm_config: None,
             ollama_config: None,
             captcha_solver: None,
+            signature: None,
+            public_key: None,
         };
         let enforcer = ConstitutionEnforcer::from_constitution(constitution);
         // Unknown contact should be blocked on restricted channel
@@ -2061,6 +2227,8 @@ default_enforcement: block
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let perms = ChannelPermissions {
@@ -2078,6 +2246,8 @@ default_enforcement: block
             swarm_config: None,
             ollama_config: None,
             captcha_solver: None,
+            signature: None,
+            public_key: None,
         };
         let enforcer = ConstitutionEnforcer::from_constitution(constitution);
         // Authorized contact should be allowed
@@ -2147,6 +2317,8 @@ swarm_config:
             swarm_config: None,
             ollama_config: None,
             captcha_solver: None,
+            signature: None,
+            public_key: None,
         };
         let enforcer = ConstitutionEnforcer::from_constitution(constitution);
         // No channel_permissions configured — should allow everything
@@ -2183,5 +2355,57 @@ rules: []
 "#;
         let c: Constitution = serde_yaml::from_str(yaml).unwrap();
         assert!(c.ollama_config.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Ed25519 signing tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sign_verify_roundtrip() {
+        let (sk, vk) = ConstitutionSigner::generate_keypair();
+        let content = b"name: test\nversion: 1.0\nrules: []";
+        let sig = ConstitutionSigner::sign(content, &sk);
+        assert!(ConstitutionSigner::verify(content, &sig, &vk));
+    }
+
+    #[test]
+    fn test_tamper_detection() {
+        let (sk, vk) = ConstitutionSigner::generate_keypair();
+        let content = b"name: test\nversion: 1.0\nrules: []";
+        let sig = ConstitutionSigner::sign(content, &sk);
+        let tampered = b"name: test\nversion: 1.0\nrules: [EVIL]";
+        assert!(!ConstitutionSigner::verify(tampered, &sig, &vk));
+    }
+
+    #[test]
+    fn test_unsigned_backward_compat() {
+        // A constitution without signature/public_key should parse fine
+        let yaml = r#"
+name: unsigned
+version: "1.0"
+rules: []
+"#;
+        let c: Constitution = serde_yaml::from_str(yaml).unwrap();
+        assert!(c.signature.is_none());
+        assert!(c.public_key.is_none());
+    }
+
+    #[test]
+    fn test_sign_file_produces_valid_signature() {
+        let (sk, _vk) = ConstitutionSigner::generate_keypair();
+        let yaml = "name: test\nversion: '1.0'\nrules: []\n";
+        let (signable, sig_hex, pk_hex) = ConstitutionSigner::sign_file(yaml, &sk);
+        assert!(ConstitutionSigner::verify_hex(&signable, &sig_hex, &pk_hex));
+    }
+
+    #[test]
+    fn test_strip_signature_fields() {
+        let yaml = "name: test\nsignature: abc123\npublic_key: def456\nrules: []\n";
+        let stripped = ConstitutionSigner::strip_signature_fields(yaml);
+        assert!(!stripped.contains("signature:"));
+        assert!(!stripped.contains("public_key:"));
+        assert!(stripped.contains("name: test"));
+        assert!(stripped.contains("rules: []"));
     }
 }

@@ -262,12 +262,30 @@ pub enum ExternalAbilityConfig {
     },
 }
 
+/// Trait for dynamically loaded plugins.
+/// Plugins implement this trait to expose abilities to the orchestrator.
+pub trait Plugin: Send + Sync {
+    /// The plugin's unique name.
+    fn name(&self) -> &str;
+
+    /// List of abilities this plugin provides.
+    fn abilities(&self) -> Vec<String>;
+
+    /// Execute an ability with the given input.
+    fn execute(&self, ability: &str, input: serde_json::Value) -> std::result::Result<serde_json::Value, String>;
+
+    /// Health check — returns true if the plugin is operational.
+    fn health_check(&self) -> bool;
+}
+
 /// The plugin registry — stores all non-built-in abilities.
 pub struct PluginRegistry {
     /// External abilities keyed by name.
     abilities: HashMap<String, ExternalAbility>,
     /// Directory where plugins are installed.
     plugin_dir: PathBuf,
+    /// Dynamic plugin instances.
+    plugins: Vec<Box<dyn Plugin>>,
 }
 
 impl PluginRegistry {
@@ -276,6 +294,7 @@ impl PluginRegistry {
         let mut registry = Self {
             abilities: HashMap::new(),
             plugin_dir: plugin_dir.to_path_buf(),
+            plugins: Vec::new(),
         };
 
         // Scan plugin directory for manifests
@@ -293,7 +312,34 @@ impl PluginRegistry {
         Self {
             abilities: HashMap::new(),
             plugin_dir: PathBuf::from("/dev/null"),
+            plugins: Vec::new(),
         }
+    }
+
+    /// Register a dynamic plugin instance.
+    pub fn register_plugin(&mut self, plugin: Box<dyn Plugin>) {
+        tracing::info!(name = %plugin.name(), abilities = ?plugin.abilities(), "Dynamic plugin registered");
+        self.plugins.push(plugin);
+    }
+
+    /// Execute an ability via a registered dynamic plugin.
+    /// Returns None if no plugin provides this ability.
+    pub fn execute_plugin(
+        &self,
+        ability: &str,
+        input: serde_json::Value,
+    ) -> Option<std::result::Result<serde_json::Value, String>> {
+        for plugin in &self.plugins {
+            if plugin.abilities().iter().any(|a| a == ability) {
+                return Some(plugin.execute(ability, input));
+            }
+        }
+        None
+    }
+
+    /// List all registered dynamic plugins.
+    pub fn plugins(&self) -> &[Box<dyn Plugin>] {
+        &self.plugins
     }
 
     /// Scan the plugin directory for manifest files.
@@ -1103,6 +1149,67 @@ ability:
         let dir = tempfile::tempdir().unwrap();
         let result = remove_plugin(dir.path(), "../../../etc");
         assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Plugin trait tests
+    // -----------------------------------------------------------------------
+
+    struct MockPlugin;
+
+    impl Plugin for MockPlugin {
+        fn name(&self) -> &str {
+            "mock"
+        }
+        fn abilities(&self) -> Vec<String> {
+            vec!["mock.greet".to_string(), "mock.add".to_string()]
+        }
+        fn execute(&self, ability: &str, input: serde_json::Value) -> std::result::Result<serde_json::Value, String> {
+            match ability {
+                "mock.greet" => {
+                    let name = input.get("name").and_then(|v| v.as_str()).unwrap_or("world");
+                    Ok(serde_json::json!({"greeting": format!("Hello, {}!", name)}))
+                }
+                "mock.add" => {
+                    let a = input.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let b = input.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    Ok(serde_json::json!({"result": a + b}))
+                }
+                _ => Err(format!("Unknown ability: {}", ability)),
+            }
+        }
+        fn health_check(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn test_register_and_execute_plugin() {
+        let mut registry = PluginRegistry::empty();
+        registry.register_plugin(Box::new(MockPlugin));
+        assert_eq!(registry.plugins().len(), 1);
+
+        let result = registry
+            .execute_plugin("mock.greet", serde_json::json!({"name": "NabaOS"}))
+            .unwrap()
+            .unwrap();
+        assert_eq!(result["greeting"], "Hello, NabaOS!");
+    }
+
+    #[test]
+    fn test_plugin_execute_unknown_ability() {
+        let mut registry = PluginRegistry::empty();
+        registry.register_plugin(Box::new(MockPlugin));
+
+        // Ability not provided by any plugin → None
+        let result = registry.execute_plugin("nonexistent.ability", serde_json::json!({}));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_plugin_health_check() {
+        let plugin = MockPlugin;
+        assert!(plugin.health_check());
     }
 
     #[test]

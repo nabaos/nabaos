@@ -95,7 +95,7 @@ impl ResearchCorpus {
                 },
                 source.url,
                 if source.content.len() > 6000 {
-                    format!("{}... [truncated]", &source.content[..6000])
+                    format!("{}... [truncated]", safe_slice(&source.content, 6000))
                 } else {
                     source.content.clone()
                 }
@@ -323,7 +323,7 @@ impl<'a> ResearchEngine<'a> {
                 .enumerate()
                 .map(|(i, c)| {
                     let snippet_preview = if c.snippet.len() > 100 {
-                        format!("{}...", &c.snippet[..100])
+                        format!("{}...", safe_slice(&c.snippet, 100))
                     } else {
                         c.snippet.clone()
                     };
@@ -633,10 +633,32 @@ pub(crate) fn extract_readable_text(html: &str) -> String {
         }
     }
 
-    if text.len() > 8000 {
-        text.truncate(8000);
-    }
+    safe_truncate(&mut text, 8000);
     text
+}
+
+/// Truncate a string at the nearest char boundary at or before `max_len`.
+fn safe_truncate(s: &mut String, max_len: usize) {
+    if s.len() <= max_len {
+        return;
+    }
+    let mut end = max_len;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+}
+
+/// Safely slice a string at the nearest char boundary at or before `max_len`.
+pub(crate) fn safe_slice(s: &str, max_len: usize) -> &str {
+    if s.len() <= max_len {
+        return s;
+    }
+    let mut end = max_len;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 // ---------------------------------------------------------------------------
@@ -660,9 +682,7 @@ fn fetch_url_http(url: &str, timeout_secs: u64, max_content: usize) -> Result<St
     let body = resp.text().map_err(|e| format!("body: {}", e))?;
     let mut text = extract_readable_text(&body);
 
-    if text.len() > max_content {
-        text.truncate(max_content);
-    }
+    safe_truncate(&mut text, max_content);
 
     Ok(text)
 }

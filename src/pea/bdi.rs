@@ -19,6 +19,8 @@ pub enum BdiAction {
     Reconsider { reason: String },
     /// Stuck too long, trigger strategic review
     HegelianReview { stuck_ticks: u64 },
+    /// All tasks done, run diagnostic before completing
+    Diagnose { desire_id: String },
     /// All desires achieved
     ObjectiveComplete,
     /// No actionable desires remain
@@ -72,6 +74,20 @@ impl BdiEngine {
                     .all(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped));
 
             if all_done {
+                // Check if this desire has been diagnosed yet
+                let diag_key = format!("diagnosed_{}", committed_desire.id);
+                let already_diagnosed = objective
+                    .beliefs
+                    .get(&diag_key)
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                if !already_diagnosed {
+                    return BdiAction::Diagnose {
+                        desire_id: committed_desire.id.clone(),
+                    };
+                }
+
                 let next = self.pick_next_desire(desires, &committed_desire.id);
                 let all_achieved = desires
                     .iter()
@@ -249,9 +265,11 @@ mod tests {
     }
 
     #[test]
-    fn test_deliberate_all_tasks_done_advances() {
+    fn test_deliberate_all_tasks_done_advances_after_diagnosis() {
         let engine = BdiEngine::default();
-        let obj = make_objective();
+        let mut obj = make_objective();
+        // Pre-mark as diagnosed so we get Advance
+        obj.beliefs.set("diagnosed_d-1", serde_json::json!(true), 1.0);
         let desires = vec![
             make_desire("d-1", 0, Some("int-1".into()), DesireStatus::Active),
             make_desire("d-2", 1, None, DesireStatus::Active),
@@ -339,6 +357,56 @@ mod tests {
                 assert!(reason.contains("d-1"));
             }
             other => panic!("expected Reconsider, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_deliberate_all_done_triggers_diagnose_first() {
+        let engine = BdiEngine::default();
+        let obj = make_objective();
+        let desires = vec![
+            make_desire("d-1", 0, Some("int-1".into()), DesireStatus::Active),
+            make_desire("d-2", 1, None, DesireStatus::Active),
+        ];
+        let tasks = vec![
+            make_task("t-1", "d-1", TaskStatus::Completed, Some(2000)),
+            make_task("t-2", "d-1", TaskStatus::Completed, Some(2000)),
+        ];
+
+        // First time: should return Diagnose (not yet diagnosed)
+        let action = engine.deliberate(&obj, &desires, &tasks);
+        match action {
+            BdiAction::Diagnose { desire_id } => assert_eq!(desire_id, "d-1"),
+            other => panic!("expected Diagnose, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_deliberate_after_diagnosis_advances() {
+        let engine = BdiEngine::default();
+        let mut obj = make_objective();
+        // Mark desire as already diagnosed
+        obj.beliefs.set("diagnosed_d-1", serde_json::json!(true), 1.0);
+        let desires = vec![
+            make_desire("d-1", 0, Some("int-1".into()), DesireStatus::Active),
+            make_desire("d-2", 1, None, DesireStatus::Active),
+        ];
+        let tasks = vec![
+            make_task("t-1", "d-1", TaskStatus::Completed, Some(2000)),
+            make_task("t-2", "d-1", TaskStatus::Completed, Some(2000)),
+        ];
+
+        // Already diagnosed: should Advance
+        let action = engine.deliberate(&obj, &desires, &tasks);
+        match action {
+            BdiAction::Advance {
+                completed_desire_id,
+                next_desire_id,
+            } => {
+                assert_eq!(completed_desire_id, "d-1");
+                assert_eq!(next_desire_id, Some("d-2".into()));
+            }
+            other => panic!("expected Advance, got {:?}", other),
         }
     }
 

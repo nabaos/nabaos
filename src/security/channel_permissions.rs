@@ -1,7 +1,9 @@
 //! Fine-grained channel permissions with per-contact/group/domain access control.
 
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Mutex;
+use std::time::Instant;
 
 /// Access level for a channel or default.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -95,7 +97,7 @@ where
 }
 
 /// Access configuration for a single channel.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChannelAccess {
     #[serde(default)]
     pub access: AccessLevel,
@@ -129,10 +131,16 @@ pub struct ChannelAccess {
         serialize_with = "serialize_permission_entries"
     )]
     pub servers: Vec<PermissionEntry>,
+    /// Maximum requests per minute for this channel (None = unlimited).
+    #[serde(default)]
+    pub rate_limit_per_minute: Option<u32>,
+    /// Maximum cost budget in USD for this channel (None = unlimited).
+    #[serde(default)]
+    pub cost_budget_usd: Option<f64>,
 }
 
 /// Top-level channel permissions configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChannelPermissions {
     #[serde(default)]
     pub default_access: AccessLevel,
@@ -302,6 +310,19 @@ impl ChannelPermissions {
                 let send_domains =
                     Self::union_excludes(&self_ca.send_domains, &other_ca.send_domains);
                 let servers = Self::union_excludes(&self_ca.servers, &other_ca.servers);
+                // Take the more restrictive (lower) rate limit and budget
+                let rate_limit_per_minute = match (self_ca.rate_limit_per_minute, other_ca.rate_limit_per_minute) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b),
+                    (None, None) => None,
+                };
+                let cost_budget_usd = match (self_ca.cost_budget_usd, other_ca.cost_budget_usd) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b),
+                    (None, None) => None,
+                };
                 ChannelAccess {
                     access,
                     contacts,
@@ -309,6 +330,8 @@ impl ChannelPermissions {
                     domains,
                     send_domains,
                     servers,
+                    rate_limit_per_minute,
+                    cost_budget_usd,
                 }
             } else {
                 other_ca.clone()
@@ -381,6 +404,8 @@ impl ChannelPermissions {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             });
 
             channels.insert(
@@ -412,6 +437,8 @@ impl ChannelPermissions {
                     } else {
                         base.servers
                     },
+                    rate_limit_per_minute: base.rate_limit_per_minute.or(wf_ca.rate_limit_per_minute),
+                    cost_budget_usd: base.cost_budget_usd.or(wf_ca.cost_budget_usd),
                 },
             );
         }
@@ -448,6 +475,118 @@ impl ChannelPermissions {
         }
 
         None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rate limiting & cost budgets
+// ---------------------------------------------------------------------------
+
+/// Sliding-window rate limiter for channel abilities.
+pub struct ChannelRateLimiter {
+    /// Map of (channel, ability) → timestamps of recent requests.
+    windows: Mutex<HashMap<(String, String), VecDeque<Instant>>>,
+}
+
+impl ChannelRateLimiter {
+    pub fn new() -> Self {
+        Self {
+            windows: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Check if a request is within the rate limit. Returns true if allowed.
+    /// Also records the request if allowed.
+    pub fn check_and_record(
+        &self,
+        channel: &str,
+        ability: &str,
+        limit_per_minute: u32,
+    ) -> bool {
+        let key = (channel.to_string(), ability.to_string());
+        let mut windows = self.windows.lock().unwrap();
+        let window = windows.entry(key).or_insert_with(VecDeque::new);
+
+        let now = Instant::now();
+        let one_minute_ago = now - std::time::Duration::from_secs(60);
+
+        // Evict old entries
+        while window.front().is_some_and(|t| *t < one_minute_ago) {
+            window.pop_front();
+        }
+
+        if window.len() >= limit_per_minute as usize {
+            return false;
+        }
+
+        window.push_back(now);
+        true
+    }
+
+    /// Check rate limit without recording (peek).
+    pub fn check_rate_limit(
+        &self,
+        channel: &str,
+        ability: &str,
+        limit_per_minute: u32,
+    ) -> bool {
+        let key = (channel.to_string(), ability.to_string());
+        let mut windows = self.windows.lock().unwrap();
+        let window = windows.entry(key).or_insert_with(VecDeque::new);
+
+        let now = Instant::now();
+        let one_minute_ago = now - std::time::Duration::from_secs(60);
+
+        // Evict old entries
+        while window.front().is_some_and(|t| *t < one_minute_ago) {
+            window.pop_front();
+        }
+
+        window.len() < limit_per_minute as usize
+    }
+}
+
+impl Default for ChannelRateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Tracks accumulated costs per channel.
+pub struct ChannelCostTracker {
+    costs: Mutex<HashMap<String, f64>>,
+}
+
+impl ChannelCostTracker {
+    pub fn new() -> Self {
+        Self {
+            costs: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Record a cost for a channel.
+    pub fn record_cost(&self, channel: &str, amount: f64) {
+        let mut costs = self.costs.lock().unwrap();
+        *costs.entry(channel.to_string()).or_insert(0.0) += amount;
+    }
+
+    /// Check if channel is within budget. Returns true if within budget.
+    pub fn check_cost_budget(&self, channel: &str, budget_usd: f64) -> bool {
+        let costs = self.costs.lock().unwrap();
+        let spent = costs.get(channel).copied().unwrap_or(0.0);
+        spent < budget_usd
+    }
+
+    /// Get total spent for a channel.
+    pub fn total_spent(&self, channel: &str) -> f64 {
+        let costs = self.costs.lock().unwrap();
+        costs.get(channel).copied().unwrap_or(0.0)
+    }
+}
+
+impl Default for ChannelCostTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -511,6 +650,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let perms = ChannelPermissions {
@@ -533,6 +674,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let perms = ChannelPermissions {
@@ -558,6 +701,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let perms = ChannelPermissions {
@@ -583,6 +728,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let perms = ChannelPermissions {
@@ -606,6 +753,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let perms = ChannelPermissions {
@@ -629,6 +778,8 @@ mod tests {
                 domains: vec![PermissionEntry::parse("example.com")],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let perms = ChannelPermissions {
@@ -672,6 +823,8 @@ mod tests {
                 domains: vec![PermissionEntry::parse("example.com")],
                 send_domains: vec![PermissionEntry::parse("send.example.com")],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let perms = ChannelPermissions {
@@ -703,6 +856,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let agent = ChannelPermissions {
@@ -732,6 +887,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let constitution = ChannelPermissions {
@@ -749,6 +906,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let agent = ChannelPermissions {
@@ -834,5 +993,91 @@ channels:
         let serialized = serde_yaml::to_string(&perms).unwrap();
         let perms2: ChannelPermissions = serde_yaml::from_str(&serialized).unwrap();
         assert_eq!(perms, perms2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Rate limiting tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_rate_limit_blocks_after_n_requests() {
+        let limiter = ChannelRateLimiter::new();
+        // Allow 5 per minute
+        for _ in 0..5 {
+            assert!(limiter.check_and_record("telegram", "send", 5));
+        }
+        // 6th should be blocked
+        assert!(!limiter.check_and_record("telegram", "send", 5));
+    }
+
+    #[test]
+    fn test_rate_limit_different_channels_independent() {
+        let limiter = ChannelRateLimiter::new();
+        for _ in 0..5 {
+            assert!(limiter.check_and_record("telegram", "send", 5));
+        }
+        // Different channel should still be allowed
+        assert!(limiter.check_and_record("email", "send", 5));
+    }
+
+    #[test]
+    fn test_rate_limit_different_abilities_independent() {
+        let limiter = ChannelRateLimiter::new();
+        for _ in 0..5 {
+            assert!(limiter.check_and_record("telegram", "send", 5));
+        }
+        // Different ability should still be allowed
+        assert!(limiter.check_and_record("telegram", "check", 5));
+    }
+
+    // -----------------------------------------------------------------------
+    // Cost budget tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_cost_budget_blocks_after_exceeded() {
+        let tracker = ChannelCostTracker::new();
+        tracker.record_cost("telegram", 5.0);
+        assert!(tracker.check_cost_budget("telegram", 10.0));
+        tracker.record_cost("telegram", 6.0);
+        assert!(!tracker.check_cost_budget("telegram", 10.0));
+    }
+
+    #[test]
+    fn test_cost_budget_different_channels_independent() {
+        let tracker = ChannelCostTracker::new();
+        tracker.record_cost("telegram", 100.0);
+        assert!(tracker.check_cost_budget("email", 10.0));
+    }
+
+    #[test]
+    fn test_cost_total_spent() {
+        let tracker = ChannelCostTracker::new();
+        tracker.record_cost("telegram", 3.5);
+        tracker.record_cost("telegram", 2.5);
+        assert!((tracker.total_spent("telegram") - 6.0).abs() < f64::EPSILON);
+        assert!((tracker.total_spent("email") - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_yaml_with_rate_limit_and_budget() {
+        let yaml = r#"
+default_access: restricted
+channels:
+  telegram:
+    access: restricted
+    contacts:
+      - "+919876543210"
+    groups: []
+    domains: []
+    send_domains: []
+    servers: []
+    rate_limit_per_minute: 10
+    cost_budget_usd: 50.0
+"#;
+        let perms: ChannelPermissions = serde_yaml::from_str(yaml).unwrap();
+        let tg = &perms.channels["telegram"];
+        assert_eq!(tg.rate_limit_per_minute, Some(10));
+        assert!((tg.cost_budget_usd.unwrap() - 50.0).abs() < f64::EPSILON);
     }
 }

@@ -69,7 +69,7 @@ impl Default for WatcherConfig {
         Self {
             llm_threshold: 0.7,
             pause_threshold: 0.9,
-            window_secs: 300,
+            window_secs: super::scorer::DEFAULT_WINDOW_SECS,
             periodic_review: false,
             review_interval_secs: 3600,
             alert_channels: vec!["telegram".to_string()],
@@ -89,7 +89,7 @@ mod tests {
         let cfg = WatcherConfig::default();
         assert!((cfg.llm_threshold - 0.7).abs() < f64::EPSILON);
         assert!((cfg.pause_threshold - 0.9).abs() < f64::EPSILON);
-        assert_eq!(cfg.window_secs, 300);
+        assert_eq!(cfg.window_secs, 60);
         assert!(!cfg.periodic_review);
     }
 

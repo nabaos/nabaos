@@ -10,6 +10,9 @@ struct ScoredEvent {
     score: f64,
 }
 
+/// Default sliding window duration in seconds (paper claims 60s).
+pub const DEFAULT_WINDOW_SECS: u64 = 60;
+
 /// Maintains a sliding window of events and per-component anomaly scores.
 pub struct Scorer {
     window: VecDeque<ScoredEvent>,
@@ -97,7 +100,7 @@ mod tests {
 
     #[test]
     fn test_score_decays_over_time() {
-        let mut scorer = Scorer::new(300); // 5 min window
+        let mut scorer = Scorer::new(DEFAULT_WINDOW_SECS);
         scorer.push(make_event(
             WatchEventKind::Error {
                 module: "test".into(),
@@ -110,15 +113,15 @@ mod tests {
         let scores = scorer.compute_scores(100);
         let s1 = *scores.get("test").unwrap();
 
-        // At t=250 (halfway through window), score should be ~half
-        let scores2 = scorer.compute_scores(250);
+        // At t=130 (halfway through 60s window), score should be ~half
+        let scores2 = scorer.compute_scores(130);
         let s2 = *scores2.get("test").unwrap();
         assert!(s2 < s1, "score should decay: {} < {}", s2, s1);
     }
 
     #[test]
     fn test_old_events_evicted() {
-        let mut scorer = Scorer::new(300);
+        let mut scorer = Scorer::new(DEFAULT_WINDOW_SECS);
         scorer.push(make_event(
             WatchEventKind::Error {
                 module: "test".into(),
@@ -127,13 +130,13 @@ mod tests {
             Severity::Warning,
             100,
         ));
-        let scores = scorer.compute_scores(500); // 400s later, outside 300s window
+        let scores = scorer.compute_scores(500); // 400s later, outside 60s window
         assert!(scores.get("test").is_none() || *scores.get("test").unwrap() == 0.0);
     }
 
     #[test]
     fn test_multiple_components_scored_independently() {
-        let mut scorer = Scorer::new(300);
+        let mut scorer = Scorer::new(DEFAULT_WINDOW_SECS);
         scorer.push(make_event(
             WatchEventKind::CredentialLeak {
                 credential_type: "aws".into(),
@@ -156,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_score_capped_at_one() {
-        let mut scorer = Scorer::new(300);
+        let mut scorer = Scorer::new(DEFAULT_WINDOW_SECS);
         // Push many high-score events for the same component
         for i in 0..20 {
             scorer.push(make_event(
@@ -174,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_events_for_component_filters() {
-        let mut scorer = Scorer::new(300);
+        let mut scorer = Scorer::new(DEFAULT_WINDOW_SECS);
         scorer.push(make_event(
             WatchEventKind::Error {
                 module: "pea".into(),
