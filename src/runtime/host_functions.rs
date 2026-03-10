@@ -1960,8 +1960,8 @@ fn exec_download(input: &serde_json::Value) -> Result<AbilityOutput, String> {
 // media.fetch_stock_image — Unsplash → Pexels → TikZ fallback chain
 // ---------------------------------------------------------------------------
 
-/// Default Unsplash demo client_id for NabaOS (open-source, attributed).
-const UNSPLASH_DEFAULT_CLIENT_ID: &str = "nabaos-demo-key";
+// Unsplash requires NABA_UNSPLASH_KEY to be set. No default key — avoids
+// wasted HTTP roundtrips and 15-second timeouts when unconfigured.
 
 fn exec_fetch_stock_image(
     input: &serde_json::Value,
@@ -2003,10 +2003,8 @@ fn exec_fetch_stock_image(
 
     let mut facts = HashMap::new();
 
-    // --- Try Unsplash ---
-    let unsplash_key = std::env::var("NABA_UNSPLASH_KEY")
-        .unwrap_or_else(|_| UNSPLASH_DEFAULT_CLIENT_ID.to_string());
-    {
+    // --- Try Unsplash (only if NABA_UNSPLASH_KEY is set) ---
+    if let Ok(unsplash_key) = std::env::var("NABA_UNSPLASH_KEY") {
         let search_url = format!(
             "https://api.unsplash.com/search/photos?query={}&per_page=1&orientation=landscape",
             urlencoding::encode(query)

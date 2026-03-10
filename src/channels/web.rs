@@ -3451,6 +3451,14 @@ async fn handle_set_env_key(
         );
     }
 
+    // Reject values with newlines/carriage-returns to prevent .env injection
+    if body.value.contains('\n') || body.value.contains('\r') || body.value.contains('\0') {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Value must not contain newlines or null bytes" })),
+        );
+    }
+
     let env_path = state.config.data_dir.join(".env");
     let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
 
@@ -3472,7 +3480,7 @@ async fn handle_set_env_key(
         lines.push(format!("{}={}", body.name, body.value));
     }
 
-    match std::fs::write(&env_path, lines.join("\n")) {
+    match std::fs::write(&env_path, format!("{}\n", lines.join("\n"))) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({

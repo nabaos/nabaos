@@ -1557,6 +1557,11 @@ fn handle_env_set_command(data_dir: &std::path::Path, msg: &str) -> String {
         return format!("Unknown key: {}. Use /env to see available keys.", key_name);
     }
 
+    // Reject values with newlines to prevent .env injection
+    if value.contains('\n') || value.contains('\r') || value.contains('\0') {
+        return "Value must not contain newlines or null bytes.".to_string();
+    }
+
     let env_path = data_dir.join(".env");
     let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
     let mut found = false;
