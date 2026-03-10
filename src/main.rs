@@ -3152,9 +3152,13 @@ fn cmd_daemon(config: &NyayaConfig) -> Result<()> {
             }
         }
 
-        // PEA engine tick
+        // PEA engine tick — with execution bridge
         if let Some(ref pea_engine) = pea_engine {
-            match pea_engine.tick() {
+            match pea_engine.tick_with_executor(
+                orch.ability_registry(),
+                &manifest,
+                &config.data_dir,
+            ) {
                 Ok(activities) => {
                     for activity in &activities {
                         for action in &activity.actions_taken {
@@ -3475,7 +3479,13 @@ fn cmd_setup(
                         env_lines.push(format!("NABA_WATCHER_ALERT_CHANNELS={}", result.watcher_alert_channels));
                     }
                     for (provider_id, api_key) in &result.studio_api_keys {
-                        env_lines.push(format!("NABA_STUDIO_KEY_{}={}", provider_id.to_uppercase(), api_key));
+                        let env_name = match provider_id.as_str() {
+                            "unsplash" => "NABA_UNSPLASH_KEY".to_string(),
+                            "pexels" => "NABA_PEXELS_KEY".to_string(),
+                            "fal_ai" => "NABA_FAL_API_KEY".to_string(),
+                            _ => format!("NABA_STUDIO_KEY_{}", provider_id.to_uppercase()),
+                        };
+                        env_lines.push(format!("{}={}", env_name, api_key));
                     }
                     env_lines.push(String::new());
 

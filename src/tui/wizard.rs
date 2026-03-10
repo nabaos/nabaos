@@ -685,8 +685,10 @@ impl WizardState {
         let mut plugin_state = ListState::default();
         plugin_state.select(Some(0));
 
-        // Studio — 6 media providers
+        // Studio — media providers + image sourcing
         let studio_items = vec![
+            StudioItem { id: "unsplash".into(), name: "Unsplash".into(), description: "Free stock photos · unsplash.com/developers → New App → Access Key".into(), selected: false, api_key: String::new(), needs_key: true },
+            StudioItem { id: "pexels".into(), name: "Pexels".into(), description: "Free stock photos · pexels.com/api → Get Your API Key".into(), selected: false, api_key: String::new(), needs_key: true },
             StudioItem { id: "comfyui".into(), name: "ComfyUI".into(), description: "Local image generation".into(), selected: false, api_key: String::new(), needs_key: false },
             StudioItem { id: "fal_ai".into(), name: "fal.ai".into(), description: "Cloud image/video generation".into(), selected: false, api_key: String::new(), needs_key: true },
             StudioItem { id: "dall_e".into(), name: "DALL-E".into(), description: "OpenAI image generation".into(), selected: false, api_key: String::new(), needs_key: true },
@@ -2248,6 +2250,18 @@ fn draw_studio(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
     ]).split(area);
     draw_step_indicator(frame, chunks[0], Step::Studio);
 
+    // Contextual help for the highlighted provider
+    let help_text = match state.studio_state.selected() {
+        Some(0) => "Unsplash: Sign up at unsplash.com/developers → Create App → copy Access Key. Free 50 req/hr.",
+        Some(1) => "Pexels: Sign up at pexels.com/api → copy API Key from dashboard. Free 200 req/hr.",
+        Some(3) => "fal.ai: Sign up at fal.ai → Settings → API Keys → Create Key.",
+        _ => "Enable stock photo providers for styled PEA documents. Optional — skip with 's'.",
+    };
+    frame.render_widget(
+        Paragraph::new(help_text).style(Style::default().fg(DIM).bg(BG)).alignment(ratatui::layout::Alignment::Center),
+        chunks[1],
+    );
+
     let list_area = centered_rect(60, 75, chunks[2]);
     let selected_count = state.studio_items.iter().filter(|s| s.selected).count();
 
@@ -2288,7 +2302,7 @@ fn draw_studio(frame: &mut ratatui::Frame, area: Rect, state: &WizardState) {
             Span::styled(" ", Style::default().bg(BG)),
         ]))
         .title_bottom(Line::from(vec![
-            Span::styled(" Media generation providers · s=skip ", Style::default().fg(DIM).bg(BG)),
+            Span::styled(" Stock photos + media providers · s=skip ", Style::default().fg(DIM).bg(BG)),
         ])).style(Style::default().bg(BG));
 
     let list = List::new(items).block(block)
