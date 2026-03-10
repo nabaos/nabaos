@@ -3457,6 +3457,13 @@ fn cmd_setup(
                     env_lines.push(format!("NABA_PEA_BUDGET={:.2}", result.pea_budget_usd));
                     env_lines.push(format!("NABA_PEA_STRATEGY={}", result.pea_budget_strategy));
                     env_lines.push(format!("NABA_PEA_HEARTBEAT={}", result.pea_heartbeat_secs));
+                    env_lines.push(format!("NABA_PEA_SEARCH_BACKEND={}", result.pea_search_backend));
+                    if result.pea_search_backend == "brave_api" && !result.pea_brave_api_key.is_empty() {
+                        env_lines.push(format!("NABA_BRAVE_API_KEY={}", result.pea_brave_api_key));
+                    }
+                    if result.pea_search_backend == "searxng" && !result.pea_searxng_url.is_empty() {
+                        env_lines.push(format!("NABA_SEARXNG_URL={}", result.pea_searxng_url));
+                    }
                     if !result.custom_provider_name.is_empty() {
                         env_lines.push(format!("NABA_LLM_PROVIDER_NAME={}", result.custom_provider_name));
                     }
@@ -3491,6 +3498,47 @@ fn cmd_setup(
 
                     std::fs::create_dir_all(&config.data_dir).ok();
                     std::fs::write(&env_path, env_lines.join("\n"))?;
+
+                    // SearXNG auto-install via Docker
+                    if result.pea_searxng_autoinstall && result.pea_search_backend == "searxng" {
+                        println!();
+                        println!("  {}●{} Installing SearXNG via Docker...", cy, r);
+                        // Parse port from URL (default 8888)
+                        let port = result.pea_searxng_url.split(':').last()
+                            .and_then(|p| p.trim_end_matches('/').parse::<u16>().ok())
+                            .unwrap_or(8888);
+                        // Check if container already exists
+                        let existing = std::process::Command::new("docker")
+                            .args(["ps", "-a", "--filter", "name=nabaos-searxng", "--format", "{{.Names}}"])
+                            .output();
+                        let already_exists = existing.as_ref()
+                            .map(|o| String::from_utf8_lossy(&o.stdout).contains("nabaos-searxng"))
+                            .unwrap_or(false);
+                        if already_exists {
+                            println!("    SearXNG container already exists (nabaos-searxng)");
+                        } else {
+                            let docker_result = std::process::Command::new("docker")
+                                .args([
+                                    "run", "-d",
+                                    "--name", "nabaos-searxng",
+                                    "--restart", "unless-stopped",
+                                    "-p", &format!("{}:8080", port),
+                                    "searxng/searxng:latest",
+                                ])
+                                .status();
+                            match docker_result {
+                                Ok(s) if s.success() => {
+                                    println!("    SearXNG running on port {} (container: nabaos-searxng)", port);
+                                }
+                                _ => {
+                                    eprintln!("    Failed to start SearXNG container.");
+                                    eprintln!("    Install Docker: https://docs.docker.com/get-docker/");
+                                    eprintln!("    Then run manually:");
+                                    eprintln!("      docker run -d --name nabaos-searxng --restart unless-stopped -p {}:8080 searxng/searxng:latest", port);
+                                }
+                            }
+                        }
+                    }
 
                     // Hardware scan + profile
                     println!();
@@ -3562,7 +3610,7 @@ fn cmd_setup(
                     if !result.studio_providers.is_empty() {
                         println!("{}", fmt::ok(&format!("Studio: {}", result.studio_providers.join(", "))));
                     }
-                    println!("{}", fmt::ok(&format!("PEA: {} ${:.0}/mo {}s heartbeat", result.pea_budget_strategy, result.pea_budget_usd, result.pea_heartbeat_secs)));
+                    println!("{}", fmt::ok(&format!("PEA: {} ${:.0}/mo {}s heartbeat search={}", result.pea_budget_strategy, result.pea_budget_usd, result.pea_heartbeat_secs, result.pea_search_backend)));
                     if !result.selected_agents.is_empty() {
                         println!("{}", fmt::ok(&format!("Agents: {} installed", result.selected_agents.len())));
                     }
