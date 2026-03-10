@@ -23,6 +23,40 @@ pub struct ResearchEngine<'a> {
     config: ResearchConfig,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchBackend {
+    ScrapeRotation,
+    ChromePool,
+    BraveApi,
+    SearXng,
+}
+
+impl Default for SearchBackend {
+    fn default() -> Self {
+        Self::ScrapeRotation
+    }
+}
+
+impl SearchBackend {
+    pub fn from_env_str(s: &str) -> Self {
+        match s.to_ascii_lowercase().trim() {
+            "chrome_pool" | "chromepool" => Self::ChromePool,
+            "brave_api" | "braveapi" => Self::BraveApi,
+            "searxng" | "searx" => Self::SearXng,
+            _ => Self::ScrapeRotation,
+        }
+    }
+
+    pub fn as_env_str(&self) -> &'static str {
+        match self {
+            Self::ScrapeRotation => "scrape_rotation",
+            Self::ChromePool => "chrome_pool",
+            Self::BraveApi => "brave_api",
+            Self::SearXng => "searxng",
+        }
+    }
+}
+
 pub struct ResearchConfig {
     pub max_search_queries: usize,
     pub max_candidates: usize,
@@ -30,6 +64,9 @@ pub struct ResearchConfig {
     pub backfill_pct: f32,
     pub fetch_timeout_secs: u64,
     pub max_content_per_source: usize,
+    pub search_backend: SearchBackend,
+    pub brave_api_key: Option<String>,
+    pub searxng_url: Option<String>,
 }
 
 impl Default for ResearchConfig {
@@ -41,6 +78,11 @@ impl Default for ResearchConfig {
             backfill_pct: 0.10,
             fetch_timeout_secs: 15,
             max_content_per_source: 12000,
+            search_backend: SearchBackend::from_env_str(
+                &std::env::var("NABA_PEA_SEARCH_BACKEND").unwrap_or_default(),
+            ),
+            brave_api_key: std::env::var("NABA_BRAVE_API_KEY").ok(),
+            searxng_url: std::env::var("NABA_SEARXNG_URL").ok(),
         }
     }
 }
