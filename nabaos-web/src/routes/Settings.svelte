@@ -7,6 +7,7 @@
     getToolServers, getTools, type ToolServer, type Tool,
     getAbilities, type Ability,
     securityScan, type ScanResult,
+    getEnvKeys, setEnvKey, type EnvKeyInfo,
   } from '../lib/api';
   import { Card, Badge, Modal, Skeleton, StatCard, Button } from '../lib/components';
   import { showToast } from '../lib/stores.svelte';
@@ -16,6 +17,7 @@
     personas: false,
     appearance: false,
     vault: false,
+    apikeys: false,
     rules: false,
     tools: false,
     security: true,   // starts collapsed
@@ -135,6 +137,28 @@
   let scanLoading = $state(false);
   let showRedacted = $state(false);
 
+  // ── API Keys ──────────────────────────────────────────────────────────
+  let envKeys = $state<EnvKeyInfo[]>([]);
+  let editingKey = $state('');
+  let editingValue = $state('');
+  let savingKey = $state(false);
+
+  async function saveEnvKey(name: string) {
+    if (!editingValue.trim()) return;
+    savingKey = true;
+    try {
+      await setEnvKey(name, editingValue.trim());
+      const data = await getEnvKeys();
+      envKeys = data.keys;
+      editingKey = '';
+      editingValue = '';
+      showToast(`${name} updated`, 'success');
+    } catch (e: any) {
+      showToast(`Failed to update ${name}`, 'error');
+    }
+    savingKey = false;
+  }
+
   async function handleScan() {
     if (!scanText.trim()) return;
     scanError = '';
@@ -174,6 +198,11 @@
       const toolData = await getToolServers();
       toolServers = (toolData && toolData.servers) ? toolData.servers : [];
     } catch { toolServers = []; }
+
+    try {
+      const envData = await getEnvKeys();
+      envKeys = envData.keys;
+    } catch {}
 
     if (errors.length > 0) {
       error = errors.join('; ');
@@ -316,7 +345,58 @@
       {/if}
     </div>
 
-    <!-- 4. Rules -->
+    <!-- 4. API Keys -->
+    <div class="section">
+      <button class="section-toggle" onclick={() => toggleSection('apikeys')}>
+        <span class="section-chevron" class:open={!collapsed.apikeys}>&#9658;</span>
+        <span class="section-title">API Keys ({envKeys.length})</span>
+      </button>
+      {#if !collapsed.apikeys}
+        <Card>
+          <p class="vault-note" style="margin-top: 0; padding-top: 0; border-top: none;">Manage API keys for image sourcing and integrations. Values are never displayed.</p>
+          <div class="env-keys-list">
+            {#each envKeys as key}
+              <div class="env-key-row">
+                <div class="env-key-info">
+                  <code class="env-key-name">{key.name}</code>
+                  <span class="env-key-desc">{key.description}</span>
+                </div>
+                <div class="env-key-actions">
+                  {#if key.is_set}
+                    <Badge variant="success">SET</Badge>
+                  {:else}
+                    <Badge variant="neutral">NOT SET</Badge>
+                  {/if}
+                  {#if editingKey === key.name}
+                    <input
+                      type="password"
+                      class="env-key-input"
+                      placeholder="Enter value..."
+                      bind:value={editingValue}
+                      onkeydown={(e) => { if (e.key === 'Enter') saveEnvKey(key.name); }}
+                    />
+                    <Button size="sm" onclick={() => saveEnvKey(key.name)} disabled={savingKey}>
+                      {savingKey ? 'Saving...' : 'Save'}
+                    </Button>
+                    <Button size="sm" variant="ghost" onclick={() => { editingKey = ''; editingValue = ''; }}>
+                      Cancel
+                    </Button>
+                  {:else}
+                    <Button size="sm" variant="ghost" onclick={() => { editingKey = key.name; editingValue = ''; }}>
+                      Edit
+                    </Button>
+                  {/if}
+                </div>
+              </div>
+            {:else}
+              <p style="color: var(--text-dim); font-size: 0.9rem;">No managed env keys available.</p>
+            {/each}
+          </div>
+        </Card>
+      {/if}
+    </div>
+
+    <!-- 5. Rules -->
     <div class="section">
       <button class="section-toggle" onclick={() => toggleSection('rules')}>
         <span class="section-chevron" class:open={!collapsed.rules}>&#9658;</span>
@@ -752,4 +832,13 @@
   .info-row { display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px solid var(--border-subtle); font-size: 0.88rem; }
   .info-row:last-child { border-bottom: none; }
   .info-label { color: var(--text-dim); }
+
+  /* ── API Keys ──────────────────────────────────────────────────── */
+  .env-keys-list { display: flex; flex-direction: column; gap: 0.5rem; }
+  .env-key-row { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.06); flex-wrap: wrap; gap: 0.5rem; }
+  .env-key-info { display: flex; flex-direction: column; gap: 0.15rem; }
+  .env-key-name { font-size: 0.8rem; color: #ffaf5f; }
+  .env-key-desc { font-size: 0.72rem; color: #888; }
+  .env-key-actions { display: flex; align-items: center; gap: 0.4rem; }
+  .env-key-input { background: #1a1a24; border: 1px solid #333; border-radius: 4px; padding: 0.25rem 0.5rem; color: #c8c8d2; font-size: 0.8rem; width: 180px; }
 </style>

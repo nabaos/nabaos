@@ -605,3 +605,56 @@ export async function getResources(): Promise<ResourceInfo[]> {
     return [];
   }
 }
+
+// ── Outputs ─────────────────────────────────────────────────────────
+
+export interface OutputRecord {
+  id: string;
+  source_type: string;
+  source_id: string;
+  title: string;
+  content_type: string;
+  file_path: string | null;
+  text_content: string | null;
+  metadata_json: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export async function getOutputs(sourceType?: string, limit = 50, offset = 0): Promise<OutputRecord[]> {
+  let path = `/api/v1/outputs?limit=${limit}&offset=${offset}`;
+  if (sourceType) path += `&source_type=${sourceType}`;
+  const data = await request<{ outputs: OutputRecord[] }>('GET', path);
+  return data.outputs || [];
+}
+
+export async function getOutput(id: string): Promise<OutputRecord> {
+  return request<OutputRecord>('GET', `/api/v1/outputs/${id}`);
+}
+
+export function getOutputDownloadUrl(id: string): string {
+  return `/api/v1/outputs/${id}/download`;
+}
+
+export async function improveOutput(id: string, instructions?: string, budgetUsd?: number): Promise<{ objective_id: string; message: string }> {
+  return request<{ objective_id: string; message: string }>('POST', `/api/v1/outputs/${id}/improve`, {
+    instructions: instructions || undefined,
+    budget_usd: budgetUsd || 5.0,
+  });
+}
+
+// ── Env / Settings ──────────────────────────────────────────────────────
+
+export interface EnvKeyInfo {
+  name: string;
+  description: string;
+  is_set: boolean;
+}
+
+export async function getEnvKeys(): Promise<{ keys: EnvKeyInfo[] }> {
+  return request<{ keys: EnvKeyInfo[] }>('GET', '/api/v1/settings/env');
+}
+
+export async function setEnvKey(name: string, value: string): Promise<{ message: string }> {
+  return request<{ message: string }>('PUT', '/api/v1/settings/env', { name, value });
+}

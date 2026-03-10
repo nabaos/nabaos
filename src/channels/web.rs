@@ -31,6 +31,7 @@ pub(crate) struct PendingWebConfirmation {
 /// Thread-safe map of pending confirmations keyed by request ID.
 pub(crate) type PendingConfirmations = Arc<Mutex<HashMap<u64, PendingWebConfirmation>>>;
 
+/// Embedded frontend assets from nabaos-web/dist/.
 #[derive(rust_embed::Embed)]
 #[folder = "nabaos-web/dist/"]
 struct WebAssets;
@@ -2315,6 +2316,8 @@ async fn handle_set_permissions(
         domains: parse_entries(req.domains),
         send_domains: parse_entries(req.send_domains),
         servers: parse_entries(req.servers),
+        rate_limit_per_minute: None,
+        cost_budget_usd: None,
     };
 
     let db_path = permissions_db_path(&state.config);
@@ -3257,6 +3260,232 @@ fn spawn_oauth_cleanup(pending: Arc<Mutex<HashMap<String, PendingOAuthFlow>>>) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Output endpoints
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct OutputListParams {
+    source_type: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+async fn handle_list_outputs(
+    State(state): State<AppState>,
+    Query(params): Query<OutputListParams>,
+) -> impl IntoResponse {
+    use crate::pea::output_store::{OutputStore, SourceType};
+    let db_path = state.config.data_dir.join("outputs.db");
+    let store = match OutputStore::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+    };
+    let source_type = params.source_type.as_deref().map(SourceType::from_str);
+    let limit = params.limit.unwrap_or(50);
+    let offset = params.offset.unwrap_or(0);
+    match store.list(source_type.as_ref(), limit, offset) {
+        Ok(records) => Json(serde_json::json!({ "outputs": records })),
+        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+    }
+}
+
+async fn handle_get_output(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    use crate::pea::output_store::OutputStore;
+    let db_path = state.config.data_dir.join("outputs.db");
+    let store = match OutputStore::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+    };
+    match store.get(&id) {
+        Ok(Some(rec)) => Json(serde_json::json!(rec)),
+        Ok(None) => Json(serde_json::json!({ "error": "not found" })),
+        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+    }
+}
+
+async fn handle_download_output(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    use crate::pea::output_store::OutputStore;
+    let db_path = state.config.data_dir.join("outputs.db");
+    let store = match OutputStore::open(&db_path) {
+        Ok(s) => s,
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "failed to open store").into_response()
+        }
+    };
+    let record = match store.get(&id) {
+        Ok(Some(r)) => r,
+        Ok(None) => return (StatusCode::NOT_FOUND, "output not found").into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
+    };
+    let file_path = match record.file_path {
+        Some(ref p) => std::path::PathBuf::from(p),
+        None => return (StatusCode::NOT_FOUND, "no file associated").into_response(),
+    };
+    let bytes = match std::fs::read(&file_path) {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::NOT_FOUND, "file not found on disk").into_response(),
+    };
+    let filename = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("output");
+    let headers = [
+        (
+            axum::http::header::CONTENT_TYPE,
+            record.content_type.clone(),
+        ),
+        (
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", filename),
+        ),
+    ];
+    (headers, bytes).into_response()
+}
+
+#[derive(Deserialize)]
+struct ImproveRequest {
+    instructions: Option<String>,
+    budget_usd: Option<f64>,
+}
+
+async fn handle_improve_output(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<ImproveRequest>,
+) -> impl IntoResponse {
+    use crate::pea::output_store::OutputStore;
+    // Look up the output record to find the source objective
+    let db_path = state.config.data_dir.join("outputs.db");
+    let store = match OutputStore::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+    };
+    let record = match store.get(&id) {
+        Ok(Some(r)) => r,
+        Ok(None) => return Json(serde_json::json!({ "error": "output not found" })),
+        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+    };
+
+    let engine = match crate::pea::engine::PeaEngine::open(&state.config.data_dir) {
+        Ok(e) => e,
+        Err(e) => return Json(serde_json::json!({ "error": e.to_string() })),
+    };
+    let budget = body.budget_usd.unwrap_or(5.0);
+    match engine.improve_objective(
+        &record.source_id,
+        body.instructions.as_deref(),
+        budget,
+    ) {
+        Ok(obj_id) => Json(serde_json::json!({
+            "objective_id": obj_id,
+            "message": "Improvement objective created — will execute on next PEA tick",
+        })),
+        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+    }
+}
+
+/// Known env keys that can be managed via API (name, description).
+const MANAGED_ENV_KEYS: &[(&str, &str)] = &[
+    ("NABA_LLM_API_KEY", "LLM provider API key"),
+    ("NABA_LLM_PROVIDER", "LLM provider name"),
+    ("NABA_LLM_MODEL", "LLM model name"),
+    ("NABA_UNSPLASH_KEY", "Unsplash image search API key"),
+    ("NABA_PEXELS_KEY", "Pexels image search API key"),
+    ("NABA_FAL_API_KEY", "FAL AI image generation API key"),
+    ("NABA_TELEGRAM_TOKEN", "Telegram bot token"),
+    ("NABA_TELEGRAM_CHAT_ID", "Telegram allowed chat ID"),
+    ("NABA_SMTP_SERVER", "SMTP email server"),
+    ("NABA_SMTP_USERNAME", "SMTP username"),
+    ("NABA_SMTP_PASSWORD", "SMTP password"),
+];
+
+async fn handle_list_env_keys(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let env_path = state.config.data_dir.join(".env");
+    let env_content = std::fs::read_to_string(&env_path).unwrap_or_default();
+
+    let keys: Vec<serde_json::Value> = MANAGED_ENV_KEYS
+        .iter()
+        .map(|(name, desc)| {
+            let is_set = env_content
+                .lines()
+                .any(|line| {
+                    let prefix = format!("{}=", name);
+                    line.starts_with(&prefix)
+                        && line.len() > prefix.len()
+                });
+            serde_json::json!({
+                "name": name,
+                "description": desc,
+                "is_set": is_set,
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({ "keys": keys }))
+}
+
+#[derive(serde::Deserialize)]
+struct SetEnvRequest {
+    name: String,
+    value: String,
+}
+
+async fn handle_set_env_key(
+    State(state): State<AppState>,
+    Json(body): Json<SetEnvRequest>,
+) -> impl IntoResponse {
+    // Validate: only managed keys can be set
+    if !MANAGED_ENV_KEYS.iter().any(|(k, _)| *k == body.name) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Unknown env key" })),
+        );
+    }
+
+    let env_path = state.config.data_dir.join(".env");
+    let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+
+    let mut found = false;
+    let prefix = format!("{}=", body.name);
+    let mut lines: Vec<String> = existing
+        .lines()
+        .map(|line| {
+            if line.starts_with(&prefix) {
+                found = true;
+                format!("{}={}", body.name, body.value)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+
+    if !found {
+        lines.push(format!("{}={}", body.name, body.value));
+    }
+
+    match std::fs::write(&env_path, lines.join("\n")) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "message": format!("{} updated", body.name),
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("Failed to write .env: {}", e) })),
+        ),
+    }
+}
+
 pub fn create_router(state: AppState) -> Router {
     let api = Router::new()
         // Auth (/api/v1/auth/*)
@@ -3314,6 +3543,8 @@ pub fn create_router(state: AppState) -> Router {
         // Vault (/api/v1/vault/*)
         .route("/api/v1/vault", get(handle_list_providers))
         .route("/api/v1/vault/store", post(handle_set_provider_key))
+        // Settings / Env
+        .route("/api/v1/settings/env", get(handle_list_env_keys).put(handle_set_env_key))
         // Tools (/api/v1/tools/*) — formerly MCP
         .route("/api/v1/tools/servers", get(handle_mcp_list_servers))
         .route("/api/v1/tools/{server_id}", get(handle_mcp_list_tools))
@@ -3372,6 +3603,11 @@ pub fn create_router(state: AppState) -> Router {
             "/api/v1/memory",
             get(handle_get_memory).delete(handle_delete_memory),
         )
+        // Outputs (/api/v1/outputs/*)
+        .route("/api/v1/outputs", get(handle_list_outputs))
+        .route("/api/v1/outputs/{id}", get(handle_get_output))
+        .route("/api/v1/outputs/{id}/download", get(handle_download_output))
+        .route("/api/v1/outputs/{id}/improve", post(handle_improve_output))
         // Health (unauthenticated — load balancer readiness)
         .route("/health", get(handle_health))
         // OAuth (unauthenticated — browser redirect from OAuth provider)
@@ -4031,6 +4267,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         constitution_channels.insert(
@@ -4042,6 +4280,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         );
         let constitution_perms = ChannelPermissions {
@@ -4082,6 +4322,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         )
         .unwrap();
@@ -4097,6 +4339,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         )
         .unwrap();
@@ -4112,6 +4356,8 @@ mod tests {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             },
         )
         .unwrap();
