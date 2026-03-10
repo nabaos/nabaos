@@ -1,0 +1,789 @@
+// PEA Research Engine — Manus-scale multi-query search, LLM curation, tiered fetch.
+//
+// Phases:
+//   1. Query Fan-Out: LLM generates 15-20 diverse search queries from objective
+//   2. Multi-Engine Search: Brave + DDG in parallel, deduplicate by URL → ~200 candidates
+//   3. LLM Relevance Scoring: batch scoring, sort, take top_k_fetch
+//   4. Tiered Parallel Fetch: HTTP → ChromePool fallback, with backfill on failure
+//   5. Corpus Assembly: deduplicate content, build ResearchCorpus
+
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
+
+use crate::runtime::host_functions::AbilityRegistry;
+use crate::runtime::manifest::AgentManifest;
+
+// ---------------------------------------------------------------------------
+// Core types
+// ---------------------------------------------------------------------------
+
+pub struct ResearchEngine<'a> {
+    registry: &'a AbilityRegistry,
+    manifest: &'a AgentManifest,
+    config: ResearchConfig,
+}
+
+pub struct ResearchConfig {
+    pub max_search_queries: usize,
+    pub max_candidates: usize,
+    pub top_k_fetch: usize,
+    pub backfill_pct: f32,
+    pub fetch_timeout_secs: u64,
+    pub max_content_per_source: usize,
+}
+
+impl Default for ResearchConfig {
+    fn default() -> Self {
+        Self {
+            max_search_queries: 20,
+            max_candidates: 200,
+            top_k_fetch: 50,
+            backfill_pct: 0.10,
+            fetch_timeout_secs: 15,
+            max_content_per_source: 12000,
+        }
+    }
+}
+
+pub struct SearchCandidate {
+    pub url: String,
+    pub title: String,
+    pub snippet: String,
+    pub source_engine: String,
+    pub relevance_score: Option<f32>,
+}
+
+pub struct FetchedSource {
+    pub url: String,
+    pub title: String,
+    pub content: String,
+    pub fetch_method: FetchMethod,
+    pub char_count: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FetchMethod {
+    Http,
+    ChromePool,
+}
+
+pub struct ResearchCorpus {
+    pub query: String,
+    pub sources: Vec<FetchedSource>,
+    pub failed_urls: Vec<(String, String)>,
+    pub total_candidates: usize,
+    pub total_chars: usize,
+}
+
+impl ResearchCorpus {
+    /// Format corpus as context string for LLM grounding.
+    pub fn to_context_string(&self) -> String {
+        let mut ctx = format!(
+            "# Research Corpus ({} sources, {} total chars)\n\n",
+            self.sources.len(),
+            self.total_chars,
+        );
+
+        for (i, source) in self.sources.iter().enumerate() {
+            ctx.push_str(&format!(
+                "## Source {} — {} ({})\nURL: {}\n{}\n\n",
+                i + 1,
+                source.title,
+                match source.fetch_method {
+                    FetchMethod::Http => "HTTP",
+                    FetchMethod::ChromePool => "Chrome",
+                },
+                source.url,
+                if source.content.len() > 6000 {
+                    format!("{}... [truncated]", &source.content[..6000])
+                } else {
+                    source.content.clone()
+                }
+            ));
+        }
+
+        if !self.failed_urls.is_empty() {
+            ctx.push_str(&format!(
+                "\n---\n{} URLs failed to fetch.\n",
+                self.failed_urls.len()
+            ));
+        }
+
+        ctx
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal search result type (moved from bridge.rs)
+// ---------------------------------------------------------------------------
+
+pub(crate) struct SearchResult {
+    pub title: String,
+    pub url: Option<String>,
+    pub snippet: String,
+}
+
+// ---------------------------------------------------------------------------
+// ResearchEngine implementation
+// ---------------------------------------------------------------------------
+
+impl<'a> ResearchEngine<'a> {
+    pub fn new(
+        registry: &'a AbilityRegistry,
+        manifest: &'a AgentManifest,
+        config: ResearchConfig,
+    ) -> Self {
+        Self { registry, manifest, config }
+    }
+
+    /// Execute the full research pipeline: query → search → score → fetch → corpus.
+    pub fn execute(&self, objective: &str, task: &str) -> ResearchCorpus {
+        eprintln!("[research] starting research for: {}", objective);
+
+        // Phase 1: Generate diverse search queries
+        let queries = self.generate_search_queries(objective, task);
+        eprintln!("[research] generated {} search queries", queries.len());
+
+        // Phase 2: Multi-engine search
+        let mut candidates = self.search_all_engines(&queries);
+        eprintln!("[research] found {} unique candidates", candidates.len());
+
+        let total_candidates = candidates.len();
+
+        // Phase 3: LLM relevance scoring
+        self.score_candidates(&mut candidates, objective);
+        eprintln!(
+            "[research] scored candidates, top score: {:.2}",
+            candidates.first().and_then(|c| c.relevance_score).unwrap_or(0.0)
+        );
+
+        // Phase 4: Tiered fetch with backfill
+        let top_k = candidates.len().min(self.config.top_k_fetch);
+        let (mut fetched, failed) = self.fetch_sources(&candidates[..top_k]);
+        eprintln!(
+            "[research] fetched {} sources, {} failed",
+            fetched.len(),
+            failed.len()
+        );
+
+        // Backfill if too many failures
+        let failure_rate = if top_k > 0 {
+            failed.len() as f32 / top_k as f32
+        } else {
+            0.0
+        };
+        if failure_rate > self.config.backfill_pct && candidates.len() > top_k {
+            let backfill_count = failed.len().min(candidates.len() - top_k);
+            if backfill_count > 0 {
+                eprintln!("[research] backfilling {} sources", backfill_count);
+                let backfill_slice = &candidates[top_k..top_k + backfill_count];
+                let (extra, _) = self.fetch_sources(backfill_slice);
+                fetched.extend(extra);
+            }
+        }
+
+        // Deduplicate fetched content by SipHash
+        let fetched = dedup_sources(fetched);
+
+        let total_chars = fetched.iter().map(|s| s.char_count).sum();
+        eprintln!(
+            "[research] corpus: {} sources, {} chars",
+            fetched.len(),
+            total_chars
+        );
+
+        ResearchCorpus {
+            query: objective.to_string(),
+            sources: fetched,
+            failed_urls: failed,
+            total_candidates,
+            total_chars,
+        }
+    }
+
+    // -- Phase 1: Query Fan-Out -----------------------------------------------
+
+    fn generate_search_queries(&self, objective: &str, task: &str) -> Vec<String> {
+        let count = self.config.max_search_queries;
+
+        let input = serde_json::json!({
+            "system": "You generate diverse web search queries for deep research. \
+                       Output one query per line, no numbering, no explanation.",
+            "prompt": format!(
+                "Generate {} diverse search queries for researching this objective:\n\
+                 Objective: {}\n\
+                 Current task context: {}\n\n\
+                 Include:\n\
+                 - Specific factual queries\n\
+                 - Broad overview queries\n\
+                 - Academic/research queries (add 'research paper' or 'study')\n\
+                 - Recent news queries (add '2025' or '2026')\n\
+                 - Different angles and subtopics\n\
+                 - Expert opinion queries\n\n\
+                 Output ONLY the queries, one per line:",
+                count, objective, task
+            ),
+        });
+
+        match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+            Ok(result) => {
+                let output = String::from_utf8_lossy(&result.output).to_string();
+                let queries: Vec<String> = output
+                    .lines()
+                    .map(|l| l.trim().trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')'))
+                    .map(|l| l.trim().to_string())
+                    .filter(|l| !l.is_empty() && l.len() > 3 && l.len() < 200)
+                    .take(count)
+                    .collect();
+
+                if queries.is_empty() {
+                    // Fallback: use objective + task as queries
+                    vec![
+                        objective.chars().take(100).collect(),
+                        task.chars().take(100).collect(),
+                    ]
+                } else {
+                    queries
+                }
+            }
+            Err(e) => {
+                eprintln!("[research] query generation failed: {}, using fallback", e);
+                vec![
+                    objective.chars().take(100).collect(),
+                    task.chars().take(100).collect(),
+                ]
+            }
+        }
+    }
+
+    // -- Phase 2: Multi-Engine Search -----------------------------------------
+
+    fn search_all_engines(&self, queries: &[String]) -> Vec<SearchCandidate> {
+        let candidates = std::sync::Mutex::new(Vec::new());
+        let seen_urls = std::sync::Mutex::new(HashSet::new());
+
+        // Process in batches of 5 to avoid rate limiting
+        for batch in queries.chunks(5) {
+            std::thread::scope(|s| {
+                for query in batch {
+                    let candidates = &candidates;
+                    let seen_urls = &seen_urls;
+                    s.spawn(move || {
+                        // Try Brave first, then DDG
+                        let results = search_brave(query)
+                            .unwrap_or_default();
+                        let ddg_results = search_ddg(query)
+                            .unwrap_or_default();
+
+                        let all_results = results.into_iter().chain(ddg_results);
+
+                        for result in all_results {
+                            if let Some(ref url) = result.url {
+                                let mut seen = seen_urls.lock().unwrap();
+                                if !seen.insert(url.clone()) {
+                                    continue; // duplicate URL
+                                }
+                                drop(seen);
+
+                                let engine = if url.contains("brave") { "brave" } else { "ddg" };
+                                let mut cands = candidates.lock().unwrap();
+                                cands.push(SearchCandidate {
+                                    url: url.clone(),
+                                    title: result.title,
+                                    snippet: result.snippet,
+                                    source_engine: engine.to_string(),
+                                    relevance_score: None,
+                                });
+                            }
+                        }
+                    });
+                }
+            });
+
+            // Small delay between batches to avoid rate limiting
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+
+        let mut result = candidates.into_inner().unwrap();
+        result.truncate(self.config.max_candidates);
+        result
+    }
+
+    // -- Phase 3: LLM Relevance Scoring ---------------------------------------
+
+    fn score_candidates(&self, candidates: &mut [SearchCandidate], objective: &str) {
+        if candidates.is_empty() {
+            return;
+        }
+
+        // Score in batches of 20
+        for batch in candidates.chunks_mut(20) {
+            let items: String = batch
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let snippet_preview = if c.snippet.len() > 100 {
+                        format!("{}...", &c.snippet[..100])
+                    } else {
+                        c.snippet.clone()
+                    };
+                    format!("{}. {} — {} — {}", i + 1, c.title, c.url, snippet_preview)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let input = serde_json::json!({
+                "system": "You rate search result relevance. Output ONLY numbers (0.0-1.0), one per line. \
+                           Consider: authority of source, topical relevance, likely content depth, recency.",
+                "prompt": format!(
+                    "Rate each URL's relevance to: \"{}\"\n\n{}\n\n\
+                     Respond with ONLY numbers, one per line (e.g. 0.85):",
+                    objective, items
+                ),
+            });
+
+            match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+                Ok(result) => {
+                    let output = String::from_utf8_lossy(&result.output).to_string();
+                    let scores: Vec<f32> = output
+                        .lines()
+                        .filter_map(|l| {
+                            l.trim()
+                                .trim_start_matches(|c: char| c.is_ascii_digit() && c != '0' || c == '.' || c == ')')
+                                .trim()
+                                .parse::<f32>()
+                                .ok()
+                        })
+                        .collect();
+
+                    for (i, candidate) in batch.iter_mut().enumerate() {
+                        candidate.relevance_score = scores.get(i).copied().or(Some(0.5));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[research] scoring batch failed: {}, assigning 0.5", e);
+                    for candidate in batch.iter_mut() {
+                        candidate.relevance_score = Some(0.5);
+                    }
+                }
+            }
+        }
+
+        // Sort by relevance score descending
+        candidates.sort_by(|a, b| {
+            b.relevance_score
+                .unwrap_or(0.0)
+                .partial_cmp(&a.relevance_score.unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
+    // -- Phase 4: Tiered Parallel Fetch ---------------------------------------
+
+    fn fetch_sources(
+        &self,
+        candidates: &[SearchCandidate],
+    ) -> (Vec<FetchedSource>, Vec<(String, String)>) {
+        let fetched = std::sync::Mutex::new(Vec::new());
+        let failed = std::sync::Mutex::new(Vec::new());
+        let max_content = self.config.max_content_per_source;
+        let timeout_secs = self.config.fetch_timeout_secs;
+
+        // Parallel fetch, 8 concurrent threads
+        for batch in candidates.chunks(8) {
+            std::thread::scope(|s| {
+                for candidate in batch {
+                    let fetched = &fetched;
+                    let failed = &failed;
+                    s.spawn(move || {
+                        // Tier 1: Direct HTTP
+                        match fetch_url_http(&candidate.url, timeout_secs, max_content) {
+                            Ok(content) if !content.is_empty() => {
+                                let char_count = content.len();
+                                fetched.lock().unwrap().push(FetchedSource {
+                                    url: candidate.url.clone(),
+                                    title: candidate.title.clone(),
+                                    content,
+                                    fetch_method: FetchMethod::Http,
+                                    char_count,
+                                });
+                            }
+                            Ok(_) => {
+                                failed.lock().unwrap().push((
+                                    candidate.url.clone(),
+                                    "empty content".to_string(),
+                                ));
+                            }
+                            Err(e) => {
+                                // Tier 2: Try ChromePool if available (async)
+                                // For now, log the failure — ChromePool integration
+                                // requires async runtime which PEA doesn't have yet
+                                eprintln!(
+                                    "[research] HTTP fetch failed for {}: {}",
+                                    candidate.url, e
+                                );
+                                failed.lock().unwrap().push((
+                                    candidate.url.clone(),
+                                    e,
+                                ));
+                            }
+                        }
+                    });
+                }
+            });
+        }
+
+        (
+            fetched.into_inner().unwrap(),
+            failed.into_inner().unwrap(),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Standalone search functions (reused by bridge.rs)
+// ---------------------------------------------------------------------------
+
+/// Build a reqwest::blocking::Client with reasonable defaults.
+pub(crate) fn http_client() -> Result<reqwest::blocking::Client, String> {
+    http_client_with_timeout(15)
+}
+
+fn http_client_with_timeout(secs: u64) -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(secs))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0")
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))
+}
+
+/// Search via Brave Search HTML (no API key required).
+pub(crate) fn search_brave(query: &str) -> Result<Vec<SearchResult>, String> {
+    use scraper::{Html, Selector};
+
+    let client = http_client()?;
+    let url = format!(
+        "https://search.brave.com/search?q={}&source=web",
+        urlencoding::encode(query)
+    );
+
+    let resp = client.get(&url).send().map_err(|e| format!("Brave fetch: {}", e))?;
+    let html = resp.text().map_err(|e| format!("Brave body: {}", e))?;
+    let doc = Html::parse_document(&html);
+
+    let mut results = Vec::new();
+    let a_sel = Selector::parse("a[href]").map_err(|e| format!("selector: {:?}", e))?;
+    let mut seen_urls = HashSet::new();
+
+    for a in doc.select(&a_sel) {
+        let href = match a.value().attr("href") {
+            Some(h) => h,
+            None => continue,
+        };
+
+        if !href.starts_with("http") || href.contains("brave.com") || href.contains("favicon") {
+            continue;
+        }
+
+        if !seen_urls.insert(href.to_string()) {
+            continue;
+        }
+
+        let title_text: String = a.text().collect::<String>().trim().to_string();
+        if title_text.is_empty() || title_text.len() < 5 {
+            continue;
+        }
+
+        results.push(SearchResult {
+            title: title_text,
+            url: Some(href.to_string()),
+            snippet: String::new(),
+        });
+
+        if results.len() >= 10 {
+            break;
+        }
+    }
+
+    // Enhance: try to extract snippets
+    if let Ok(desc_sel) = Selector::parse(".snippet-description, .snippet-content") {
+        for (i, el) in doc.select(&desc_sel).enumerate() {
+            let text: String = el.text().collect::<String>().trim().to_string();
+            if i < results.len() && !text.is_empty() {
+                results[i].snippet = text;
+            }
+        }
+    }
+
+    if results.is_empty() {
+        Err("Brave returned no results".into())
+    } else {
+        Ok(results)
+    }
+}
+
+/// Search via DuckDuckGo HTML.
+pub(crate) fn search_ddg(query: &str) -> Result<Vec<SearchResult>, String> {
+    use scraper::{Html, Selector};
+
+    let client = http_client()?;
+    let url = format!(
+        "https://html.duckduckgo.com/html/?q={}",
+        urlencoding::encode(query)
+    );
+
+    let resp = client.get(&url).send().map_err(|e| format!("DDG fetch: {}", e))?;
+    let html = resp.text().map_err(|e| format!("DDG body: {}", e))?;
+
+    if html.contains("anomaly-modal") || html.contains("bot detection") {
+        return Err("DDG returned CAPTCHA".into());
+    }
+
+    let doc = Html::parse_document(&html);
+    let result_sel = Selector::parse(".result").map_err(|e| format!("{:?}", e))?;
+    let title_sel = Selector::parse(".result__a").map_err(|e| format!("{:?}", e))?;
+    let snippet_sel = Selector::parse(".result__snippet").map_err(|e| format!("{:?}", e))?;
+    let url_sel = Selector::parse(".result__url").map_err(|e| format!("{:?}", e))?;
+
+    let mut results = Vec::new();
+    for el in doc.select(&result_sel) {
+        let title = el
+            .select(&title_sel)
+            .next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+        let snippet = el
+            .select(&snippet_sel)
+            .next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+        let url = el
+            .select(&url_sel)
+            .next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .or_else(|| {
+                el.select(&title_sel)
+                    .next()
+                    .and_then(|e| e.value().attr("href").map(|s| s.to_string()))
+            });
+
+        if !title.is_empty() {
+            results.push(SearchResult { title, url, snippet });
+        }
+        if results.len() >= 10 {
+            break;
+        }
+    }
+
+    if results.is_empty() {
+        Err("DDG returned no results".into())
+    } else {
+        Ok(results)
+    }
+}
+
+/// Fetch multiple URLs in parallel using thread::scope, extract text.
+pub(crate) fn fetch_urls_parallel(urls: &[&str]) -> Vec<(String, String)> {
+    let results = std::sync::Mutex::new(Vec::new());
+    let client = match http_client() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    std::thread::scope(|s| {
+        for &url in urls {
+            let client = &client;
+            let results = &results;
+            s.spawn(move || {
+                if let Ok(resp) = client.get(url).send() {
+                    if let Ok(body) = resp.text() {
+                        let text = extract_readable_text(&body);
+                        if !text.is_empty() {
+                            if let Ok(mut r) = results.lock() {
+                                r.push((url.to_string(), text));
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    results.into_inner().unwrap_or_default()
+}
+
+/// Extract readable text from HTML, stripping scripts/styles/nav.
+pub(crate) fn extract_readable_text(html: &str) -> String {
+    use scraper::{Html, Selector};
+
+    let doc = Html::parse_document(html);
+
+    let body_sel = match Selector::parse("article, main, .content, .post, .article, body") {
+        Ok(s) => s,
+        Err(_) => return String::new(),
+    };
+
+    let mut text = String::new();
+    for el in doc.select(&body_sel) {
+        let el_text: String = el.text().collect::<Vec<_>>().join(" ");
+        let cleaned: String = el_text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if cleaned.len() > text.len() {
+            text = cleaned;
+        }
+    }
+
+    if text.len() > 8000 {
+        text.truncate(8000);
+    }
+    text
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Fetch a single URL via HTTP with configurable timeout and content cap.
+fn fetch_url_http(url: &str, timeout_secs: u64, max_content: usize) -> Result<String, String> {
+    let client = http_client_with_timeout(timeout_secs)?;
+
+    let resp = client
+        .get(url)
+        .send()
+        .map_err(|e| format!("fetch: {}", e))?;
+
+    let status = resp.status();
+    if status.as_u16() == 403 || status.as_u16() == 429 || status.as_u16() == 503 {
+        return Err(format!("HTTP {}", status));
+    }
+
+    let body = resp.text().map_err(|e| format!("body: {}", e))?;
+    let mut text = extract_readable_text(&body);
+
+    if text.len() > max_content {
+        text.truncate(max_content);
+    }
+
+    Ok(text)
+}
+
+/// Deduplicate fetched sources by content hash (SipHash pattern from swarm/collector.rs).
+fn dedup_sources(sources: Vec<FetchedSource>) -> Vec<FetchedSource> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+
+    for source in sources {
+        let hash = compute_content_hash(&source.content);
+        if seen.insert(hash) {
+            result.push(source);
+        }
+    }
+
+    result
+}
+
+fn compute_content_hash(content: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    let mut hasher = DefaultHasher::new();
+    content.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_research_config_defaults() {
+        let config = ResearchConfig::default();
+        assert_eq!(config.max_search_queries, 20);
+        assert_eq!(config.top_k_fetch, 50);
+        assert_eq!(config.max_candidates, 200);
+    }
+
+    #[test]
+    fn test_dedup_sources() {
+        let sources = vec![
+            FetchedSource {
+                url: "https://a.com".into(),
+                title: "A".into(),
+                content: "same content".into(),
+                fetch_method: FetchMethod::Http,
+                char_count: 12,
+            },
+            FetchedSource {
+                url: "https://b.com".into(),
+                title: "B".into(),
+                content: "same content".into(),
+                fetch_method: FetchMethod::Http,
+                char_count: 12,
+            },
+            FetchedSource {
+                url: "https://c.com".into(),
+                title: "C".into(),
+                content: "different".into(),
+                fetch_method: FetchMethod::Http,
+                char_count: 9,
+            },
+        ];
+        let deduped = dedup_sources(sources);
+        assert_eq!(deduped.len(), 2);
+    }
+
+    #[test]
+    fn test_compute_content_hash_deterministic() {
+        let h1 = compute_content_hash("hello world");
+        let h2 = compute_content_hash("hello world");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_compute_content_hash_different() {
+        let h1 = compute_content_hash("hello");
+        let h2 = compute_content_hash("world");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_corpus_to_context_string() {
+        let corpus = ResearchCorpus {
+            query: "test query".into(),
+            sources: vec![
+                FetchedSource {
+                    url: "https://example.com".into(),
+                    title: "Example".into(),
+                    content: "Example content here".into(),
+                    fetch_method: FetchMethod::Http,
+                    char_count: 20,
+                },
+            ],
+            failed_urls: vec![("https://fail.com".into(), "timeout".into())],
+            total_candidates: 100,
+            total_chars: 20,
+        };
+        let ctx = corpus.to_context_string();
+        assert!(ctx.contains("1 sources"));
+        assert!(ctx.contains("Example"));
+        assert!(ctx.contains("https://example.com"));
+        assert!(ctx.contains("1 URLs failed"));
+    }
+
+    #[test]
+    fn test_extract_readable_text_basic() {
+        let html = "<html><body><article>Hello world</article></body></html>";
+        let text = extract_readable_text(html);
+        assert!(text.contains("Hello world"));
+    }
+
+    #[test]
+    fn test_extract_readable_text_capped() {
+        let long_content = "word ".repeat(5000);
+        let html = format!("<html><body>{}</body></html>", long_content);
+        let text = extract_readable_text(&html);
+        assert!(text.len() <= 8000);
+    }
+}
