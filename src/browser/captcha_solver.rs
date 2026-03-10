@@ -147,7 +147,7 @@ impl CaptchaSolver {
             ContentBlock::Text { text: captcha_desc },
         ];
 
-        match provider.complete_with_images(system_prompt, content) {
+        match provider.complete_with_images(system_prompt, content, None) {
             Ok(response) => {
                 let token = response.text.trim().to_string();
                 if token.is_empty() {

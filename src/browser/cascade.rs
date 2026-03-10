@@ -210,6 +210,7 @@ impl NavCascade {
             match provider.complete(
                 "You are a web navigation assistant. Respond only with JSON.",
                 &prompt,
+                None,
             ) {
                 Ok(resp) => {
                     if let Some(action) = parse_llm_nav_response(&resp.text) {

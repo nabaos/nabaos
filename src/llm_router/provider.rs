@@ -195,7 +195,7 @@ impl LlmProvider {
     /// Send a message to the LLM and get a response.
     /// This is a blocking call — use from a tokio::spawn context.
     /// Retries up to 2 times on transient failures (rate limits, empty responses).
-    pub fn complete(&self, system_prompt: &str, user_message: &str) -> Result<LlmResponse> {
+    pub fn complete(&self, system_prompt: &str, user_message: &str, max_tokens: Option<u32>) -> Result<LlmResponse> {
         let mut last_err = None;
         for attempt in 0..3u32 {
             if attempt > 0 {
@@ -203,7 +203,7 @@ impl LlmProvider {
                 tracing::warn!(attempt, delay_ms = delay.as_millis() as u64, "Retrying LLM request");
                 std::thread::sleep(delay);
             }
-            match self.complete_once(system_prompt, user_message) {
+            match self.complete_once(system_prompt, user_message, max_tokens) {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
                     let msg = e.to_string();
@@ -226,7 +226,7 @@ impl LlmProvider {
         Err(last_err.unwrap_or_else(|| NyayaError::Config("LLM request failed after 3 attempts".into())))
     }
 
-    fn complete_once(&self, system_prompt: &str, user_message: &str) -> Result<LlmResponse> {
+    fn complete_once(&self, system_prompt: &str, user_message: &str, max_tokens: Option<u32>) -> Result<LlmResponse> {
         let start = std::time::Instant::now();
 
         let mut builder = reqwest::blocking::Client::builder();
@@ -241,7 +241,7 @@ impl LlmProvider {
             ProviderType::Anthropic => {
                 let body = AnthropicRequest {
                     model: self.model.clone(),
-                    max_tokens: 4096,
+                    max_tokens: max_tokens.unwrap_or(4096),
                     messages: vec![Message {
                         role: "user".into(),
                         content: user_message.into(),
@@ -306,7 +306,7 @@ impl LlmProvider {
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message}
                     ],
-                    "max_tokens": 4096,
+                    "max_tokens": max_tokens.unwrap_or(4096),
                     "temperature": 0.2
                 });
 
@@ -376,6 +376,7 @@ impl LlmProvider {
         system_prompt: &str,
         user_message: &str,
         tools: &[ToolDefinition],
+        max_tokens: Option<u32>,
     ) -> Result<LlmToolResponse> {
         let start = std::time::Instant::now();
 
@@ -402,7 +403,7 @@ impl LlmProvider {
 
                 let body = serde_json::json!({
                     "model": self.model,
-                    "max_tokens": 4096,
+                    "max_tokens": max_tokens.unwrap_or(4096),
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": user_message}],
                     "tools": tools_json,
@@ -479,7 +480,7 @@ impl LlmProvider {
 
                 let body = serde_json::json!({
                     "model": self.model,
-                    "max_tokens": 4096,
+                    "max_tokens": max_tokens.unwrap_or(4096),
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message}
@@ -556,6 +557,7 @@ impl LlmProvider {
         &self,
         system_prompt: &str,
         content: Vec<ContentBlock>,
+        max_tokens: Option<u32>,
     ) -> Result<LlmResponse> {
         let start = std::time::Instant::now();
 
@@ -588,7 +590,7 @@ impl LlmProvider {
 
                 let body = serde_json::json!({
                     "model": self.model,
-                    "max_tokens": 4096,
+                    "max_tokens": max_tokens.unwrap_or(4096),
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": content_json}],
                     "temperature": 0.2,
@@ -649,7 +651,7 @@ impl LlmProvider {
 
                 let body = serde_json::json!({
                     "model": self.model,
-                    "max_tokens": 4096,
+                    "max_tokens": max_tokens.unwrap_or(4096),
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": content_json}
@@ -708,6 +710,7 @@ impl LlmProvider {
         system_prompt: &str,
         user_message: &str,
         tx: tokio::sync::mpsc::Sender<StreamChunk>,
+        max_tokens: Option<u32>,
     ) -> Result<()> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(
@@ -720,7 +723,7 @@ impl LlmProvider {
             ProviderType::Anthropic => {
                 let body = serde_json::json!({
                     "model": self.model,
-                    "max_tokens": 4096,
+                    "max_tokens": max_tokens.unwrap_or(4096),
                     "stream": true,
                     "messages": [{"role": "user", "content": user_message}],
                     "system": system_prompt,
@@ -817,7 +820,7 @@ impl LlmProvider {
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message}
                     ],
-                    "max_tokens": 4096,
+                    "max_tokens": max_tokens.unwrap_or(4096),
                     "temperature": 0.2,
                 });
                 // stream_options is OpenAI-specific; Ollama silently ignores it

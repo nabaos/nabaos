@@ -1134,7 +1134,7 @@ impl AbilityRegistry {
                 let provider = self.llm_provider.as_ref()
                     .ok_or("No LLM provider configured for llm.summarize")?;
                 let system = "You are a concise summarizer. Provide a clear, factual summary of the given text. Focus on key information.";
-                let response = provider.complete(system, text)
+                let response = provider.complete(system, text, None)
                     .map_err(|e| format!("LLM summarize failed: {}", e))?;
                 (response.text.into_bytes(), None, HashMap::new())
             }
@@ -1146,9 +1146,10 @@ impl AbilityRegistry {
                 let system_prompt = input.get("system")
                     .and_then(|v| v.as_str())
                     .unwrap_or("You are a helpful assistant. Answer clearly and concisely.");
+                let max_tokens = input.get("max_tokens").and_then(|v| v.as_u64()).map(|v| v as u32);
                 let provider = self.llm_provider.as_ref()
                     .ok_or("No LLM provider configured for llm.chat")?;
-                let response = provider.complete(system_prompt, prompt)
+                let response = provider.complete(system_prompt, prompt, max_tokens)
                     .map_err(|e| format!("LLM chat failed: {}", e))?;
                 (response.text.into_bytes(), None, HashMap::new())
             }

@@ -130,6 +130,7 @@ impl SwarmOrchestrator {
                 provider_clone.complete(
                     "You are a research synthesis assistant. Produce a structured markdown report with ## headings.",
                     &synthesis_prompt,
+                    None,
                 )
             }).await {
                 Ok(Ok(resp)) => parse_synthesis_response(&query, &resp.text, sources_total),

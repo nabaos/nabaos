@@ -606,8 +606,9 @@ impl Orchestrator {
         }
 
         // Wire LLM provider into AbilityRegistry for llm.summarize / llm.chat
+        let ability_model_override = config.llm_model.as_deref();
         for prov_id in &provider_registry.list_configured() {
-            if let Ok(provider) = provider_registry.build_provider(prov_id, None) {
+            if let Ok(provider) = provider_registry.build_provider(prov_id, ability_model_override) {
                 ability_registry.set_llm_provider(provider);
                 break;
             }
@@ -1839,12 +1840,12 @@ impl Orchestrator {
             query_len = safe_query.len(),
             "Routing to LLM (all caches missed)"
         );
-        let llm_response = match llm.complete(&system_prompt, safe_query) {
+        let llm_response = match llm.complete(&system_prompt, safe_query, None) {
             Ok(resp) => resp,
             Err(primary_err) => {
                 tracing::warn!("Primary LLM failed: {primary_err} — trying fallback");
                 match self.build_fallback_provider() {
-                    Some(fallback) => match fallback.complete(&system_prompt, safe_query) {
+                    Some(fallback) => match fallback.complete(&system_prompt, safe_query, None) {
                         Ok(resp) => resp,
                         Err(fallback_err) => {
                             tracing::error!("Fallback LLM also failed: {fallback_err}");
