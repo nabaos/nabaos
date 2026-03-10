@@ -301,6 +301,7 @@ impl<'a> ResearchEngine<'a> {
     // -- Phase 2: Multi-Engine Search -----------------------------------------
 
     fn search_all_engines(&self, queries: &[String]) -> Vec<SearchCandidate> {
+        eprintln!("[research] using search backend: {}", self.config.search_backend.as_env_str());
         match self.config.search_backend {
             SearchBackend::ScrapeRotation => self.search_scrape_rotation(queries),
             SearchBackend::ChromePool => self.search_via_chrome_pool(queries),

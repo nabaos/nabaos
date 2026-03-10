@@ -53,6 +53,14 @@ impl PeaEngine {
         std::fs::create_dir_all(data_dir)
             .map_err(|e| NyayaError::Cache(format!("failed to create PEA data dir: {e}")))?;
         let store = ObjectiveStore::open(&data_dir.join("pea.db"))?;
+
+        // On startup, reset any tasks stuck in 'running' — after a daemon
+        // restart nothing can actually be running.
+        match store.recover_running_tasks() {
+            Ok(n) if n > 0 => eprintln!("[pea] recovered {n} tasks stuck in 'running' → ready"),
+            _ => {}
+        }
+
         let episode_store = EpisodeStore::open(&data_dir.join("pea_episodes.db"))?;
         let output_store = OutputStore::open(&data_dir.join("outputs.db"))?;
         Ok(Self {

@@ -121,10 +121,17 @@ impl BdiEngine {
                 };
             }
 
-            // Check stuck
+            // Check stuck — but only trigger Hegelian review if there are no
+            // ready primitive tasks to execute.  Previously this would preempt
+            // Persist even when tasks were ready, causing an infinite review loop.
             let stuck_ticks = self.ticks_since_last_completion(objective, tasks);
             if stuck_ticks >= self.stuck_threshold {
-                return BdiAction::HegelianReview { stuck_ticks };
+                let has_ready_primitive = desire_tasks.iter().any(|t| {
+                    t.task_type == TaskType::Primitive && t.status == TaskStatus::Ready
+                });
+                if !has_ready_primitive {
+                    return BdiAction::HegelianReview { stuck_ticks };
+                }
             }
 
             BdiAction::Persist

@@ -549,6 +549,22 @@ impl ObjectiveStore {
         Ok(result)
     }
 
+    /// Reset any tasks stuck in `running` back to `ready`.
+    ///
+    /// On daemon restart no task can actually be running, so we recover them
+    /// to avoid permanently blocking downstream dependents.  Returns the
+    /// number of tasks recovered.
+    pub fn recover_running_tasks(&self) -> Result<usize> {
+        let count = self
+            .conn
+            .execute(
+                "UPDATE pea_tasks SET status = 'ready' WHERE status = 'running'",
+                [],
+            )
+            .map_err(|e| NyayaError::Cache(format!("recover running tasks: {e}")))?;
+        Ok(count)
+    }
+
     pub fn update_task_status(&self, id: &str, status: &TaskStatus) -> Result<()> {
         self.conn
             .execute(
