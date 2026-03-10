@@ -960,6 +960,11 @@ impl AbilityRegistry {
         self.llm_provider = Some(provider);
     }
 
+    /// Get a reference to the LLM provider, if configured.
+    pub fn llm_provider(&self) -> Option<&LlmProvider> {
+        self.llm_provider.as_ref()
+    }
+
     /// Set the privilege guard for tiered 2FA enforcement on abilities.
     pub fn set_privilege_guard(
         &mut self,
