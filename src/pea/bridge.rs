@@ -2,18 +2,15 @@
 //
 // The bridge translates PeaTask descriptions into ability calls, threading
 // context from prior completed tasks so each step builds on the last.
-// Swarm-routed tasks use SwarmOrchestrator for real web search via DuckDuckGo,
-// with sync fallback through browser.fetch + research.wide abilities.
+// Web search grounding uses direct HTTP fetch (Brave Search primary, DDG fallback)
+// to provide real-world context for all LLM tasks.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use crate::pea::executor::{classify_task, TaskResult, TaskRoute};
 use crate::runtime::host_functions::AbilityRegistry;
 use crate::runtime::manifest::AgentManifest;
-use crate::swarm::orchestrator::{SwarmConfig, SwarmOrchestrator};
-use crate::swarm::worker::{ResearchPlan, SourcePlan, SourceTarget};
 
 /// Extract cost from ability result facts (if provider reports it).
 fn parse_cost(facts: &HashMap<String, String>) -> f64 {
@@ -122,41 +119,61 @@ impl<'a> PeaBridge<'a> {
         }
     }
 
-    /// Fetch web context for grounding any task. Tries SwarmOrchestrator first,
-    /// then sync fallback. Returns empty string on failure (non-blocking).
+    /// Fetch web context for grounding any task via direct HTTP search.
+    /// Tries Brave Search first (reliable from VPS), DDG HTML as fallback.
+    /// Returns empty string on failure (non-blocking).
     fn fetch_web_context(&self, task_description: &str, objective_description: &str) -> String {
         let search_query = self.generate_search_query(task_description, objective_description);
-        tracing::info!(query = %search_query, "PEA: fetching web context for task grounding");
+        eprintln!("[pea] web search query: {}", search_query);
 
-        // Try SwarmOrchestrator first
-        match self.try_swarm_orchestrator(&search_query) {
-            Ok(report) => {
-                let mut content = format!(
-                    "# Web Search Results for: {}\n\n{}\n\nSources used: {}/{}",
-                    report.query, report.summary, report.sources_used, report.sources_total
-                );
-                for cite in &report.citations {
-                    if let Some(ref url) = cite.url {
-                        content.push_str(&format!("\n- [{}]({})", cite.title, url));
-                    } else {
-                        content.push_str(&format!("\n- {}", cite.title));
-                    }
-                }
-                tracing::info!(sources = report.sources_used, "PEA: SwarmOrchestrator returned results");
-                content
+        // Step 1: Search — get titles, URLs, snippets
+        let search_results = search_brave(&search_query)
+            .or_else(|e| {
+                eprintln!("[pea] Brave Search failed: {}, trying DDG", e);
+                search_ddg(&search_query)
+            });
+
+        let results = match search_results {
+            Ok(r) if !r.is_empty() => r,
+            Ok(_) => {
+                eprintln!("[pea] search returned no results");
+                return String::new();
             }
-            Err(swarm_err) => {
-                tracing::warn!(error = %swarm_err, "PEA: SwarmOrchestrator failed, trying sync fallback");
-                let fallback = self.fallback_sync_search(&search_query);
-                if fallback.contains("[Web search unavailable") {
-                    tracing::warn!("PEA: sync fallback also failed — proceeding without web context");
-                    String::new()
-                } else {
-                    tracing::info!("PEA: sync fallback returned web context");
-                    fallback
-                }
+            Err(e) => {
+                eprintln!("[pea] all search engines failed: {}", e);
+                return String::new();
+            }
+        };
+
+        eprintln!("[pea] found {} search results", results.len());
+
+        // Step 2: Fetch top 3 URLs for content
+        let urls: Vec<&str> = results.iter()
+            .filter_map(|r| r.url.as_deref())
+            .take(3)
+            .collect();
+        let fetched = fetch_urls_parallel(&urls);
+
+        // Step 3: Build grounding context
+        let mut context = format!("# Web Search: {}\n\n", search_query);
+        for (i, result) in results.iter().enumerate().take(8) {
+            context.push_str(&format!("## {}. {}\n", i + 1, result.title));
+            if let Some(ref url) = result.url {
+                context.push_str(&format!("URL: {}\n", url));
+            }
+            context.push_str(&format!("{}\n\n", result.snippet));
+        }
+
+        if !fetched.is_empty() {
+            context.push_str("---\n# Fetched Page Content\n\n");
+            for (url, text) in &fetched {
+                let truncated = if text.len() > 4000 { &text[..4000] } else { text.as_str() };
+                context.push_str(&format!("## Source: {}\n{}\n\n", url, truncated));
             }
         }
+
+        eprintln!("[pea] web context: {} chars, {} fetched pages", context.len(), fetched.len());
+        context
     }
 
     fn execute_media(
@@ -291,7 +308,7 @@ impl<'a> PeaBridge<'a> {
         self.execute_llm(task_description, objective_description, prior_results)
     }
 
-    // -- Swarm helpers --------------------------------------------------------
+    // -- Search helpers -------------------------------------------------------
 
     /// Ask LLM to convert a task description into a concise web search query.
     fn generate_search_query(&self, task_description: &str, objective_description: &str) -> String {
@@ -308,7 +325,6 @@ impl<'a> PeaBridge<'a> {
             Ok(r) => {
                 let query = String::from_utf8_lossy(&r.output).trim().to_string();
                 if query.is_empty() || query.len() > 200 {
-                    // Fallback: use first 100 chars of task description
                     task_description.chars().take(100).collect()
                 } else {
                     query
@@ -317,126 +333,219 @@ impl<'a> PeaBridge<'a> {
             Err(_) => task_description.chars().take(100).collect(),
         }
     }
+}
 
-    /// Try SwarmOrchestrator with DuckDuckGo search.
-    /// Uses Handle::try_current / Runtime::new pattern for async-from-sync.
-    fn try_swarm_orchestrator(
-        &self,
-        search_query: &str,
-    ) -> crate::core::error::Result<crate::swarm::synthesizer::SynthesisReport> {
-        let orchestrator = SwarmOrchestrator::new(SwarmConfig::default());
+// ---------------------------------------------------------------------------
+// Direct HTTP web search (no ability system, no Chrome required)
+// ---------------------------------------------------------------------------
 
-        // Build LLM provider for synthesis if available
-        let orchestrator = if let Some(provider) = self.registry.llm_provider() {
-            orchestrator.with_llm_provider(Arc::new(provider.clone()))
-        } else {
-            orchestrator
+/// A single search result with title, URL, and snippet.
+struct SearchResult {
+    title: String,
+    url: Option<String>,
+    snippet: String,
+}
+
+/// Build a reqwest::blocking::Client with reasonable defaults.
+fn http_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0")
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))
+}
+
+/// Search via Brave Search HTML (no API key required, works from VPS).
+fn search_brave(query: &str) -> Result<Vec<SearchResult>, String> {
+    use scraper::{Html, Selector};
+
+    let client = http_client()?;
+    let url = format!(
+        "https://search.brave.com/search?q={}&source=web",
+        urlencoding::encode(query)
+    );
+
+    let resp = client.get(&url).send().map_err(|e| format!("Brave fetch: {}", e))?;
+    let html = resp.text().map_err(|e| format!("Brave body: {}", e))?;
+    let doc = Html::parse_document(&html);
+
+    let mut results = Vec::new();
+
+    // Brave uses <div class="snippet"> or elements with data-pos attributes
+    // Title: <span class="snippet-title"> or <a> inside snippet header
+    // URL: <a> href in the snippet
+    // Description: <p class="snippet-description"> or similar
+
+    // Strategy: find all <a> with href pointing to external sites inside result blocks
+    let a_sel = Selector::parse("a[href]").map_err(|e| format!("selector: {:?}", e))?;
+    let mut seen_urls = std::collections::HashSet::new();
+
+    for a in doc.select(&a_sel) {
+        let href = match a.value().attr("href") {
+            Some(h) => h,
+            None => continue,
         };
 
-        let plan = ResearchPlan {
-            query: search_query.to_string(),
-            sources: vec![SourcePlan {
-                worker_type: "search".into(),
-                target: SourceTarget::DuckDuckGoQuery(search_query.to_string()),
-                priority: 0,
-                needs_auth: false,
-                extraction_focus: Some("relevant results".into()),
-            }],
-            synthesis_instructions: format!("Synthesize research findings for: {}", search_query),
-            max_workers: 5,
-        };
+        // Skip non-result links
+        if !href.starts_with("http") || href.contains("brave.com") || href.contains("favicon") {
+            continue;
+        }
 
-        tokio::runtime::Handle::try_current()
-            .map(|handle| {
-                tokio::task::block_in_place(|| handle.block_on(orchestrator.execute_plan(&plan)))
-            })
-            .unwrap_or_else(|_| {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    crate::core::error::NyayaError::Config(format!(
-                        "Failed to create runtime: {}",
-                        e
-                    ))
-                })?;
-                rt.block_on(orchestrator.execute_plan(&plan))
-            })
-    }
+        // Deduplicate
+        if !seen_urls.insert(href.to_string()) {
+            continue;
+        }
 
-    /// Sync fallback: use browser.fetch for DDG search + research.wide for URLs.
-    fn fallback_sync_search(&self, search_query: &str) -> String {
-        // Try browser.fetch with DuckDuckGo query
-        let fetch_input = serde_json::json!({
-            "url": format!("https://duckduckgo.com/?q={}", urlencoding::encode(search_query)),
+        let title_text: String = a.text().collect::<String>().trim().to_string();
+        if title_text.is_empty() || title_text.len() < 5 {
+            continue;
+        }
+
+        // Try to find a snippet near this link (parent's text minus the title)
+        let snippet = String::new();
+
+        results.push(SearchResult {
+            title: title_text,
+            url: Some(href.to_string()),
+            snippet,
         });
 
-        let ddg_results = match self.registry.execute_ability(
-            self.manifest,
-            "browser.fetch",
-            &fetch_input.to_string(),
-        ) {
-            Ok(r) => String::from_utf8_lossy(&r.output).to_string(),
-            Err(e) => {
-                tracing::warn!("browser.fetch DDG fallback failed: {e}");
-                return format!("[Web search unavailable — search query was: {}]", search_query);
-            }
-        };
+        if results.len() >= 10 {
+            break;
+        }
+    }
 
-        // Extract URLs from DDG results and fetch them via research.wide
-        let urls: Vec<String> = ddg_results
-            .lines()
-            .filter_map(|line| {
-                if let Some(start) = line.find("http") {
-                    let url_part = &line[start..];
-                    let end = url_part.find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-                        .unwrap_or(url_part.len());
-                    let url = &url_part[..end];
-                    if !url.contains("duckduckgo.com") {
-                        Some(url.to_string())
-                    } else {
-                        None
+    // Enhance: try to extract snippets from the page using noscript/description patterns
+    if let Ok(desc_sel) = Selector::parse(".snippet-description, .snippet-content") {
+        for (i, el) in doc.select(&desc_sel).enumerate() {
+            let text: String = el.text().collect::<String>().trim().to_string();
+            if i < results.len() && !text.is_empty() {
+                results[i].snippet = text;
+            }
+        }
+    }
+
+    if results.is_empty() {
+        Err("Brave returned no results".into())
+    } else {
+        Ok(results)
+    }
+}
+
+/// Search via DuckDuckGo HTML (may return CAPTCHA from some IPs).
+fn search_ddg(query: &str) -> Result<Vec<SearchResult>, String> {
+    use scraper::{Html, Selector};
+
+    let client = http_client()?;
+    let url = format!(
+        "https://html.duckduckgo.com/html/?q={}",
+        urlencoding::encode(query)
+    );
+
+    let resp = client.get(&url).send().map_err(|e| format!("DDG fetch: {}", e))?;
+    let html = resp.text().map_err(|e| format!("DDG body: {}", e))?;
+
+    // Check for CAPTCHA
+    if html.contains("anomaly-modal") || html.contains("bot detection") {
+        return Err("DDG returned CAPTCHA".into());
+    }
+
+    let doc = Html::parse_document(&html);
+    let result_sel = Selector::parse(".result").map_err(|e| format!("{:?}", e))?;
+    let title_sel = Selector::parse(".result__a").map_err(|e| format!("{:?}", e))?;
+    let snippet_sel = Selector::parse(".result__snippet").map_err(|e| format!("{:?}", e))?;
+    let url_sel = Selector::parse(".result__url").map_err(|e| format!("{:?}", e))?;
+
+    let mut results = Vec::new();
+    for el in doc.select(&result_sel) {
+        let title = el.select(&title_sel).next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+        let snippet = el.select(&snippet_sel).next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+        let url = el.select(&url_sel).next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .or_else(|| {
+                el.select(&title_sel).next()
+                    .and_then(|e| e.value().attr("href").map(|s| s.to_string()))
+            });
+
+        if !title.is_empty() {
+            results.push(SearchResult { title, url, snippet });
+        }
+        if results.len() >= 10 {
+            break;
+        }
+    }
+
+    if results.is_empty() {
+        Err("DDG returned no results".into())
+    } else {
+        Ok(results)
+    }
+}
+
+/// Fetch multiple URLs in parallel using thread::scope, extract text.
+fn fetch_urls_parallel(urls: &[&str]) -> Vec<(String, String)> {
+    let results = std::sync::Mutex::new(Vec::new());
+    let client = match http_client() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    std::thread::scope(|s| {
+        for &url in urls {
+            let client = &client;
+            let results = &results;
+            s.spawn(move || {
+                if let Ok(resp) = client.get(url).send() {
+                    if let Ok(body) = resp.text() {
+                        let text = extract_readable_text(&body);
+                        if !text.is_empty() {
+                            if let Ok(mut r) = results.lock() {
+                                r.push((url.to_string(), text));
+                            }
+                        }
                     }
-                } else {
-                    None
                 }
-            })
-            .take(5)
-            .collect();
-
-        if urls.is_empty() {
-            return format!(
-                "# DuckDuckGo Search Results\nQuery: {}\n\n{}\n\n[No external URLs extracted]",
-                search_query, &ddg_results[..ddg_results.len().min(4000)]
-            );
+            });
         }
+    });
 
-        // Fetch URLs via research.wide
-        let wide_input = serde_json::json!({
-            "urls": urls,
-            "query": search_query,
-        });
+    results.into_inner().unwrap_or_default()
+}
 
-        match self.registry.execute_ability(
-            self.manifest,
-            "research.wide",
-            &wide_input.to_string(),
-        ) {
-            Ok(r) => {
-                let content = String::from_utf8_lossy(&r.output).to_string();
-                format!(
-                    "# Web Research Results\nQuery: {}\nSources: {} URLs fetched\n\n{}",
-                    search_query,
-                    urls.len(),
-                    &content[..content.len().min(12000)]
-                )
-            }
-            Err(e) => {
-                tracing::warn!("research.wide fallback failed: {e}");
-                format!(
-                    "# DuckDuckGo Search Results\nQuery: {}\n\n{}",
-                    search_query, &ddg_results[..ddg_results.len().min(8000)]
-                )
-            }
+/// Extract readable text from HTML, stripping scripts/styles/nav.
+fn extract_readable_text(html: &str) -> String {
+    use scraper::{Html, Selector};
+
+    let doc = Html::parse_document(html);
+
+    // Remove script, style, nav, footer, header elements
+    let body_sel = match Selector::parse("article, main, .content, .post, .article, body") {
+        Ok(s) => s,
+        Err(_) => return String::new(),
+    };
+
+    let mut text = String::new();
+    for el in doc.select(&body_sel) {
+        let el_text: String = el.text().collect::<Vec<_>>().join(" ");
+        let cleaned: String = el_text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if cleaned.len() > text.len() {
+            text = cleaned;
         }
     }
+
+    // Cap at 8KB
+    if text.len() > 8000 {
+        text.truncate(8000);
+    }
+    text
 }
 
 // ---------------------------------------------------------------------------
