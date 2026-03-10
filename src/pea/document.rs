@@ -154,13 +154,14 @@ pub fn assemble_document(
     objective_desc: &str,
     task_results: &[(String, String)], // (task_description, result_text)
     images: &[(String, PathBuf)],      // (caption, image_path)
+    style: Option<&StyleConfig>,
     output_dir: &Path,
 ) -> Result<PathBuf> {
     std::fs::create_dir_all(output_dir)
         .map_err(|e| NyayaError::Config(format!("Failed to create output dir: {}", e)))?;
 
     // 1. Generate LaTeX source via LLM
-    let tex_source = generate_latex_source(registry, manifest, objective_desc, task_results, images)?;
+    let tex_source = generate_latex_source(registry, manifest, objective_desc, task_results, images, style)?;
 
     // 2. Post-process: fix image paths for the output directory
     let tex_source = postprocess_latex(&tex_source, images, output_dir);
@@ -207,7 +208,7 @@ pub fn assemble_document(
     }
 
     // HTML fallback
-    let html = generate_html_fallback(objective_desc, task_results, images);
+    let html = generate_html_fallback(objective_desc, task_results, images, style);
     let html_path = output_dir.join("output.html");
     std::fs::write(&html_path, &html)
         .map_err(|e| NyayaError::Config(format!("Failed to write HTML: {}", e)))?;
@@ -251,6 +252,7 @@ fn generate_latex_source(
     objective_desc: &str,
     task_results: &[(String, String)],
     images: &[(String, PathBuf)],
+    style: Option<&StyleConfig>,
 ) -> Result<String> {
     let sections = task_results
         .iter()
@@ -270,6 +272,33 @@ fn generate_latex_source(
             })
             .collect();
         format!("\n\nAvailable images:\n{}", items.join("\n"))
+    };
+
+    let style_instructions = if let Some(s) = style {
+        format!(
+            "\n\nSTYLE CONFIGURATION (apply these visual design choices):\n\
+             Theme: {} | Primary color: {} | Accent color: {}\n\
+             Font family: {} | Ornament style: {} | Chapter style: {}\n\
+             Watermark: {} (opacity: {:.0}%)\n\
+             Use drop caps: {}\n\n\
+             STYLING PACKAGES TO USE:\n\
+             - pgfornament: for decorative borders/corners (if ornament_style is not 'none')\n\
+             - draftwatermark: for watermark text (if watermark_text is set)\n\
+             - lettrine: for drop caps (if use_drop_caps is true)\n\
+             - titlesec: for custom chapter/section headings matching the theme\n\
+             - Define \\definecolor{{primarycolor}}{{HTML}}{{{}}} and \\definecolor{{accentcolor}}{{HTML}}{{{}}}\n\
+             - Use these colors for headings, rules, tcolorbox backgrounds, and decorative elements\n\
+             - Include an attribution page at the end for any stock photo credits",
+            s.theme, s.primary_color, s.accent_color,
+            s.font_family, s.ornament_style, s.chapter_style,
+            s.watermark_text.as_deref().unwrap_or("none"),
+            s.watermark_opacity * 100.0,
+            s.use_drop_caps,
+            s.primary_color.trim_start_matches('#'),
+            s.accent_color.trim_start_matches('#'),
+        )
+    } else {
+        String::new()
     };
 
     let prompt = format!(
@@ -292,9 +321,10 @@ fn generate_latex_source(
          - Use professional formatting: headers, footers, proper margins\n\
          - Include any tables, lists, or structured data in proper LaTeX format\n\
          - If content mentions data suitable for visualization, include TikZ/pgfplots diagrams\n\
-         - For images, use \\includegraphics with the image filenames\n\
+         - For images, use \\includegraphics with the image filenames\
+         {}\n\
          - Output ONLY the complete LaTeX source code, starting with \\documentclass and ending with \\end{{document}}",
-        objective_desc, sections, image_list
+        objective_desc, sections, image_list, style_instructions
     );
 
     let input = serde_json::json!({
@@ -393,8 +423,38 @@ fn generate_html_fallback(
     objective_desc: &str,
     task_results: &[(String, String)],
     images: &[(String, PathBuf)],
+    style: Option<&StyleConfig>,
 ) -> String {
     let escaped_title = html_escape(objective_desc);
+
+    let s = style.cloned().unwrap_or_default();
+
+    let font_stack = match s.font_family.as_str() {
+        "sans-serif" => "'Helvetica Neue', Arial, sans-serif",
+        "monospace" => "'JetBrains Mono', 'Fira Code', monospace",
+        _ => "'Georgia', 'Palatino', serif",
+    };
+
+    let watermark_css = if let Some(ref wm) = s.watermark_text {
+        format!(
+            r##"
+body::before {{
+  content: "{}";
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%) rotate(-30deg);
+  font-size: 6rem; color: {}; opacity: {:.2};
+  pointer-events: none; z-index: -1; white-space: nowrap;
+}}"##,
+            html_escape(wm),
+            s.primary_color,
+            s.watermark_opacity.max(0.03).min(0.15),
+        )
+    } else {
+        String::new()
+    };
+
+    let primary = &s.primary_color;
+    let accent = &s.accent_color;
 
     let mut sections = String::new();
     for (i, (desc, text)) in task_results.iter().enumerate() {
@@ -426,17 +486,19 @@ fn generate_html_fallback(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title}</title>
 <style>
-body {{ font-family: 'Georgia', serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: #333; }}
-h1 {{ text-align: center; border-bottom: 2px solid #333; padding-bottom: 0.5em; }}
-h2 {{ color: #444; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }}
+:root {{ --primary-color: {primary}; --accent-color: {accent}; }}
+body {{ font-family: {font_stack}; max-width: 800px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: var(--primary-color); }}
+h1 {{ text-align: center; border-bottom: 2px solid var(--primary-color); padding-bottom: 0.5em; }}
+h2 {{ color: var(--accent-color); border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }}
 .content {{ margin: 1em 0; }}
 figure {{ text-align: center; margin: 2em 0; }}
-figure img {{ max-width: 100%; height: auto; }}
+figure img {{ max-width: 100%; height: auto; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }}
 figcaption {{ font-style: italic; color: #666; margin-top: 0.5em; }}
 section {{ margin-bottom: 2em; }}
-.toc {{ background: #f9f9f9; padding: 1em 2em; border-radius: 4px; margin: 1em 0 2em; }}
+.toc {{ background: #f9f9f9; padding: 1em 2em; border-radius: 4px; margin: 1em 0 2em; border-left: 4px solid var(--accent-color); }}
 .toc h3 {{ margin-top: 0; }}
 .toc ol {{ padding-left: 1.5em; }}
+{watermark_css}
 </style>
 </head>
 <body>
@@ -453,6 +515,10 @@ section {{ margin-bottom: 2em; }}
 </body>
 </html>"#,
         title = escaped_title,
+        primary = primary,
+        accent = accent,
+        font_stack = font_stack,
+        watermark_css = watermark_css,
         toc = task_results
             .iter()
             .enumerate()
@@ -550,11 +616,28 @@ mod tests {
             ("Introduction".to_string(), "This is the intro.".to_string()),
             ("Chapter 1".to_string(), "Content here.".to_string()),
         ];
-        let html = generate_html_fallback("Test Document", &results, &[]);
+        let html = generate_html_fallback("Test Document", &results, &[], None);
         assert!(html.contains("<title>Test Document</title>"));
         assert!(html.contains("<h2>1. Introduction</h2>"));
         assert!(html.contains("<h2>2. Chapter 1</h2>"));
         assert!(html.contains("NabaOS PEA Engine"));
+    }
+
+    #[test]
+    fn test_styled_html_fallback() {
+        let style = StyleConfig {
+            primary_color: "#8B4513".into(),
+            accent_color: "#DAA520".into(),
+            font_family: "serif".into(),
+            watermark_text: Some("Test Watermark".into()),
+            watermark_opacity: 0.08,
+            ..Default::default()
+        };
+        let results = vec![("Chapter 1".into(), "Content here.".into())];
+        let html = generate_html_fallback("Test Doc", &results, &[], Some(&style));
+        assert!(html.contains("#8B4513"));
+        assert!(html.contains("Test Watermark"));
+        assert!(html.contains("--primary-color"));
     }
 
     #[test]
