@@ -489,7 +489,100 @@ pub(crate) fn sanitize_latex(tex: &str) -> String {
     // Strip markdown code fences
     fixed = fixed.replace("```latex", "").replace("```tex", "").replace("```", "");
 
+    // Balance LaTeX environments: close any unclosed \begin{X} with \end{X}
+    fixed = balance_environments(&fixed);
+
+    // Balance braces and math mode
+    fixed = balance_braces_and_math(&fixed);
+
     fixed
+}
+
+/// Close any unclosed LaTeX environments.
+///
+/// Scans for `\begin{X}` / `\end{X}` pairs and appends missing `\end{X}`
+/// at the end to prevent "ended by \end{document}" fatal errors.
+fn balance_environments(tex: &str) -> String {
+    let mut stack: Vec<String> = Vec::new();
+    // Environments that are part of the skeleton, not LLM-generated
+    let skeleton_envs = ["document", "titlepage"];
+
+    for line in tex.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("\\begin{") {
+            if let Some(end) = rest.find('}') {
+                let env = &rest[..end];
+                if !skeleton_envs.contains(&env) {
+                    stack.push(env.to_string());
+                }
+            }
+        }
+        if let Some(rest) = trimmed.strip_prefix("\\end{") {
+            if let Some(end) = rest.find('}') {
+                let env = &rest[..end];
+                if !skeleton_envs.contains(&env) {
+                    // Pop matching env from stack (search from top)
+                    if let Some(pos) = stack.iter().rposition(|e| e == env) {
+                        stack.remove(pos);
+                    }
+                }
+            }
+        }
+    }
+
+    if stack.is_empty() {
+        return tex.to_string();
+    }
+
+    // Close unclosed environments in reverse order
+    let mut result = tex.to_string();
+    for env in stack.iter().rev() {
+        result.push_str(&format!("\n\\end{{{}}}", env));
+    }
+    result
+}
+
+/// Balance braces and math-mode delimiters.
+///
+/// Counts unmatched `{` and `$` and appends closers to prevent
+/// "Missing } inserted" / "Missing $ inserted" fatal errors.
+fn balance_braces_and_math(tex: &str) -> String {
+    let mut brace_depth: i32 = 0;
+    let mut math_open = false;
+    let mut math_fixes = 0;
+    let mut brace_fixes = 0;
+    let mut prev_char = ' ';
+
+    for ch in tex.chars() {
+        match ch {
+            '{' if prev_char != '\\' => brace_depth += 1,
+            '}' if prev_char != '\\' => brace_depth -= 1,
+            '$' if prev_char != '\\' => math_open = !math_open,
+            _ => {}
+        }
+        prev_char = ch;
+    }
+
+    let mut result = tex.to_string();
+    if math_open {
+        result.push('$');
+        math_fixes = 1;
+    }
+    if brace_depth > 0 {
+        brace_fixes = brace_depth;
+        for _ in 0..brace_depth {
+            result.push('}');
+        }
+    }
+
+    if math_fixes > 0 || brace_fixes > 0 {
+        eprintln!(
+            "[pea/doc] sanitize: closed {} unclosed braces, {} unclosed math-mode",
+            brace_fixes, math_fixes
+        );
+    }
+
+    result
 }
 
 /// Escape special LaTeX characters in plain text.
@@ -1016,5 +1109,67 @@ mod tests {
         assert!(title_page.contains("\\begin{titlepage}"));
         assert!(title_page.contains("\\end{titlepage}"));
         assert!(title_page.contains("NabaOS PEA Engine"));
+    }
+
+    // --- Environment balancing tests ---
+
+    #[test]
+    fn test_balance_environments_unclosed_tabular() {
+        let input = "\\begin{tabular}{|l|l|}\nA & B \\\\\n";
+        let result = balance_environments(input);
+        assert!(result.contains("\\end{tabular}"));
+    }
+
+    #[test]
+    fn test_balance_environments_already_balanced() {
+        let input = "\\begin{itemize}\n\\item A\n\\end{itemize}\n";
+        let result = balance_environments(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_balance_environments_nested() {
+        let input = "\\begin{table}\n\\begin{tabular}{l}\nA\n\\end{tabular}\n";
+        let result = balance_environments(input);
+        assert!(result.contains("\\end{table}"));
+        // tabular was already closed, only table should be added
+        assert_eq!(result.matches("\\end{table}").count(), 1);
+    }
+
+    #[test]
+    fn test_balance_environments_skips_document() {
+        // document env is in skeleton, should not be touched
+        let input = "\\begin{itemize}\n\\item A\n";
+        let result = balance_environments(input);
+        assert!(result.contains("\\end{itemize}"));
+        assert!(!result.contains("\\end{document}"));
+    }
+
+    #[test]
+    fn test_balance_braces_unclosed() {
+        let input = "Hello {world";
+        let result = balance_braces_and_math(input);
+        assert!(result.ends_with('}'));
+    }
+
+    #[test]
+    fn test_balance_braces_balanced() {
+        let input = "Hello {world}";
+        let result = balance_braces_and_math(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_balance_math_unclosed() {
+        let input = "The value is $x + y";
+        let result = balance_braces_and_math(input);
+        assert!(result.ends_with('$'));
+    }
+
+    #[test]
+    fn test_sanitize_closes_unclosed_environments() {
+        let input = "\\begin{tabular}{|l|l|}\nA & B \\\\\nC & D \\\\\n";
+        let result = sanitize_latex(input);
+        assert!(result.contains("\\end{tabular}"));
     }
 }
