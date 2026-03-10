@@ -788,6 +788,97 @@ pub(crate) fn search_google(query: &str) -> Result<Vec<SearchResult>, String> {
     }
 }
 
+/// Search via Brave Search JSON API (free tier: 2000 queries/month).
+pub(crate) fn search_brave_api(query: &str, api_key: &str) -> Result<Vec<SearchResult>, String> {
+    let client = http_client()?;
+    let url = format!(
+        "https://api.search.brave.com/res/v1/web/search?q={}&count=10",
+        urlencoding::encode(query)
+    );
+
+    let resp = client
+        .get(&url)
+        .header("Accept", "application/json")
+        .header("X-Subscription-Token", api_key)
+        .send()
+        .map_err(|e| format!("Brave API fetch: {}", e))?;
+
+    let status = resp.status().as_u16();
+    if status == 429 {
+        return Err("Brave API quota exceeded (429)".into());
+    }
+    if status == 401 {
+        return Err("Brave API unauthorized — check NABA_BRAVE_API_KEY".into());
+    }
+    if status != 200 {
+        return Err(format!("Brave API returned status {}", status));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("Brave API JSON parse: {}", e))?;
+
+    let mut results = Vec::new();
+    if let Some(web_results) = body.get("web").and_then(|w| w.get("results")).and_then(|r| r.as_array()) {
+        for item in web_results.iter().take(10) {
+            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let url = item.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let snippet = item.get("description").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            if !title.is_empty() {
+                results.push(SearchResult { title, url, snippet });
+            }
+        }
+    }
+
+    if results.is_empty() {
+        Err("Brave API returned no results".into())
+    } else {
+        Ok(results)
+    }
+}
+
+/// Search via self-hosted SearXNG instance (JSON API).
+pub(crate) fn search_searxng(query: &str, base_url: &str) -> Result<Vec<SearchResult>, String> {
+    let client = http_client()?;
+    let url = format!(
+        "{}/search?q={}&format=json&language=en",
+        base_url.trim_end_matches('/'),
+        urlencoding::encode(query)
+    );
+
+    let resp = client
+        .get(&url)
+        .send()
+        .map_err(|e| format!("SearXNG fetch: {}", e))?;
+
+    let status = resp.status().as_u16();
+    if status != 200 {
+        return Err(format!("SearXNG returned status {}", status));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("SearXNG JSON parse: {}", e))?;
+
+    let mut results = Vec::new();
+    if let Some(items) = body.get("results").and_then(|r| r.as_array()) {
+        for item in items.iter().take(10) {
+            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let url = item.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let snippet = item.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            if !title.is_empty() {
+                results.push(SearchResult { title, url, snippet });
+            }
+        }
+    }
+
+    if results.is_empty() {
+        Err("SearXNG returned no results".into())
+    } else {
+        Ok(results)
+    }
+}
+
 /// Fetch multiple URLs in parallel using thread::scope, extract text.
 pub(crate) fn fetch_urls_parallel(urls: &[&str]) -> Vec<(String, String)> {
     let results = std::sync::Mutex::new(Vec::new());
