@@ -259,49 +259,69 @@ impl<'a> ResearchEngine<'a> {
     // -- Phase 2: Multi-Engine Search -----------------------------------------
 
     fn search_all_engines(&self, queries: &[String]) -> Vec<SearchCandidate> {
+        type SearchFn = fn(&str) -> std::result::Result<Vec<SearchResult>, String>;
+
+        // 4-engine rotation: Bing (most lenient) → DDG → Brave → Google (most strict)
+        let engines: &[(SearchFn, &str)] = &[
+            (search_bing, "bing"),
+            (search_ddg, "ddg"),
+            (search_brave, "brave"),
+            (search_google, "google"),
+        ];
+
         let mut candidates = Vec::new();
         let mut seen_urls = HashSet::new();
+        let mut engine_failures: [u32; 4] = [0; 4]; // track consecutive failures per engine
+        const MAX_CONSECUTIVE_FAILURES: u32 = 3; // skip engine after 3 consecutive failures
 
-        // Run queries sequentially to avoid rate limiting.
-        // Alternate between Brave and DDG to spread load.
         for (i, query) in queries.iter().enumerate() {
-            // Alternate: even queries → DDG first, odd → Brave first
-            let (primary, secondary): (
-                fn(&str) -> std::result::Result<Vec<SearchResult>, String>,
-                fn(&str) -> std::result::Result<Vec<SearchResult>, String>,
-            ) = if i % 2 == 0 {
-                (search_ddg, search_brave)
-            } else {
-                (search_brave, search_ddg)
-            };
+            let mut got_results = false;
 
-            let results = primary(query)
-                .or_else(|_| {
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    secondary(query)
-                })
-                .unwrap_or_default();
-
-            for result in results {
-                if let Some(ref url) = result.url {
-                    if !seen_urls.insert(url.clone()) {
-                        continue;
-                    }
-                    candidates.push(SearchCandidate {
-                        url: url.clone(),
-                        title: result.title,
-                        snippet: result.snippet,
-                        source_engine: "web".to_string(),
-                        relevance_score: None,
-                    });
+            // Try engines in rotation starting from (i % 4), skip engines with too many failures
+            for offset in 0..engines.len() {
+                let idx = (i + offset) % engines.len();
+                if engine_failures[idx] >= MAX_CONSECUTIVE_FAILURES {
+                    continue; // this engine is likely blocked, skip it
                 }
+
+                let (search_fn, engine_name) = engines[idx];
+                match search_fn(query) {
+                    Ok(results) if !results.is_empty() => {
+                        engine_failures[idx] = 0; // reset on success
+                        for result in results {
+                            if let Some(ref url) = result.url {
+                                if !seen_urls.insert(url.clone()) {
+                                    continue;
+                                }
+                                candidates.push(SearchCandidate {
+                                    url: url.clone(),
+                                    title: result.title,
+                                    snippet: result.snippet,
+                                    source_engine: engine_name.to_string(),
+                                    relevance_score: None,
+                                });
+                            }
+                        }
+                        got_results = true;
+                        break; // got results, move to next query
+                    }
+                    _ => {
+                        engine_failures[idx] += 1;
+                        eprintln!("[research] {} failed for query {}, trying next engine", engine_name, i);
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                    }
+                }
+            }
+
+            if !got_results {
+                eprintln!("[research] all engines failed for query {}: {:?}", i, &query[..query.len().min(60)]);
             }
 
             if candidates.len() >= self.config.max_candidates {
                 break;
             }
 
-            // Rate limit: 1.5s between queries
+            // Rate limit: 1.5s between queries to spread load
             std::thread::sleep(std::time::Duration::from_millis(1500));
         }
 
@@ -578,6 +598,149 @@ pub(crate) fn search_ddg(query: &str) -> Result<Vec<SearchResult>, String> {
 
     if results.is_empty() {
         Err("DDG returned no results".into())
+    } else {
+        Ok(results)
+    }
+}
+
+/// Search via Bing HTML (most lenient for datacenter IPs, ~20-30 queries/hr).
+pub(crate) fn search_bing(query: &str) -> Result<Vec<SearchResult>, String> {
+    use scraper::{Html, Selector};
+
+    let client = http_client()?;
+    let url = format!(
+        "https://www.bing.com/search?q={}&setlang=en",
+        urlencoding::encode(query)
+    );
+
+    let resp = client.get(&url).send().map_err(|e| format!("Bing fetch: {}", e))?;
+    let status = resp.status();
+    let html = resp.text().map_err(|e| format!("Bing body: {}", e))?;
+
+    if status == 429 || html.contains("captcha") || html.contains("unusual traffic") {
+        return Err("Bing rate limited or CAPTCHA".into());
+    }
+
+    let doc = Html::parse_document(&html);
+    let mut results = Vec::new();
+
+    // Bing organic results: <li class="b_algo">
+    if let Ok(algo_sel) = Selector::parse("li.b_algo") {
+        let a_sel = Selector::parse("h2 a[href]").map_err(|e| format!("{:?}", e))?;
+        let snippet_sel = Selector::parse(".b_caption p, .b_lineclamp2").map_err(|e| format!("{:?}", e))?;
+
+        for el in doc.select(&algo_sel) {
+            let (title, href) = match el.select(&a_sel).next() {
+                Some(a) => {
+                    let t: String = a.text().collect::<String>().trim().to_string();
+                    let h = a.value().attr("href").unwrap_or("").to_string();
+                    (t, h)
+                }
+                None => continue,
+            };
+
+            if title.is_empty() || !href.starts_with("http") {
+                continue;
+            }
+
+            let snippet = el
+                .select(&snippet_sel)
+                .next()
+                .map(|e| e.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
+
+            results.push(SearchResult {
+                title,
+                url: Some(href),
+                snippet,
+            });
+
+            if results.len() >= 10 {
+                break;
+            }
+        }
+    }
+
+    if results.is_empty() {
+        Err("Bing returned no results".into())
+    } else {
+        Ok(results)
+    }
+}
+
+/// Search via Google HTML (strict rate limits from datacenter IPs, ~5-10 before CAPTCHA).
+pub(crate) fn search_google(query: &str) -> Result<Vec<SearchResult>, String> {
+    use scraper::{Html, Selector};
+
+    let client = http_client()?;
+    let url = format!(
+        "https://www.google.com/search?q={}&hl=en&num=10",
+        urlencoding::encode(query)
+    );
+
+    let resp = client.get(&url).send().map_err(|e| format!("Google fetch: {}", e))?;
+    let status = resp.status();
+    let html = resp.text().map_err(|e| format!("Google body: {}", e))?;
+
+    if status == 429 || html.contains("unusual traffic") || html.contains("/sorry/") || html.contains("captcha") {
+        return Err("Google rate limited or CAPTCHA".into());
+    }
+
+    let doc = Html::parse_document(&html);
+    let mut results = Vec::new();
+    let mut seen_urls = HashSet::new();
+
+    // Google wraps results in <div class="g"> or similar; extract all outbound links with titles
+    let a_sel = Selector::parse("a[href]").map_err(|e| format!("{:?}", e))?;
+
+    for a in doc.select(&a_sel) {
+        let href = match a.value().attr("href") {
+            Some(h) => h,
+            None => continue,
+        };
+
+        // Google uses /url?q=REAL_URL&... for result links
+        let real_url = if href.starts_with("/url?") {
+            href.split("q=")
+                .nth(1)
+                .and_then(|s| s.split('&').next())
+                .map(|s| urlencoding::decode(s).unwrap_or_default().into_owned())
+        } else if href.starts_with("http") && !href.contains("google.com") {
+            Some(href.to_string())
+        } else {
+            None
+        };
+
+        let real_url = match real_url {
+            Some(u) if u.starts_with("http") && !u.contains("google.com") => u,
+            _ => continue,
+        };
+
+        if !seen_urls.insert(real_url.clone()) {
+            continue;
+        }
+
+        let title_text: String = a.text().collect::<String>().trim().to_string();
+        if title_text.is_empty() || title_text.len() < 5 {
+            continue;
+        }
+
+        // Try to get snippet from sibling/parent elements
+        let snippet = String::new(); // Google snippets are harder to reliably extract
+
+        results.push(SearchResult {
+            title: title_text,
+            url: Some(real_url),
+            snippet,
+        });
+
+        if results.len() >= 10 {
+            break;
+        }
+    }
+
+    if results.is_empty() {
+        Err("Google returned no results".into())
     } else {
         Ok(results)
     }
