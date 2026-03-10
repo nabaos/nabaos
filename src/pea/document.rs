@@ -145,6 +145,9 @@ pub fn analyze_style(
 // Public API
 // ---------------------------------------------------------------------------
 
+/// A sourced image with caption, file path, and optional attribution.
+pub type ImageEntry = (String, PathBuf, Option<String>); // (caption, path, attribution)
+
 /// Assemble all task results into a final document (PDF or HTML).
 ///
 /// Returns the path to the generated output file.
@@ -153,7 +156,7 @@ pub fn assemble_document(
     manifest: &AgentManifest,
     objective_desc: &str,
     task_results: &[(String, String)], // (task_description, result_text)
-    images: &[(String, PathBuf)],      // (caption, image_path)
+    images: &[ImageEntry],             // (caption, image_path, attribution)
     style: Option<&StyleConfig>,
     output_dir: &Path,
 ) -> Result<PathBuf> {
@@ -251,7 +254,7 @@ fn generate_latex_source(
     manifest: &AgentManifest,
     objective_desc: &str,
     task_results: &[(String, String)],
-    images: &[(String, PathBuf)],
+    images: &[ImageEntry],
     style: Option<&StyleConfig>,
 ) -> Result<String> {
     let sections = task_results
@@ -267,11 +270,17 @@ fn generate_latex_source(
         let items: Vec<String> = images
             .iter()
             .enumerate()
-            .map(|(i, (caption, path))| {
-                format!("Image {}: {} (file: {})", i + 1, caption, path.display())
+            .map(|(i, (caption, path, attribution))| {
+                let attr = attribution.as_deref().unwrap_or("Unknown source");
+                format!("Image {}: {} (file: {}, credit: {})", i + 1, caption, path.display(), attr)
             })
             .collect();
-        format!("\n\nAvailable images:\n{}", items.join("\n"))
+        format!(
+            "\n\nAvailable images (include ALL in the document with proper placement):\n{}\n\n\
+             ATTRIBUTION REQUIREMENT: Include a 'Photo Credits' section at the end of the document \
+             listing each image with its credit line. This is legally required for royalty-free images.",
+            items.join("\n")
+        )
     };
 
     let style_instructions = if let Some(s) = style {
@@ -346,12 +355,12 @@ fn generate_latex_source(
 // Post-processing
 // ---------------------------------------------------------------------------
 
-fn postprocess_latex(tex: &str, images: &[(String, PathBuf)], output_dir: &Path) -> String {
+fn postprocess_latex(tex: &str, images: &[ImageEntry], output_dir: &Path) -> String {
     let mut result = tex.to_string();
 
     // Fix image paths: replace any absolute/relative paths with just filenames
     // since we'll copy images to output_dir
-    for (_, path) in images {
+    for (_, path, _) in images {
         if let Some(filename) = path.file_name() {
             let filename_str = filename.to_string_lossy();
             // Copy image to output dir
@@ -422,7 +431,7 @@ fn extract_tikz(raw: &str) -> Option<String> {
 fn generate_html_fallback(
     objective_desc: &str,
     task_results: &[(String, String)],
-    images: &[(String, PathBuf)],
+    images: &[ImageEntry],
     style: Option<&StyleConfig>,
 ) -> String {
     let escaped_title = html_escape(objective_desc);
@@ -467,16 +476,42 @@ body::before {{
     }
 
     let mut image_html = String::new();
-    for (caption, path) in images {
+    let mut credits: Vec<String> = Vec::new();
+    for (caption, path, attribution) in images {
         if let Some(filename) = path.file_name() {
+            let attr_line = if let Some(attr) = attribution {
+                credits.push(format!(
+                    "<li><strong>{}</strong> — {}</li>",
+                    html_escape(caption),
+                    html_escape(attr)
+                ));
+                format!(
+                    "<figcaption>{} <span class=\"attribution\">{}</span></figcaption>",
+                    html_escape(caption),
+                    html_escape(attr)
+                )
+            } else {
+                format!("<figcaption>{}</figcaption>", html_escape(caption))
+            };
             image_html.push_str(&format!(
-                "<figure><img src=\"{}\" alt=\"{}\"><figcaption>{}</figcaption></figure>\n",
+                "<figure><img src=\"{}\" alt=\"{}\">{}</figure>\n",
                 filename.to_string_lossy(),
                 html_escape(caption),
-                html_escape(caption)
+                attr_line,
             ));
         }
     }
+
+    let credits_html = if credits.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<section class=\"credits\">\n<h2>Photo Credits</h2>\n<ul>\n{}\n</ul>\n\
+             <p class=\"credits-note\">Images used under royalty-free license. \
+             Attribution provided as required by the image source.</p>\n</section>\n",
+            credits.join("\n")
+        )
+    };
 
     format!(
         r#"<!DOCTYPE html>
@@ -494,6 +529,9 @@ h2 {{ color: var(--accent-color); border-bottom: 1px solid #ddd; padding-bottom:
 figure {{ text-align: center; margin: 2em 0; }}
 figure img {{ max-width: 100%; height: auto; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }}
 figcaption {{ font-style: italic; color: #666; margin-top: 0.5em; }}
+figcaption .attribution {{ font-size: 0.85em; color: #999; display: block; }}
+.credits {{ margin-top: 3em; padding-top: 1em; border-top: 1px solid #ddd; }}
+.credits-note {{ font-size: 0.85em; color: #888; font-style: italic; }}
 section {{ margin-bottom: 2em; }}
 .toc {{ background: #f9f9f9; padding: 1em 2em; border-radius: 4px; margin: 1em 0 2em; border-left: 4px solid var(--accent-color); }}
 .toc h3 {{ margin-top: 0; }}
@@ -511,6 +549,7 @@ section {{ margin-bottom: 2em; }}
 </nav>
 {sections}
 {images}
+{credits}
 <footer><p><em>Generated by NabaOS PEA Engine</em></p></footer>
 </body>
 </html>"#,
@@ -527,6 +566,7 @@ section {{ margin-bottom: 2em; }}
             .join("\n"),
         sections = sections,
         images = image_html,
+        credits = credits_html,
     )
 }
 
@@ -641,6 +681,24 @@ mod tests {
     }
 
     #[test]
+    fn test_html_attribution_credits() {
+        let images: Vec<ImageEntry> = vec![
+            ("Biryani dish".to_string(), PathBuf::from("/tmp/biryani.jpg"), Some("Photo by Chef on Unsplash".to_string())),
+            ("Spice market".to_string(), PathBuf::from("/tmp/spices.jpg"), None),
+        ];
+        let results = vec![("Chapter 1".into(), "Content.".into())];
+        let html = generate_html_fallback("Test", &results, &images, None);
+        // Attributed image should show credit in figcaption
+        assert!(html.contains("Photo by Chef on Unsplash"));
+        assert!(html.contains("class=\"attribution\""));
+        // Credits section should exist
+        assert!(html.contains("Photo Credits"));
+        assert!(html.contains("royalty-free license"));
+        // Non-attributed image should not have attribution span
+        assert!(html.contains("Spice market</figcaption>"));
+    }
+
+    #[test]
     fn test_text_to_html_paragraphs() {
         let text = "First paragraph.\n\nSecond paragraph.";
         let html = text_to_html(text);
@@ -651,8 +709,8 @@ mod tests {
     #[test]
     fn test_postprocess_latex_image_paths() {
         let tex = "\\includegraphics{/tmp/images/photo.jpg}";
-        let images = vec![
-            ("A photo".to_string(), PathBuf::from("/tmp/images/photo.jpg")),
+        let images: Vec<ImageEntry> = vec![
+            ("A photo".to_string(), PathBuf::from("/tmp/images/photo.jpg"), Some("Photo by Test on Unsplash".to_string())),
         ];
         // Use a temp dir that may not exist — postprocess handles copy failure gracefully
         let result = postprocess_latex(tex, &images, Path::new("/tmp/test_output"));

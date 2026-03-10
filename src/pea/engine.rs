@@ -951,7 +951,7 @@ impl PeaEngine {
                     ));
 
                     // Fetch images from stock photo services
-                    let mut images: Vec<(String, std::path::PathBuf)> = Vec::new();
+                    let mut images: Vec<crate::pea::document::ImageEntry> = Vec::new();
                     for iq in &style_config.image_queries {
                         let fetch_input = serde_json::json!({
                             "query": iq.query,
@@ -967,7 +967,8 @@ impl PeaEngine {
                                 let path = std::path::PathBuf::from(path_str.trim());
                                 if path.exists() {
                                     let caption = iq.chapter.clone().unwrap_or_else(|| iq.query.clone());
-                                    images.push((caption, path));
+                                    let attribution = result.facts.get("attribution").cloned();
+                                    images.push((caption, path, attribution));
                                 }
                             }
                             Err(e) => {
