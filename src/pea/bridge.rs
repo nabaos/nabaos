@@ -75,7 +75,21 @@ impl<'a> PeaBridge<'a> {
         objective_description: &str,
         prior_results: &[(String, String)],
     ) -> TaskResult {
-        let system = build_system_prompt(objective_description, task_description);
+        // Step 1: Fetch web context for grounding (reduces hallucination, adds real data)
+        let web_context = self.fetch_web_context(task_description, objective_description);
+
+        let system = if web_context.is_empty() {
+            build_system_prompt(objective_description, task_description)
+        } else {
+            format!(
+                "{}\n\n\
+                 WEB SEARCH GROUNDING (use these real sources to inform your response — \
+                 cite URLs where relevant, do NOT fabricate references):\n{}",
+                build_system_prompt(objective_description, task_description),
+                web_context
+            )
+        };
+
         let prompt = build_user_prompt(task_description, prior_results);
 
         let input = serde_json::json!({
@@ -105,6 +119,43 @@ impl<'a> PeaBridge<'a> {
                 artifacts: vec![],
                 cost_usd: 0.0,
             },
+        }
+    }
+
+    /// Fetch web context for grounding any task. Tries SwarmOrchestrator first,
+    /// then sync fallback. Returns empty string on failure (non-blocking).
+    fn fetch_web_context(&self, task_description: &str, objective_description: &str) -> String {
+        let search_query = self.generate_search_query(task_description, objective_description);
+        tracing::info!(query = %search_query, "PEA: fetching web context for task grounding");
+
+        // Try SwarmOrchestrator first
+        match self.try_swarm_orchestrator(&search_query) {
+            Ok(report) => {
+                let mut content = format!(
+                    "# Web Search Results for: {}\n\n{}\n\nSources used: {}/{}",
+                    report.query, report.summary, report.sources_used, report.sources_total
+                );
+                for cite in &report.citations {
+                    if let Some(ref url) = cite.url {
+                        content.push_str(&format!("\n- [{}]({})", cite.title, url));
+                    } else {
+                        content.push_str(&format!("\n- {}", cite.title));
+                    }
+                }
+                tracing::info!(sources = report.sources_used, "PEA: SwarmOrchestrator returned results");
+                content
+            }
+            Err(swarm_err) => {
+                tracing::warn!(error = %swarm_err, "PEA: SwarmOrchestrator failed, trying sync fallback");
+                let fallback = self.fallback_sync_search(&search_query);
+                if fallback.contains("[Web search unavailable") {
+                    tracing::warn!("PEA: sync fallback also failed — proceeding without web context");
+                    String::new()
+                } else {
+                    tracing::info!("PEA: sync fallback returned web context");
+                    fallback
+                }
+            }
         }
     }
 
@@ -236,81 +287,8 @@ impl<'a> PeaBridge<'a> {
         objective_description: &str,
         prior_results: &[(String, String)],
     ) -> TaskResult {
-        // Step 1: Generate a focused search query via LLM
-        let search_query = self.generate_search_query(task_description, objective_description);
-
-        // Step 2: Try SwarmOrchestrator (DDG search + parallel fetch + synthesis)
-        let swarm_result = self.try_swarm_orchestrator(&search_query);
-
-        // Step 3: Fall back to browser.fetch + research.wide if swarm fails
-        let web_content = match swarm_result {
-            Ok(report) => {
-                let mut content = format!(
-                    "# Web Search Results for: {}\n\n{}\n\nSources used: {}/{}",
-                    report.query, report.summary, report.sources_used, report.sources_total
-                );
-                // Append citations
-                for cite in &report.citations {
-                    if let Some(ref url) = cite.url {
-                        content.push_str(&format!("\n- [{}]({})", cite.title, url));
-                    } else {
-                        content.push_str(&format!("\n- {}", cite.title));
-                    }
-                }
-                content
-            }
-            Err(swarm_err) => {
-                tracing::warn!("SwarmOrchestrator failed: {swarm_err} — trying sync fallback");
-                self.fallback_sync_search(&search_query)
-            }
-        };
-
-        // Step 4: Synthesize with LLM, grounded in web content
-        let context = build_context_summary(prior_results);
-        let system = format!(
-            "You are a thorough research assistant. Objective: {}\nTask: {}\n\n\
-             GROUNDING DATA from web search (cite these sources, do NOT fabricate references):\n{}\n\n\
-             Synthesize findings comprehensively. Cite URLs where possible. Be factual and thorough.",
-            objective_description, task_description, web_content
-        );
-
-        let prompt = if context.is_empty() {
-            format!("Using the web search results above, execute this research task: {}", task_description)
-        } else {
-            format!(
-                "Prior work completed:\n{}\n\n---\n\nUsing the web search results above, execute: {}",
-                context, task_description
-            )
-        };
-
-        let input = serde_json::json!({
-            "system": system,
-            "prompt": prompt,
-            "max_tokens": 16384,
-        });
-
-        match self.registry.execute_ability(
-            self.manifest,
-            "llm.chat",
-            &input.to_string(),
-        ) {
-            Ok(result) => {
-                let output = String::from_utf8_lossy(&result.output).to_string();
-                let cost = parse_cost(&result.facts);
-                TaskResult {
-                    success: true,
-                    output,
-                    artifacts: vec![],
-                    cost_usd: cost,
-                }
-            }
-            Err(e) => TaskResult {
-                success: false,
-                output: format!("Research execution failed: {}", e),
-                artifacts: vec![],
-                cost_usd: 0.0,
-            },
-        }
+        // Swarm route now handled by execute_llm which does web search for all tasks
+        self.execute_llm(task_description, objective_description, prior_results)
     }
 
     // -- Swarm helpers --------------------------------------------------------
