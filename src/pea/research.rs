@@ -301,9 +301,18 @@ impl<'a> ResearchEngine<'a> {
     // -- Phase 2: Multi-Engine Search -----------------------------------------
 
     fn search_all_engines(&self, queries: &[String]) -> Vec<SearchCandidate> {
+        match self.config.search_backend {
+            SearchBackend::ScrapeRotation => self.search_scrape_rotation(queries),
+            SearchBackend::ChromePool => self.search_via_chrome_pool(queries),
+            SearchBackend::BraveApi => self.search_via_brave_api(queries),
+            SearchBackend::SearXng => self.search_via_searxng(queries),
+        }
+    }
+
+    /// Original 4-engine HTML scraping rotation (Bing/DDG/Brave/Google).
+    fn search_scrape_rotation(&self, queries: &[String]) -> Vec<SearchCandidate> {
         type SearchFn = fn(&str) -> std::result::Result<Vec<SearchResult>, String>;
 
-        // 4-engine rotation: Bing (most lenient) → DDG → Brave → Google (most strict)
         let engines: &[(SearchFn, &str)] = &[
             (search_bing, "bing"),
             (search_ddg, "ddg"),
@@ -313,39 +322,25 @@ impl<'a> ResearchEngine<'a> {
 
         let mut candidates = Vec::new();
         let mut seen_urls = HashSet::new();
-        let mut engine_failures: [u32; 4] = [0; 4]; // track consecutive failures per engine
-        const MAX_CONSECUTIVE_FAILURES: u32 = 3; // skip engine after 3 consecutive failures
+        let mut engine_failures: [u32; 4] = [0; 4];
+        const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 
         for (i, query) in queries.iter().enumerate() {
             let mut got_results = false;
 
-            // Try engines in rotation starting from (i % 4), skip engines with too many failures
             for offset in 0..engines.len() {
                 let idx = (i + offset) % engines.len();
                 if engine_failures[idx] >= MAX_CONSECUTIVE_FAILURES {
-                    continue; // this engine is likely blocked, skip it
+                    continue;
                 }
 
                 let (search_fn, engine_name) = engines[idx];
                 match search_fn(query) {
                     Ok(results) if !results.is_empty() => {
-                        engine_failures[idx] = 0; // reset on success
-                        for result in results {
-                            if let Some(ref url) = result.url {
-                                if !seen_urls.insert(url.clone()) {
-                                    continue;
-                                }
-                                candidates.push(SearchCandidate {
-                                    url: url.clone(),
-                                    title: result.title,
-                                    snippet: result.snippet,
-                                    source_engine: engine_name.to_string(),
-                                    relevance_score: None,
-                                });
-                            }
-                        }
+                        engine_failures[idx] = 0;
+                        Self::collect_results(&mut candidates, &mut seen_urls, results, engine_name);
                         got_results = true;
-                        break; // got results, move to next query
+                        break;
                     }
                     _ => {
                         engine_failures[idx] += 1;
@@ -363,12 +358,135 @@ impl<'a> ResearchEngine<'a> {
                 break;
             }
 
-            // Rate limit: 1.5s between queries to spread load
             std::thread::sleep(std::time::Duration::from_millis(1500));
         }
 
         candidates.truncate(self.config.max_candidates);
         candidates
+    }
+
+    /// Search using Brave Search JSON API, fallback to scrape rotation on missing key.
+    fn search_via_brave_api(&self, queries: &[String]) -> Vec<SearchCandidate> {
+        let api_key = match self.config.brave_api_key.as_deref() {
+            Some(k) if !k.is_empty() => k.to_string(),
+            _ => {
+                eprintln!("[research] Brave API key not set, falling back to scrape rotation");
+                return self.search_scrape_rotation(queries);
+            }
+        };
+
+        let mut candidates = Vec::new();
+        let mut seen_urls = HashSet::new();
+
+        for (i, query) in queries.iter().enumerate() {
+            match search_brave_api(query, &api_key) {
+                Ok(results) => {
+                    Self::collect_results(&mut candidates, &mut seen_urls, results, "brave_api");
+                }
+                Err(e) => {
+                    eprintln!("[research] brave_api failed for query {}: {}", i, e);
+                }
+            }
+
+            if candidates.len() >= self.config.max_candidates {
+                break;
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(600));
+        }
+
+        candidates.truncate(self.config.max_candidates);
+        candidates
+    }
+
+    /// Search using self-hosted SearXNG instance.
+    fn search_via_searxng(&self, queries: &[String]) -> Vec<SearchCandidate> {
+        let base_url = self.config.searxng_url.as_deref().unwrap_or("http://localhost:8888");
+
+        let mut candidates = Vec::new();
+        let mut seen_urls = HashSet::new();
+
+        for (i, query) in queries.iter().enumerate() {
+            match search_searxng(query, base_url) {
+                Ok(results) => {
+                    Self::collect_results(&mut candidates, &mut seen_urls, results, "searxng");
+                }
+                Err(e) => {
+                    eprintln!("[research] searxng failed for query {}: {}", i, e);
+                }
+            }
+
+            if candidates.len() >= self.config.max_candidates {
+                break;
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+
+        candidates.truncate(self.config.max_candidates);
+        candidates
+    }
+
+    /// Search using headless Chrome via ChromePool, fallback to scrape after 3 consecutive failures.
+    fn search_via_chrome_pool(&self, queries: &[String]) -> Vec<SearchCandidate> {
+        let mut candidates = Vec::new();
+        let mut seen_urls = HashSet::new();
+        let mut consecutive_failures: u32 = 0;
+
+        for (i, query) in queries.iter().enumerate() {
+            if consecutive_failures >= 3 {
+                eprintln!("[research] ChromePool failed 3x, falling back to scrape rotation for remaining queries");
+                let remaining: Vec<String> = queries[i..].to_vec();
+                let mut fallback = self.search_scrape_rotation(&remaining);
+                // Dedup against already-seen URLs
+                fallback.retain(|c| seen_urls.insert(c.url.clone()));
+                candidates.extend(fallback);
+                break;
+            }
+
+            match search_chrome_pool(query) {
+                Ok(results) => {
+                    consecutive_failures = 0;
+                    Self::collect_results(&mut candidates, &mut seen_urls, results, "chrome_pool");
+                }
+                Err(e) => {
+                    consecutive_failures += 1;
+                    eprintln!("[research] chrome_pool failed for query {}: {}", i, e);
+                }
+            }
+
+            if candidates.len() >= self.config.max_candidates {
+                break;
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+        }
+
+        candidates.truncate(self.config.max_candidates);
+        candidates
+    }
+
+    /// Shared helper: collect search results into candidates, deduplicating by URL.
+    fn collect_results(
+        candidates: &mut Vec<SearchCandidate>,
+        seen_urls: &mut HashSet<String>,
+        results: Vec<SearchResult>,
+        engine_name: &str,
+    ) {
+        for result in results {
+            if let Some(ref url) = result.url {
+                if !seen_urls.insert(url.clone()) {
+                    continue;
+                }
+                candidates.push(SearchCandidate {
+                    url: url.clone(),
+                    title: result.title,
+                    snippet: result.snippet,
+                    source_engine: engine_name.to_string(),
+                    relevance_score: None,
+                });
+            }
+        }
     }
 
     // -- Phase 3: LLM Relevance Scoring ---------------------------------------
