@@ -102,7 +102,10 @@ impl PeaEngine {
             budget_strategy: BudgetStrategy::default(),
             progress_score: 0.0,
             milestones: vec![],
-            heartbeat_interval_secs: 30,
+            heartbeat_interval_secs: std::env::var("NABA_PEA_HEARTBEAT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(15),
             last_tick_at: 0,
         };
         self.store.save_objective(&obj)?;

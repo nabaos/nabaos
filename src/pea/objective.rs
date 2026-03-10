@@ -218,7 +218,7 @@ impl ObjectiveStore {
                 budget_strategy TEXT NOT NULL DEFAULT 'adaptive',
                 progress_score  REAL NOT NULL DEFAULT 0.0,
                 milestones_json TEXT NOT NULL DEFAULT '[]',
-                heartbeat_interval_secs INTEGER NOT NULL DEFAULT 300,
+                heartbeat_interval_secs INTEGER NOT NULL DEFAULT 15,
                 last_tick_at    INTEGER NOT NULL DEFAULT 0
             );
 

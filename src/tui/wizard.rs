@@ -753,7 +753,7 @@ impl WizardState {
             wikipedia_url: String::new(),
             pea_strategy_idx: 0,
             pea_budget_input: "50.00".into(),
-            pea_heartbeat_input: "300".into(),
+            pea_heartbeat_input: "15".into(),
             pea_backend_idx: 0,
             pea_api_key_input: String::new(),
             pea_searxng_url_input: "http://localhost:8888".into(),
@@ -937,7 +937,7 @@ impl WizardState {
         let pea_budget_strategy = PEA_STRATEGIES.get(self.pea_strategy_idx)
             .map(|(id, _)| id.to_string())
             .unwrap_or_else(|| "adaptive".to_string());
-        let pea_heartbeat_secs = self.pea_heartbeat_input.parse::<u64>().unwrap_or(300);
+        let pea_heartbeat_secs = self.pea_heartbeat_input.parse::<u64>().unwrap_or(15);
         let pea_search_backend = PEA_SEARCH_BACKENDS.get(self.pea_backend_idx)
             .map(|(id, _, _)| id.to_string())
             .unwrap_or_else(|| "scrape_rotation".to_string());
