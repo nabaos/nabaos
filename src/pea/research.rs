@@ -585,24 +585,15 @@ pub(crate) fn search_brave(query: &str) -> Result<Vec<SearchResult>, String> {
     }
 }
 
-/// Search via DuckDuckGo HTML.
-pub(crate) fn search_ddg(query: &str) -> Result<Vec<SearchResult>, String> {
+/// Parse DDG search results from raw HTML.
+pub(crate) fn search_ddg_from_html(html: &str) -> Result<Vec<SearchResult>, String> {
     use scraper::{Html, Selector};
-
-    let client = http_client()?;
-    let url = format!(
-        "https://html.duckduckgo.com/html/?q={}",
-        urlencoding::encode(query)
-    );
-
-    let resp = client.get(&url).send().map_err(|e| format!("DDG fetch: {}", e))?;
-    let html = resp.text().map_err(|e| format!("DDG body: {}", e))?;
 
     if html.contains("anomaly-modal") || html.contains("bot detection") {
         return Err("DDG returned CAPTCHA".into());
     }
 
-    let doc = Html::parse_document(&html);
+    let doc = Html::parse_document(html);
     let result_sel = Selector::parse(".result").map_err(|e| format!("{:?}", e))?;
     let title_sel = Selector::parse(".result__a").map_err(|e| format!("{:?}", e))?;
     let snippet_sel = Selector::parse(".result__snippet").map_err(|e| format!("{:?}", e))?;
@@ -643,6 +634,96 @@ pub(crate) fn search_ddg(query: &str) -> Result<Vec<SearchResult>, String> {
     } else {
         Ok(results)
     }
+}
+
+/// Search via DuckDuckGo HTML.
+pub(crate) fn search_ddg(query: &str) -> Result<Vec<SearchResult>, String> {
+    let client = http_client()?;
+    let url = format!(
+        "https://html.duckduckgo.com/html/?q={}",
+        urlencoding::encode(query)
+    );
+
+    let resp = client.get(&url).send().map_err(|e| format!("DDG fetch: {}", e))?;
+    let html = resp.text().map_err(|e| format!("DDG body: {}", e))?;
+    search_ddg_from_html(&html)
+}
+
+/// Run an async future from a sync context using the existing tokio runtime or a new one.
+fn run_async_in_sync<F, T>(future: F) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, String>> + Send + 'static,
+    T: Send + 'static,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(future)),
+        Err(_) => {
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("Failed to create runtime: {}", e))?;
+            rt.block_on(future)
+        }
+    }
+}
+
+/// Search via headless Chrome (ChromePool) — avoids bot detection by using a real browser.
+pub(crate) fn search_chrome_pool(query: &str) -> Result<Vec<SearchResult>, String> {
+    use crate::browser::chrome_pool::{ChromePool, TabHandle};
+    use crate::modules::browser::{BrowserConfig, CdpTarget, CdpTransport};
+
+    let search_url = format!(
+        "https://html.duckduckgo.com/html/?q={}",
+        urlencoding::encode(query)
+    );
+
+    run_async_in_sync(async move {
+        // Discover targets from the local Chrome DevTools endpoint
+        let targets = CdpTransport::discover_targets("127.0.0.1", 9222)
+            .await
+            .map_err(|e| format!("ChromePool: cannot discover targets at 127.0.0.1:9222 — is headless Chrome running? {}", e))?;
+
+        if targets.is_empty() {
+            return Err("ChromePool: no Chrome targets available".into());
+        }
+
+        // Create a pool and populate it
+        let pool = ChromePool::new(targets.len(), BrowserConfig::default());
+        pool.populate_from_targets(targets).await;
+
+        // Checkout a tab
+        let tab = pool.checkout().await
+            .map_err(|e| format!("ChromePool checkout: {}", e))?;
+
+        // Navigate to search URL
+        tab.transport
+            .send_command("Page.navigate", serde_json::json!({"url": search_url}))
+            .await
+            .map_err(|e| format!("ChromePool navigate: {}", e))?;
+
+        // Wait for page to load
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // Extract page HTML
+        let result = tab.transport
+            .send_command(
+                "Runtime.evaluate",
+                serde_json::json!({"expression": "document.documentElement.outerHTML"}),
+            )
+            .await
+            .map_err(|e| format!("ChromePool evaluate: {}", e))?;
+
+        let html = result
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        // Return tab to pool
+        pool.return_tab(tab).await;
+
+        // Reuse DDG HTML parser
+        search_ddg_from_html(&html)
+    })
 }
 
 /// Search via Bing HTML (most lenient for datacenter IPs, ~20-30 queries/hr).
