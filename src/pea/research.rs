@@ -259,54 +259,54 @@ impl<'a> ResearchEngine<'a> {
     // -- Phase 2: Multi-Engine Search -----------------------------------------
 
     fn search_all_engines(&self, queries: &[String]) -> Vec<SearchCandidate> {
-        let candidates = std::sync::Mutex::new(Vec::new());
-        let seen_urls = std::sync::Mutex::new(HashSet::new());
+        let mut candidates = Vec::new();
+        let mut seen_urls = HashSet::new();
 
-        // Process in batches of 5 to avoid rate limiting
-        for batch in queries.chunks(5) {
-            std::thread::scope(|s| {
-                for query in batch {
-                    let candidates = &candidates;
-                    let seen_urls = &seen_urls;
-                    s.spawn(move || {
-                        // Try Brave first, then DDG
-                        let results = search_brave(query)
-                            .unwrap_or_default();
-                        let ddg_results = search_ddg(query)
-                            .unwrap_or_default();
+        // Run queries sequentially to avoid rate limiting.
+        // Alternate between Brave and DDG to spread load.
+        for (i, query) in queries.iter().enumerate() {
+            // Alternate: even queries → DDG first, odd → Brave first
+            let (primary, secondary): (
+                fn(&str) -> std::result::Result<Vec<SearchResult>, String>,
+                fn(&str) -> std::result::Result<Vec<SearchResult>, String>,
+            ) = if i % 2 == 0 {
+                (search_ddg, search_brave)
+            } else {
+                (search_brave, search_ddg)
+            };
 
-                        let all_results = results.into_iter().chain(ddg_results);
+            let results = primary(query)
+                .or_else(|_| {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    secondary(query)
+                })
+                .unwrap_or_default();
 
-                        for result in all_results {
-                            if let Some(ref url) = result.url {
-                                let mut seen = seen_urls.lock().unwrap();
-                                if !seen.insert(url.clone()) {
-                                    continue; // duplicate URL
-                                }
-                                drop(seen);
-
-                                let engine = if url.contains("brave") { "brave" } else { "ddg" };
-                                let mut cands = candidates.lock().unwrap();
-                                cands.push(SearchCandidate {
-                                    url: url.clone(),
-                                    title: result.title,
-                                    snippet: result.snippet,
-                                    source_engine: engine.to_string(),
-                                    relevance_score: None,
-                                });
-                            }
-                        }
+            for result in results {
+                if let Some(ref url) = result.url {
+                    if !seen_urls.insert(url.clone()) {
+                        continue;
+                    }
+                    candidates.push(SearchCandidate {
+                        url: url.clone(),
+                        title: result.title,
+                        snippet: result.snippet,
+                        source_engine: "web".to_string(),
+                        relevance_score: None,
                     });
                 }
-            });
+            }
 
-            // Small delay between batches to avoid rate limiting
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            if candidates.len() >= self.config.max_candidates {
+                break;
+            }
+
+            // Rate limit: 1.5s between queries
+            std::thread::sleep(std::time::Duration::from_millis(1500));
         }
 
-        let mut result = candidates.into_inner().unwrap();
-        result.truncate(self.config.max_candidates);
-        result
+        candidates.truncate(self.config.max_candidates);
+        candidates
     }
 
     // -- Phase 3: LLM Relevance Scoring ---------------------------------------
