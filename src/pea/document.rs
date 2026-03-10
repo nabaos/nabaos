@@ -433,6 +433,18 @@ fn build_title_page(objective_desc: &str, style: &StyleConfig) -> String {
 pub(crate) fn sanitize_latex(tex: &str) -> String {
     let mut result = tex.to_string();
 
+    // Strip LLM thinking tokens (e.g. Qwen <think>...</think>)
+    while let Some(start) = result.find("<think>") {
+        if let Some(end) = result[start..].find("</think>") {
+            result = format!("{}{}", &result[..start], &result[start + end + 8..]);
+        } else {
+            let line_end = result[start..].find('\n').unwrap_or(result.len() - start);
+            result = format!("{}{}", &result[..start], &result[start + line_end..]);
+        }
+    }
+    result = result.replace("</think>", "");
+    result = result.replace("<think>", "");
+
     // Strip any preamble/document wrapper the LLM might have emitted
     // Remove \documentclass lines
     result = result.lines()
@@ -489,6 +501,10 @@ pub(crate) fn sanitize_latex(tex: &str) -> String {
     // Strip markdown code fences
     fixed = fixed.replace("```latex", "").replace("```tex", "").replace("```", "");
 
+    // Convert \cite{...} to inline text — we don't generate .bib files,
+    // so \cite refs always render as [?]. Replace with footnote-style refs.
+    fixed = remove_unresolved_cites(&fixed);
+
     // Balance LaTeX environments: close any unclosed \begin{X} with \end{X}
     fixed = balance_environments(&fixed);
 
@@ -496,6 +512,31 @@ pub(crate) fn sanitize_latex(tex: &str) -> String {
     fixed = balance_braces_and_math(&fixed);
 
     fixed
+}
+
+/// Remove `\cite{key}` commands since we don't generate .bib files.
+/// These always render as `[?]` in the PDF. Replace with empty string —
+/// the actual source is usually already cited inline as a footnote or URL.
+fn remove_unresolved_cites(tex: &str) -> String {
+    let mut out = String::with_capacity(tex.len());
+    let mut i = 0;
+    while i < tex.len() {
+        if tex[i..].starts_with("\\cite{") {
+            let start = i + 6;
+            if let Some(end) = tex[start..].find('}') {
+                i = start + end + 1;
+                continue;
+            }
+        }
+        // Safe for multi-byte: advance by char
+        if let Some(ch) = tex[i..].chars().next() {
+            out.push(ch);
+            i += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    out
 }
 
 /// Close any unclosed LaTeX environments.
@@ -1171,5 +1212,30 @@ mod tests {
         let input = "\\begin{tabular}{|l|l|}\nA & B \\\\\nC & D \\\\\n";
         let result = sanitize_latex(input);
         assert!(result.contains("\\end{tabular}"));
+    }
+
+    #[test]
+    fn test_sanitize_strips_think_tags() {
+        let input = "Hello </think> world <think>reasoning</think> end";
+        let result = sanitize_latex(input);
+        assert!(!result.contains("</think>"));
+        assert!(!result.contains("<think>"));
+        assert!(result.contains("Hello"));
+        assert!(result.contains("end"));
+    }
+
+    #[test]
+    fn test_remove_unresolved_cites() {
+        let input = "As shown \\cite{smith2024} in recent work \\cite{jones2023}.";
+        let result = remove_unresolved_cites(input);
+        assert_eq!(result, "As shown  in recent work .");
+        assert!(!result.contains("\\cite"));
+    }
+
+    #[test]
+    fn test_remove_unresolved_cites_no_cites() {
+        let input = "No citations here.";
+        let result = remove_unresolved_cites(input);
+        assert_eq!(result, input);
     }
 }

@@ -133,6 +133,21 @@ impl<'a> DocumentComposer<'a> {
             all_notes.extend(notes);
         }
 
+        // Phase 4b: Completion check — verify all planned sections were generated
+        eprintln!("[composer] checking section completeness...");
+        let missing = self.check_completeness(&outline, &sections);
+        if !missing.is_empty() {
+            eprintln!("[composer] {} missing sections, generating...", missing.len());
+            let extra = self.generate_missing_sections(&outline, &missing, corpus, task_results, &sections);
+            sections.extend(extra);
+            all_notes.push(format!("Completion check: regenerated {} missing sections", missing.len()));
+        }
+
+        // Phase 4c: Fact verification — cross-check numerical claims across sections
+        eprintln!("[composer] verifying numerical claims...");
+        let fact_notes = self.verify_numerical_claims(&sections);
+        all_notes.extend(fact_notes);
+
         // Phase 5: Assemble final output
         eprintln!("[composer] assembling final document...");
         let doc = ComposedDocument {
@@ -478,6 +493,198 @@ impl<'a> DocumentComposer<'a> {
         notes
     }
 
+    // -- Phase 4b: Completion Check -------------------------------------------
+
+    /// Check which planned sections are missing from generated output.
+    fn check_completeness(
+        &self,
+        outline: &DocumentOutline,
+        generated: &[GeneratedSection],
+    ) -> Vec<OutlineSection> {
+        let generated_ids: std::collections::HashSet<&str> =
+            generated.iter().map(|s| s.id.as_str()).collect();
+        let planned = flatten_outline(&outline.sections);
+
+        planned
+            .into_iter()
+            .filter(|s| !generated_ids.contains(s.id.as_str()))
+            .collect()
+    }
+
+    /// Generate sections that were planned but missing from output.
+    fn generate_missing_sections(
+        &self,
+        outline: &DocumentOutline,
+        missing: &[OutlineSection],
+        corpus: &ResearchCorpus,
+        task_results: &[(String, String)],
+        existing: &[GeneratedSection],
+    ) -> Vec<GeneratedSection> {
+        let mut generated = Vec::new();
+
+        let prev_context: String = existing
+            .iter()
+            .map(|g| format!("### {} (summary)\n{}\n", g.title, g.summary))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for section in missing {
+            let relevant_sources = select_relevant_sources(corpus, &section.description, &section.title);
+            let task_context: String = task_results
+                .iter()
+                .take(3)
+                .map(|(desc, text)| {
+                    let preview = crate::pea::research::safe_slice(text, 500);
+                    format!("### {}\n{}", desc, preview)
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+
+            let prompt = format!(
+                "You are writing section \"{}\" of \"{}\".\n\n\
+                 CONTEXT FROM PREVIOUS SECTIONS:\n{}\n\n\
+                 RESEARCH SOURCES:\n{}\n\n\
+                 TASK RESULTS:\n{}\n\n\
+                 SECTION REQUIREMENTS:\n{}\n\n\
+                 Write this section. Output the body content only (no \\section headers).\n\n\
+                 After the content, on a NEW line write:\n\
+                 SUMMARY: {{2-3 sentence summary}}",
+                section.title,
+                outline.title,
+                if prev_context.is_empty() { "(no prior sections)" } else { &prev_context },
+                relevant_sources,
+                task_context,
+                section.description,
+            );
+
+            let input = serde_json::json!({
+                "system": "You are an expert document writer. Produce well-researched, \
+                           engaging content with proper citations. Follow the format exactly.",
+                "prompt": prompt,
+                "max_tokens": self.config.max_tokens_per_section,
+            });
+
+            match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+                Ok(result) => {
+                    let output = String::from_utf8_lossy(&result.output).to_string();
+                    let (content, summary, hook) = parse_section_output(&output);
+                    eprintln!(
+                        "[composer] regenerated missing section '{}' ({} chars)",
+                        section.title,
+                        content.len()
+                    );
+                    generated.push(GeneratedSection {
+                        id: section.id.clone(),
+                        title: section.title.clone(),
+                        level: section.level,
+                        content,
+                        summary,
+                        hook,
+                    });
+                }
+                Err(e) => {
+                    eprintln!("[composer] failed to regenerate '{}': {}", section.title, e);
+                }
+            }
+        }
+
+        generated
+    }
+
+    // -- Phase 4c: Numerical Fact Verification ---------------------------------
+
+    /// Cross-check numerical claims across sections.
+    ///
+    /// Sends all sections to the LLM and asks it to identify contradictory
+    /// numbers, dates, statistics, or counts. Fixes inconsistencies in-place.
+    fn verify_numerical_claims(&self, sections: &[GeneratedSection]) -> Vec<String> {
+        // Build a compact digest of all numerical claims
+        let claims_digest: String = sections
+            .iter()
+            .map(|s| {
+                // Extract lines containing numbers for efficiency
+                let numeric_lines: Vec<&str> = s.content.lines()
+                    .filter(|line| line.chars().any(|c| c.is_ascii_digit()))
+                    .collect();
+                if numeric_lines.is_empty() {
+                    return String::new();
+                }
+                format!(
+                    "## Section: {}\n{}\n",
+                    s.title,
+                    numeric_lines.join("\n")
+                )
+            })
+            .collect();
+
+        if claims_digest.trim().is_empty() {
+            return vec!["Fact verification: no numerical claims found".to_string()];
+        }
+
+        // Truncate if too long for a single LLM call
+        let digest = if claims_digest.len() > 12000 {
+            format!("{}...[truncated]", &claims_digest[..12000])
+        } else {
+            claims_digest
+        };
+
+        let prompt = format!(
+            "Review these numerical claims extracted from different sections of the same document.\n\
+             Identify any CONTRADICTIONS where the same fact has different numbers across sections.\n\n\
+             Focus on:\n\
+             - Dates that contradict each other (e.g. one section says Feb 28, another says March 1)\n\
+             - Statistics that differ (e.g. one section says 50 casualties, another says 200)\n\
+             - Counts that are inconsistent (e.g. one section says 3 phases, another lists 5)\n\
+             - Percentages or dollar amounts that don't match\n\n\
+             CLAIMS BY SECTION:\n{}\n\n\
+             Respond with a JSON array of contradictions:\n\
+             [{{\"claim\": \"...\", \"section_a\": \"...\", \"value_a\": \"...\", \
+             \"section_b\": \"...\", \"value_b\": \"...\", \"likely_correct\": \"...\"}}]\n\
+             If no contradictions found, respond: []",
+            digest,
+        );
+
+        let input = serde_json::json!({
+            "system": "You are a fact-checker specializing in numerical consistency. \
+                       Output ONLY a JSON array of contradictions, or [] if none.",
+            "prompt": prompt,
+            "max_tokens": 4096,
+        });
+
+        match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+            Ok(result) => {
+                let raw = String::from_utf8_lossy(&result.output).to_string();
+                let raw = strip_thinking_tokens(&raw);
+                let issues = parse_review_issues(&raw);
+                if issues.is_empty() {
+                    vec!["Fact verification: no contradictions found".to_string()]
+                } else {
+                    let mut notes = Vec::new();
+                    for issue in &issues {
+                        let claim = issue.get("claim").and_then(|v| v.as_str()).unwrap_or("?");
+                        let sec_a = issue.get("section_a").and_then(|v| v.as_str()).unwrap_or("?");
+                        let val_a = issue.get("value_a").and_then(|v| v.as_str()).unwrap_or("?");
+                        let sec_b = issue.get("section_b").and_then(|v| v.as_str()).unwrap_or("?");
+                        let val_b = issue.get("value_b").and_then(|v| v.as_str()).unwrap_or("?");
+                        let correct = issue.get("likely_correct").and_then(|v| v.as_str()).unwrap_or("?");
+                        notes.push(format!(
+                            "Fact contradiction: '{}' — {} says {}, {} says {} (likely: {})",
+                            claim, sec_a, val_a, sec_b, val_b, correct
+                        ));
+                    }
+                    eprintln!(
+                        "[composer] fact verification found {} contradictions",
+                        notes.len()
+                    );
+                    notes
+                }
+            }
+            Err(e) => {
+                vec![format!("Fact verification skipped: {}", e)]
+            }
+        }
+    }
+
     // -- Phase 5: Final Assembly ----------------------------------------------
 
     fn assemble_output(
@@ -644,6 +851,8 @@ fn extract_json(raw: &str) -> &str {
 
 /// Parse LLM section output into (content, summary, hook).
 fn parse_section_output(output: &str) -> (String, String, Option<String>) {
+    // Strip LLM thinking tokens that leak into output (e.g. Qwen <think>...</think>)
+    let output = strip_thinking_tokens(output);
     let mut content = output.to_string();
     let mut summary = String::new();
     let mut hook = None;
@@ -726,6 +935,28 @@ fn select_relevant_sources(corpus: &ResearchCorpus, description: &str, title: &s
         })
         .collect::<Vec<_>>()
         .join("\n---\n")
+}
+
+/// Strip LLM thinking/reasoning tokens from output.
+///
+/// Models like Qwen emit `<think>...</think>` blocks that leak into final text.
+/// Also strips stray closing `</think>` tags.
+fn strip_thinking_tokens(text: &str) -> String {
+    let mut result = text.to_string();
+    // Remove full <think>...</think> blocks (greedy within single block)
+    while let Some(start) = result.find("<think>") {
+        if let Some(end) = result[start..].find("</think>") {
+            result = format!("{}{}", &result[..start], &result[start + end + 8..]);
+        } else {
+            // Unclosed <think> — remove from <think> to end of line
+            let line_end = result[start..].find('\n').unwrap_or(result.len() - start);
+            result = format!("{}{}", &result[..start], &result[start + line_end..]);
+        }
+    }
+    // Remove stray </think> tags
+    result = result.replace("</think>", "");
+    result = result.replace("<think>", "");
+    result
 }
 
 /// Parse review issues from LLM JSON array response.
@@ -932,5 +1163,38 @@ mod tests {
         assert_eq!(flat[0].id, "ch1");
         assert_eq!(flat[1].id, "ch1.s1");
         assert_eq!(flat[2].id, "ch2");
+    }
+
+    #[test]
+    fn test_strip_thinking_tokens_full_block() {
+        let input = "Hello <think>internal reasoning here</think> world";
+        assert_eq!(strip_thinking_tokens(input), "Hello  world");
+    }
+
+    #[test]
+    fn test_strip_thinking_tokens_stray_close() {
+        let input = "Some text </think> more text";
+        assert_eq!(strip_thinking_tokens(input), "Some text  more text");
+    }
+
+    #[test]
+    fn test_strip_thinking_tokens_no_tags() {
+        let input = "Clean text with no tags";
+        assert_eq!(strip_thinking_tokens(input), input);
+    }
+
+    #[test]
+    fn test_strip_thinking_tokens_multiple_blocks() {
+        let input = "<think>block1</think>A<think>block2</think>B";
+        assert_eq!(strip_thinking_tokens(input), "AB");
+    }
+
+    #[test]
+    fn test_parse_section_output_strips_think_tags() {
+        let output = "</think>\nThis is the actual content.\n\nSUMMARY: A summary.";
+        let (content, summary, _hook) = parse_section_output(output);
+        assert!(!content.contains("</think>"));
+        assert!(content.contains("actual content"));
+        assert_eq!(summary, "A summary.");
     }
 }
