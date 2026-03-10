@@ -73,7 +73,7 @@ pub enum SettingsAction {
 
 // ── Section constants ───────────────────────────────────────────────────────
 
-const SECTIONS: &[&str] = &["Provider", "Constitution", "Budget", "Channels", "System"];
+const SECTIONS: &[&str] = &["Provider", "Constitution", "Budget", "Channels", "API Keys", "System"];
 
 fn section_color(section: &str) -> Color {
     match section {
@@ -81,6 +81,7 @@ fn section_color(section: &str) -> Color {
         "Constitution" => Color::Magenta,
         "Budget" => Color::Yellow,
         "Channels" => Color::Green,
+        "API Keys" => Color::Rgb(255, 175, 95),
         "System" => Color::Rgb(100, 100, 120),
         _ => Color::DarkGray,
     }

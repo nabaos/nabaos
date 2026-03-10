@@ -271,6 +271,26 @@ pub fn handle_message(orch: &mut Orchestrator, text: &str, chat_id: i64) -> Stri
                 }
             }
             "/browser" => handle_browser_command(&parts),
+            "/outputs" => handle_outputs_command(orch),
+            "/env" => handle_env_command(&orch.config().data_dir),
+            cmd if cmd.starts_with("/env ") => {
+                if cmd.starts_with("/env set ") {
+                    handle_env_set_command(&orch.config().data_dir, text)
+                } else if cmd == "/env list" {
+                    handle_env_command(&orch.config().data_dir)
+                } else {
+                    handle_env_command(&orch.config().data_dir)
+                }
+            }
+            cmd if cmd.starts_with("/output_") => {
+                let id_prefix = &cmd[8..]; // strip "/output_"
+                match handle_output_by_id(orch, id_prefix) {
+                    OutputFileResponse::Text(t) => t,
+                    OutputFileResponse::File(path) => {
+                        format!("File ready: {}\n(Use the web UI or /output_{} in rich mode to download)", path, id_prefix)
+                    }
+                }
+            }
             _ => {
                 // Everything else goes through the LLM — natural language routing
                 handle_query(orch, text, chat_id)
@@ -527,6 +547,8 @@ pub fn handle_permissions_command(orch: &Orchestrator, text: &str) -> String {
                 domains: vec![],
                 send_domains: vec![],
                 servers: vec![],
+                rate_limit_per_minute: None,
+                cost_budget_usd: None,
             };
 
             let data_dir = std::env::var("NABA_DATA_DIR")
@@ -1485,6 +1507,181 @@ fn handle_resource_command(orch: &Orchestrator, parts: &[&str]) -> String {
 }
 
 /// Handle /browser commands: /browser, /browser sessions, /browser captcha
+// ---------------------------------------------------------------------------
+// /env commands — API key management
+// ---------------------------------------------------------------------------
+
+fn handle_env_command(data_dir: &std::path::Path) -> String {
+    let env_path = data_dir.join(".env");
+    let env_content = std::fs::read_to_string(&env_path).unwrap_or_default();
+
+    let managed_keys: &[(&str, &str)] = &[
+        ("NABA_LLM_API_KEY", "LLM provider"),
+        ("NABA_LLM_PROVIDER", "LLM provider name"),
+        ("NABA_UNSPLASH_KEY", "Unsplash images"),
+        ("NABA_PEXELS_KEY", "Pexels images"),
+        ("NABA_FAL_API_KEY", "FAL AI generation"),
+        ("NABA_TELEGRAM_TOKEN", "Telegram bot"),
+    ];
+
+    let mut lines = vec!["API Keys Status:".to_string(), String::new()];
+    for (name, desc) in managed_keys {
+        let prefix = format!("{}=", name);
+        let is_set = env_content
+            .lines()
+            .any(|l| l.starts_with(&prefix) && l.len() > prefix.len());
+        let icon = if is_set { "+" } else { "-" };
+        lines.push(format!("[{}] {} ({})", icon, name, desc));
+    }
+    lines.push(String::new());
+    lines.push("Use: /env set KEY value".to_string());
+    lines.join("\n")
+}
+
+fn handle_env_set_command(data_dir: &std::path::Path, msg: &str) -> String {
+    let parts: Vec<&str> = msg.splitn(4, ' ').collect();
+    if parts.len() < 4 {
+        return "Usage: /env set KEY value".to_string();
+    }
+    let key_name = parts[2];
+    let value = parts[3];
+
+    let managed_keys = [
+        "NABA_LLM_API_KEY", "NABA_LLM_PROVIDER", "NABA_LLM_MODEL",
+        "NABA_UNSPLASH_KEY", "NABA_PEXELS_KEY", "NABA_FAL_API_KEY",
+        "NABA_TELEGRAM_TOKEN", "NABA_TELEGRAM_CHAT_ID",
+        "NABA_SMTP_SERVER", "NABA_SMTP_USERNAME", "NABA_SMTP_PASSWORD",
+    ];
+
+    if !managed_keys.contains(&key_name) {
+        return format!("Unknown key: {}. Use /env to see available keys.", key_name);
+    }
+
+    let env_path = data_dir.join(".env");
+    let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let mut found = false;
+    let prefix = format!("{}=", key_name);
+    let mut lines: Vec<String> = existing
+        .lines()
+        .map(|line| {
+            if line.starts_with(&prefix) {
+                found = true;
+                format!("{}={}", key_name, value)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+
+    if !found {
+        lines.push(format!("{}={}", key_name, value));
+    }
+
+    match std::fs::write(&env_path, lines.join("\n")) {
+        Ok(()) => format!("{} updated successfully.", key_name),
+        Err(e) => format!("Failed to save: {}", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// /outputs and /output_<id> commands
+// ---------------------------------------------------------------------------
+
+fn handle_outputs_command(orch: &mut Orchestrator) -> String {
+    use crate::pea::output_store::OutputStore;
+    let data_dir = &orch.config().data_dir;
+    let db_path = data_dir.join("outputs.db");
+    let store = match OutputStore::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => return format!("Error opening output store: {}", e),
+    };
+    let records = match store.list(None, 10, 0) {
+        Ok(r) => r,
+        Err(e) => return format!("Error listing outputs: {}", e),
+    };
+    if records.is_empty() {
+        return "No outputs yet. Complete a PEA objective to generate outputs.".to_string();
+    }
+    let mut msg = String::from("Recent Outputs:\n\n");
+    for rec in &records {
+        let short_id = if rec.id.len() > 12 {
+            &rec.id[..12]
+        } else {
+            &rec.id
+        };
+        let ts = chrono_fmt(rec.created_at);
+        msg.push_str(&format!(
+            "  {} [{}] {}\n  /output_{}\n\n",
+            rec.source_type, ts, rec.title, short_id,
+        ));
+    }
+    msg
+}
+
+fn handle_output_by_id(orch: &mut Orchestrator, id_prefix: &str) -> OutputFileResponse {
+    use crate::pea::output_store::OutputStore;
+    let data_dir = &orch.config().data_dir;
+    let db_path = data_dir.join("outputs.db");
+    let store = match OutputStore::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => return OutputFileResponse::Text(format!("Error: {}", e)),
+    };
+    // Find the record matching the prefix
+    let records = match store.list(None, 100, 0) {
+        Ok(r) => r,
+        Err(e) => return OutputFileResponse::Text(format!("Error: {}", e)),
+    };
+    let matched = records.iter().find(|r| r.id.starts_with(id_prefix));
+    match matched {
+        Some(rec) => match &rec.file_path {
+            Some(path) => OutputFileResponse::File(path.clone()),
+            None => OutputFileResponse::Text(format!("Output '{}' has no file.", rec.title)),
+        },
+        None => OutputFileResponse::Text(format!("No output found matching '{}'.", id_prefix)),
+    }
+}
+
+/// Drain unsent PEA notifications and return file paths to send.
+pub fn drain_pea_notifications(data_dir: &std::path::Path) -> Vec<(String, String)> {
+    use crate::pea::output_store::OutputStore;
+    let db_path = data_dir.join("outputs.db");
+    let store = match OutputStore::open(&db_path) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let output_ids = match store.drain_unsent_notifications() {
+        Ok(ids) => ids,
+        Err(_) => return Vec::new(),
+    };
+    let mut results = Vec::new();
+    for oid in output_ids {
+        if let Ok(Some(rec)) = store.get(&oid) {
+            if let Some(path) = rec.file_path {
+                results.push((rec.title, path));
+            }
+        }
+    }
+    results
+}
+
+/// Simple timestamp formatter (no chrono dependency — reuse existing pattern).
+fn chrono_fmt(epoch_secs: u64) -> String {
+    // Return YYYY-MM-DD style from epoch seconds
+    let secs_per_day: u64 = 86400;
+    let days = epoch_secs / secs_per_day;
+    // Approximate date from epoch (good enough for display)
+    let y = 1970 + (days / 365);
+    let remaining = days % 365;
+    let m = remaining / 30 + 1;
+    let d = remaining % 30 + 1;
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+enum OutputFileResponse {
+    Text(String),
+    File(String),
+}
+
 fn handle_browser_command(parts: &[&str]) -> String {
     let sub = parts.get(1).copied().unwrap_or("");
     match sub {
@@ -1702,6 +1899,25 @@ pub fn handle_message_rich(orch: &mut Orchestrator, text: &str, chat_id: i64) ->
             "/memory" => TelegramResponse::text(handle_memory_command(orch, &parts)),
             "/costs" => handle_costs_dashboard_rich(orch),
             "/browser" => TelegramResponse::text(handle_browser_command(&parts)),
+            "/outputs" => TelegramResponse::text(handle_outputs_command(orch)),
+            "/env" => TelegramResponse::text(handle_env_command(&orch.config().data_dir)),
+            cmd if cmd.starts_with("/env ") => {
+                if cmd.starts_with("/env set ") {
+                    TelegramResponse::text(handle_env_set_command(&orch.config().data_dir, text))
+                } else {
+                    TelegramResponse::text(handle_env_command(&orch.config().data_dir))
+                }
+            }
+            cmd if cmd.starts_with("/output_") => {
+                let id_prefix = &cmd[8..];
+                match handle_output_by_id(orch, id_prefix) {
+                    OutputFileResponse::Text(t) => TelegramResponse::text(t),
+                    OutputFileResponse::File(path) => {
+                        // In rich mode, we signal the file path for the bot loop to send_document
+                        TelegramResponse::text(format!("SEND_FILE:{}", path))
+                    }
+                }
+            }
             _ => {
                 // Everything else goes through the LLM — natural language routing
                 handle_query_rich(orch, text, chat_id)
@@ -2247,6 +2463,7 @@ pub async fn run_bot(config: NyayaConfig) -> Result<()> {
         )
     })?;
 
+    let notify_data_dir = config.data_dir.clone();
     let orch = Arc::new(Mutex::new(Orchestrator::new(config)?));
     let two_fa = Arc::new(TwoFactorAuth::from_env());
 
@@ -2307,6 +2524,43 @@ pub async fn run_bot(config: NyayaConfig) -> Result<()> {
                     .send_message(teloxide::types::ChatId(msg.chat_id), &text)
                     .reply_markup(markup)
                     .await;
+            }
+        });
+    }
+
+    // Spawn periodic PEA notification drainer — sends completed documents to chat
+    {
+        let bot_notify = bot.clone();
+        let data_dir = notify_data_dir.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                let notifications = drain_pea_notifications(&data_dir);
+                for (title, path) in notifications {
+                    // Try to send to all allowed chats
+                    let chat_ids = std::env::var("NABA_ALLOWED_CHAT_IDS")
+                        .unwrap_or_default();
+                    for id_str in chat_ids.split(',') {
+                        if let Ok(cid) = id_str.trim().parse::<i64>() {
+                            let file_path = std::path::PathBuf::from(&path);
+                            if file_path.exists() {
+                                let caption = format!("PEA completed: {}", title);
+                                let input_file = teloxide::types::InputFile::file(&file_path);
+                                let _ = bot_notify
+                                    .send_document(teloxide::types::ChatId(cid), input_file)
+                                    .caption(&caption)
+                                    .await;
+                            } else {
+                                let _ = bot_notify
+                                    .send_message(
+                                        teloxide::types::ChatId(cid),
+                                        format!("PEA completed: {} (file: {})", title, path),
+                                    )
+                                    .await;
+                            }
+                        }
+                    }
+                }
             }
         });
     }
@@ -2377,6 +2631,20 @@ pub async fn run_bot(config: NyayaConfig) -> Result<()> {
                         }
                     }
                 };
+
+                // Handle file send responses from /output_<id> command
+                if response.text.starts_with("SEND_FILE:") {
+                    let file_path = &response.text[10..];
+                    let path = std::path::PathBuf::from(file_path);
+                    if path.exists() {
+                        let input_file = teloxide::types::InputFile::file(&path);
+                        bot.send_document(msg.chat.id, input_file).await?;
+                    } else {
+                        bot.send_message(msg.chat.id, format!("File not found: {}", file_path))
+                            .await?;
+                    }
+                    return respond(());
+                }
 
                 let truncated = truncate_response(&response.text);
 

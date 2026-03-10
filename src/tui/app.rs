@@ -628,6 +628,23 @@ impl App {
             });
         }
 
+        // API Keys section
+        for &(key_name, desc) in &[
+            ("NABA_UNSPLASH_KEY", "Unsplash image search"),
+            ("NABA_PEXELS_KEY", "Pexels image search"),
+            ("NABA_FAL_API_KEY", "FAL AI image generation"),
+        ] {
+            let is_set = std::env::var(key_name).map(|v| !v.is_empty()).unwrap_or(false);
+            entries.push(ConfigEntry {
+                key: desc.to_string(),
+                value: if is_set { "[SET]".to_string() } else { "[NOT SET]".to_string() },
+                section: "API Keys".to_string(),
+                editable: true,
+                is_secret: true,
+                env_key: Some(key_name.to_string()),
+            });
+        }
+
         // System section
         entries.push(ConfigEntry {
             key: "Data Directory".into(),
@@ -688,6 +705,11 @@ impl App {
                             .map(|(k, &v)| (k.clone(), v))
                             .collect();
 
+                        let output_id = obj
+                            .beliefs
+                            .get("output_id")
+                            .and_then(|v| v.as_str().map(|s| s.to_string()));
+
                         ObjectiveSummary {
                             id: obj.id,
                             description: obj.description,
@@ -702,6 +724,7 @@ impl App {
                             budget_strategy: format!("{:?}", obj.budget_strategy),
                             beliefs,
                             created_at: obj.created_at,
+                            output_id,
                         }
                     })
                     .collect();
@@ -1643,6 +1666,12 @@ impl App {
                 PeaAction::LoadTasks { objective_id } => {
                     self.do_load_tasks(&objective_id);
                 }
+                PeaAction::ViewOutput { objective_id } => {
+                    self.do_view_output(&objective_id);
+                }
+                PeaAction::ImproveOutput { objective_id } => {
+                    self.do_improve_output(&objective_id);
+                }
             }
         }
     }
@@ -1788,6 +1817,60 @@ impl App {
                     })
                     .collect();
                 self.tasks.set_tasks(summaries);
+            }
+        }
+    }
+
+    fn do_view_output(&mut self, objective_id: &str) {
+        use crate::pea::output_store::OutputStore;
+        let db_path = self.config.data_dir.join("outputs.db");
+        match OutputStore::open(&db_path) {
+            Ok(store) => match store.find_by_source(objective_id) {
+                Ok(records) if !records.is_empty() => {
+                    let rec = &records[0];
+                    let path_info = rec
+                        .file_path
+                        .as_deref()
+                        .unwrap_or("(no file)");
+                    self.tasks.show_status(
+                        format!("Output: {} — {}", rec.title, path_info),
+                        false,
+                    );
+                }
+                Ok(_) => {
+                    self.tasks.show_status("No output found".to_string(), true);
+                }
+                Err(e) => {
+                    self.tasks
+                        .show_status(format!("Output lookup error: {}", e), true);
+                }
+            },
+            Err(e) => {
+                self.tasks
+                    .show_status(format!("Output store error: {}", e), true);
+            }
+        }
+    }
+
+    fn do_improve_output(&mut self, objective_id: &str) {
+        use crate::pea::engine::PeaEngine;
+        match PeaEngine::open(&self.config.data_dir) {
+            Ok(engine) => match engine.improve_objective(objective_id, None, 5.0) {
+                Ok(new_id) => {
+                    self.tasks.show_status(
+                        format!("Improvement objective created: {}", new_id),
+                        false,
+                    );
+                    self.load_objectives();
+                }
+                Err(e) => {
+                    self.tasks
+                        .show_status(format!("Improve error: {}", e), true);
+                }
+            },
+            Err(e) => {
+                self.tasks
+                    .show_status(format!("PEA error: {}", e), true);
             }
         }
     }
