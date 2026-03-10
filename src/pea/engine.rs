@@ -33,6 +33,9 @@ pub struct PeaEngine {
     bdi: BdiEngine,
     htn: HtnDecomposer,
     pramana: PramanaValidator,
+    /// Cached research context per desire_id — avoids re-running the full
+    /// research pipeline (search + fetch + score) on every tick.
+    research_cache: std::collections::HashMap<String, String>,
 }
 
 fn uuid_simple() -> String {
@@ -70,6 +73,7 @@ impl PeaEngine {
             bdi: BdiEngine::default(),
             htn: HtnDecomposer::default(),
             pramana: PramanaValidator::default(),
+            research_cache: std::collections::HashMap::new(),
         })
     }
 
@@ -361,7 +365,7 @@ impl PeaEngine {
     /// - Performs Hegelian dialectic review via LLM when stuck
     /// - Assembles final documents on objective completion
     pub fn tick_with_executor(
-        &self,
+        &mut self,
         registry: &AbilityRegistry,
         manifest: &AgentManifest,
         data_dir: &Path,
@@ -463,6 +467,21 @@ impl PeaEngine {
                             })
                             .collect();
 
+                        // Compute research once per desire, cache the context string.
+                        let desire_id = &next.desire_id;
+                        if !self.research_cache.contains_key(desire_id) {
+                            use crate::pea::research::{ResearchConfig, ResearchEngine};
+                            let re = ResearchEngine::new(registry, manifest, ResearchConfig::default());
+                            let corpus = re.execute(&obj.description, &next.description);
+                            let ctx = if corpus.sources.is_empty() {
+                                String::new()
+                            } else {
+                                corpus.to_context_string()
+                            };
+                            self.research_cache.insert(desire_id.clone(), ctx);
+                        }
+                        let cached_context = self.research_cache.get(desire_id).cloned();
+
                         // Execute via bridge
                         let output_dir = data_dir.join("pea_output").join(&obj.id);
                         let bridge = PeaBridge::new(registry, manifest, &output_dir);
@@ -470,6 +489,7 @@ impl PeaEngine {
                             &next.description,
                             &obj.description,
                             &prior_results,
+                            cached_context.as_deref(),
                         );
 
                         if result.success {
@@ -614,6 +634,8 @@ impl PeaEngine {
                     completed_desire_id,
                     next_desire_id,
                 } => {
+                    // Evict research cache for the completed desire
+                    self.research_cache.remove(&completed_desire_id);
                     self.store
                         .update_desire_status(&completed_desire_id, &DesireStatus::Achieved)?;
                     actions.push(format!(

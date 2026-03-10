@@ -3071,7 +3071,7 @@ fn cmd_daemon(config: &NyayaConfig) -> Result<()> {
     }
 
     // PEA engine — opened once, reused across daemon ticks
-    let pea_engine = match nabaos::pea::engine::PeaEngine::open(&config.data_dir) {
+    let mut pea_engine = match nabaos::pea::engine::PeaEngine::open(&config.data_dir) {
         Ok(e) => Some(e),
         Err(e) => {
             eprintln!("[daemon] PEA init error (will retry): {}", e);
@@ -3153,7 +3153,7 @@ fn cmd_daemon(config: &NyayaConfig) -> Result<()> {
         }
 
         // PEA engine tick — with execution bridge
-        if let Some(ref pea_engine) = pea_engine {
+        if let Some(ref mut pea_engine) = pea_engine {
             match pea_engine.tick_with_executor(
                 orch.ability_registry(),
                 &manifest,

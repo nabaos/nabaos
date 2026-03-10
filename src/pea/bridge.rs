@@ -52,15 +52,16 @@ impl<'a> PeaBridge<'a> {
         task_description: &str,
         objective_description: &str,
         prior_results: &[(String, String)],
+        cached_web_context: Option<&str>,
     ) -> TaskResult {
         let route = classify_task(task_description);
 
         match route {
-            TaskRoute::Llm => self.execute_llm(task_description, objective_description, prior_results),
+            TaskRoute::Llm => self.execute_llm(task_description, objective_description, prior_results, cached_web_context),
             TaskRoute::Media => self.execute_media(task_description, objective_description, prior_results),
             TaskRoute::FileSystem => self.execute_filesystem(task_description, objective_description, prior_results),
             TaskRoute::Swarm => self.execute_swarm(task_description, objective_description, prior_results),
-            _ => self.execute_llm(task_description, objective_description, prior_results),
+            _ => self.execute_llm(task_description, objective_description, prior_results, cached_web_context),
         }
     }
 
@@ -71,9 +72,13 @@ impl<'a> PeaBridge<'a> {
         task_description: &str,
         objective_description: &str,
         prior_results: &[(String, String)],
+        cached_web_context: Option<&str>,
     ) -> TaskResult {
-        // Step 1: Fetch web context for grounding (reduces hallucination, adds real data)
-        let web_context = self.fetch_web_context(task_description, objective_description);
+        // Use cached research context if available, otherwise fetch fresh
+        let web_context = match cached_web_context {
+            Some(ctx) if !ctx.is_empty() => ctx.to_string(),
+            _ => self.fetch_web_context(task_description, objective_description),
+        };
 
         let system = if web_context.is_empty() {
             build_system_prompt(objective_description, task_description)
@@ -257,7 +262,7 @@ impl<'a> PeaBridge<'a> {
         // We use std::fs::write instead of the sandboxed files.write ability
         // because PEA output writes are internal engine operations and the
         // sandbox's path traversal guard rejects absolute paths.
-        let content_result = self.execute_llm(task_description, objective_description, prior_results);
+        let content_result = self.execute_llm(task_description, objective_description, prior_results, None);
         if !content_result.success {
             return content_result;
         }
@@ -301,7 +306,7 @@ impl<'a> PeaBridge<'a> {
         prior_results: &[(String, String)],
     ) -> TaskResult {
         // Swarm route now handled by execute_llm which does web search for all tasks
-        self.execute_llm(task_description, objective_description, prior_results)
+        self.execute_llm(task_description, objective_description, prior_results, None)
     }
 
     // -- Search helpers -------------------------------------------------------
