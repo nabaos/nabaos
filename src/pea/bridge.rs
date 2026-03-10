@@ -119,14 +119,21 @@ impl<'a> PeaBridge<'a> {
         }
     }
 
-    /// Fetch web context for grounding any task via direct HTTP search.
-    /// Tries Brave Search first (reliable from VPS), DDG HTML as fallback.
-    /// Returns empty string on failure (non-blocking).
+    /// Fetch web context via the ResearchEngine (multi-query, LLM-scored, parallel fetch).
+    /// Falls back to single-query search if research engine produces no results.
     fn fetch_web_context(&self, task_description: &str, objective_description: &str) -> String {
-        let search_query = self.generate_search_query(task_description, objective_description);
-        eprintln!("[pea] web search query: {}", search_query);
+        use crate::pea::research::{ResearchConfig, ResearchEngine};
 
-        // Step 1: Search — get titles, URLs, snippets
+        let engine = ResearchEngine::new(self.registry, self.manifest, ResearchConfig::default());
+        let corpus = engine.execute(objective_description, task_description);
+
+        if !corpus.sources.is_empty() {
+            return corpus.to_context_string();
+        }
+
+        // Fallback: single query if research engine found nothing
+        eprintln!("[pea] research engine returned no sources, trying single-query fallback");
+        let search_query = self.generate_search_query(task_description, objective_description);
         let search_results = search_brave(&search_query)
             .or_else(|e| {
                 eprintln!("[pea] Brave Search failed: {}, trying DDG", e);
@@ -135,26 +142,16 @@ impl<'a> PeaBridge<'a> {
 
         let results = match search_results {
             Ok(r) if !r.is_empty() => r,
-            Ok(_) => {
-                eprintln!("[pea] search returned no results");
-                return String::new();
-            }
-            Err(e) => {
-                eprintln!("[pea] all search engines failed: {}", e);
-                return String::new();
-            }
+            _ => return String::new(),
         };
 
-        eprintln!("[pea] found {} search results", results.len());
-
-        // Step 2: Fetch top 3 URLs for content
-        let urls: Vec<&str> = results.iter()
+        let urls: Vec<&str> = results
+            .iter()
             .filter_map(|r| r.url.as_deref())
             .take(3)
             .collect();
         let fetched = fetch_urls_parallel(&urls);
 
-        // Step 3: Build grounding context
         let mut context = format!("# Web Search: {}\n\n", search_query);
         for (i, result) in results.iter().enumerate().take(8) {
             context.push_str(&format!("## {}. {}\n", i + 1, result.title));
@@ -172,7 +169,6 @@ impl<'a> PeaBridge<'a> {
             }
         }
 
-        eprintln!("[pea] web context: {} chars, {} fetched pages", context.len(), fetched.len());
         context
     }
 
