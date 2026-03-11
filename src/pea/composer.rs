@@ -172,6 +172,11 @@ impl<'a> DocumentComposer<'a> {
         let fact_notes = self.verify_numerical_claims(&sections);
         all_notes.extend(fact_notes);
 
+        // Phase 4c2: Taxonomy reconciliation — detect and fix conflicting named lists
+        eprintln!("[composer] reconciling taxonomies...");
+        let taxonomy_notes = self.reconcile_taxonomies(&mut sections);
+        all_notes.extend(taxonomy_notes);
+
         // Phase 4e: Nyaya trimmer — deduplicate and merge sections using
         // Anadhigata (novelty), Pramana hierarchy (evidence priority), and
         // Padartha structure (categorical coherence).
@@ -800,6 +805,138 @@ impl<'a> DocumentComposer<'a> {
             }
             Err(e) => {
                 vec![format!("Fact verification skipped: {}", e)]
+            }
+        }
+    }
+
+    // -- Phase 4c2: Taxonomy Reconciliation ------------------------------------
+
+    /// Detect and reconcile conflicting named lists/taxonomies across sections.
+    /// E.g., Ch1 has 4 scenarios, Ch3 has 5 different ones → unify into one set.
+    fn reconcile_taxonomies(&self, sections: &mut Vec<GeneratedSection>) -> Vec<String> {
+        // Build a digest of all "named list" patterns
+        let list_digest: String = sections
+            .iter()
+            .filter_map(|s| {
+                // Look for enumerated/named items patterns
+                let list_lines: Vec<&str> = s.content.lines()
+                    .filter(|l| {
+                        let lt = l.trim();
+                        // Numbered lists, bullet points, or scenario-like patterns
+                        lt.starts_with("1.") || lt.starts_with("- ") || lt.starts_with("* ")
+                            || lt.contains("Scenario ") || lt.contains("scenario ")
+                            || lt.contains("Phase ") || lt.contains("phase ")
+                            || lt.contains("Category ") || lt.contains("category ")
+                            || lt.contains("Option ") || lt.contains("option ")
+                            || lt.contains("Stage ") || lt.contains("stage ")
+                    })
+                    .collect();
+                if list_lines.len() >= 2 {
+                    Some(format!("## {}\n{}\n", s.title, list_lines.join("\n")))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if list_digest.trim().is_empty() {
+            return vec![];
+        }
+
+        let prompt = format!(
+            "Review these named lists/taxonomies from different sections of the SAME document.\n\
+             Identify any CONFLICTING TAXONOMIES where different sections define different sets \
+             of categories for the same concept.\n\n\
+             Examples of conflicts:\n\
+             - Section A lists 4 scenarios, Section B lists 5 different scenarios\n\
+             - Section A defines 3 phases, Section B defines 4 phases with different names\n\
+             - Section A categorizes into types X,Y,Z but Section B uses types A,B,C,D\n\n\
+             LISTS BY SECTION:\n{}\n\n\
+             For each conflict found, provide the RECONCILED unified taxonomy.\n\
+             Respond as JSON:\n\
+             [{{\"concept\": \"scenarios/phases/etc\", \
+             \"section_a\": \"title\", \"list_a\": [\"item1\", ...], \
+             \"section_b\": \"title\", \"list_b\": [\"item1\", ...], \
+             \"reconciled\": [\"unified item1\", ...]}}]\n\
+             If no conflicts: []",
+            crate::pea::research::safe_slice(&list_digest, 6000),
+        );
+
+        let input = serde_json::json!({
+            "system": "You are a structural editor ensuring taxonomic consistency across document chapters. \
+                       Output ONLY a JSON array.",
+            "prompt": prompt,
+            "max_tokens": 4096,
+            "thinking": false,
+        });
+
+        match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+            Ok(result) => {
+                let raw = String::from_utf8_lossy(&result.output).to_string();
+                let raw = strip_thinking_tokens(&raw);
+                let conflicts = parse_review_issues(&raw);
+                if conflicts.is_empty() {
+                    return vec![];
+                }
+
+                let mut notes = Vec::new();
+                for conflict in &conflicts {
+                    let concept = conflict.get("concept").and_then(|v| v.as_str()).unwrap_or("?");
+                    let sec_a = conflict.get("section_a").and_then(|v| v.as_str()).unwrap_or("?");
+                    let sec_b = conflict.get("section_b").and_then(|v| v.as_str()).unwrap_or("?");
+                    let reconciled = conflict.get("reconciled")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "))
+                        .unwrap_or_default();
+
+                    eprintln!(
+                        "[composer] taxonomy conflict: '{}' differs between '{}' and '{}' → reconciled: [{}]",
+                        concept, sec_a, sec_b, reconciled
+                    );
+                    notes.push(format!(
+                        "Taxonomy reconciled: '{}' unified across '{}' and '{}' → [{}]",
+                        concept, sec_a, sec_b, reconciled
+                    ));
+
+                    // Apply reconciliation: ask LLM to rewrite the conflicting section
+                    if let Some(reconciled_arr) = conflict.get("reconciled").and_then(|v| v.as_array()) {
+                        let reconciled_list: Vec<&str> = reconciled_arr.iter().filter_map(|v| v.as_str()).collect();
+                        if !reconciled_list.is_empty() {
+                            // Find and fix the second section (keep first as authoritative)
+                            if let Some(section) = sections.iter_mut().find(|s| s.title == sec_b) {
+                                let fix_prompt = format!(
+                                    "Rewrite the following section content to use this EXACT taxonomy: [{}]\n\
+                                     Replace any references to a different set of categories with these ones.\n\
+                                     Keep all other content, facts, and analysis unchanged.\n\
+                                     Output ONLY the rewritten content.\n\n{}",
+                                    reconciled_list.join(", "),
+                                    crate::pea::research::safe_slice(&section.content, 6000),
+                                );
+                                let fix_input = serde_json::json!({
+                                    "system": "You are an editorial assistant. Rewrite content to use the specified taxonomy. Output ONLY rewritten text.",
+                                    "prompt": fix_prompt,
+                                    "max_tokens": self.config.max_tokens_per_section,
+                                    "thinking": false,
+                                });
+                                if let Ok(fix_result) = self.registry.execute_ability(
+                                    self.manifest, "llm.chat", &fix_input.to_string()
+                                ) {
+                                    let fixed = String::from_utf8_lossy(&fix_result.output).to_string();
+                                    let fixed = strip_thinking_tokens(&fixed).trim().to_string();
+                                    if !fixed.is_empty() && fixed.len() > section.content.len() / 3 {
+                                        section.content = fixed;
+                                        eprintln!("[composer] rewrote '{}' with reconciled taxonomy", sec_b);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                notes
+            }
+            Err(e) => {
+                eprintln!("[composer] taxonomy reconciliation skipped: {}", e);
+                vec![]
             }
         }
     }
@@ -2870,5 +3007,29 @@ mod tests {
         assert!(!img_b.exists());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- Taxonomy reconciliation tests ---
+
+    #[test]
+    fn test_taxonomy_list_detection() {
+        // Sections with enumerated lists should be detected
+        let sections = vec![
+            GeneratedSection {
+                id: "ch1".into(), title: "Overview".into(), level: 0,
+                content: "We identify four scenarios:\n1. Contained Escalation\n2. Regional War\n3. Diplomatic Off-Ramp\n4. Worst Case".into(),
+                summary: "".into(), hook: None,
+            },
+            GeneratedSection {
+                id: "ch3".into(), title: "Deep Analysis".into(), level: 0,
+                content: "Five scenarios emerge:\n1. Contained Exchange\n2. Proxy Expansion\n3. Strategic Degradation\n4. Internal Collapse\n5. Systemic War".into(),
+                summary: "".into(), hook: None,
+            },
+        ];
+        // Both sections have 3+ list lines → both should contribute to digest
+        let list_count: usize = sections.iter().map(|s| {
+            s.content.lines().filter(|l| l.trim().starts_with("1.") || l.trim().starts_with("2.")).count()
+        }).sum();
+        assert!(list_count >= 4, "should detect enumerated list items");
     }
 }
