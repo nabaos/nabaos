@@ -67,6 +67,125 @@ impl TokenTracker {
     }
 }
 
+// -- Structured output schemas for composition LLM calls ----------------------
+
+fn schema_review_issues() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "issues": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "section_id": {"type": "string"},
+                        "issue": {"type": "string"},
+                        "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+                        "fix": {"type": "string"}
+                    },
+                    "required": ["section_id", "issue", "severity", "fix"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["issues"],
+        "additionalProperties": false
+    })
+}
+
+fn schema_contradictions() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "contradictions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "section_id": {"type": "string"},
+                        "claim": {"type": "string"},
+                        "contradiction": {"type": "string"}
+                    },
+                    "required": ["section_id", "claim", "contradiction"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["contradictions"],
+        "additionalProperties": false
+    })
+}
+
+fn schema_taxonomy_conflicts() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "conflicts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "sections": {"type": "array", "items": {"type": "string"}},
+                        "conflict": {"type": "string"},
+                        "resolution": {"type": "string"}
+                    },
+                    "required": ["sections", "conflict", "resolution"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["conflicts"],
+        "additionalProperties": false
+    })
+}
+
+fn schema_nyaya_merges() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "merges": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "absorb_id": {"type": "string"},
+                        "into_id": {"type": "string"},
+                        "reason": {"type": "string"},
+                        "unique_claims_to_preserve": {"type": "string"}
+                    },
+                    "required": ["absorb_id", "into_id", "reason", "unique_claims_to_preserve"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["merges"],
+        "additionalProperties": false
+    })
+}
+
+fn schema_chart_specs() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "charts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "caption": {"type": "string"},
+                        "python_script": {"type": "string"},
+                        "data_type": {"type": "string"}
+                    },
+                    "required": ["caption", "python_script", "data_type"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["charts"],
+        "additionalProperties": false
+    })
+}
+
 pub struct DocumentComposer<'a> {
     registry: &'a AbilityRegistry,
     manifest: &'a AgentManifest,
@@ -606,6 +725,8 @@ impl<'a> DocumentComposer<'a> {
             ),
             "prompt": prompt,
             "max_tokens": 4096,
+            "response_schema": schema_review_issues(),
+            "schema_name": "review_issues",
         });
 
         let issues = match self.exec_ability("llm.chat", &input.to_string()) {
@@ -844,6 +965,8 @@ impl<'a> DocumentComposer<'a> {
                        Output ONLY a JSON array of contradictions, or [] if none.",
             "prompt": prompt,
             "max_tokens": 4096,
+            "response_schema": schema_contradictions(),
+            "schema_name": "contradictions",
         });
 
         match self.exec_ability("llm.chat", &input.to_string()) {
@@ -939,6 +1062,8 @@ impl<'a> DocumentComposer<'a> {
             "prompt": prompt,
             "max_tokens": 4096,
             "thinking": false,
+            "response_schema": schema_taxonomy_conflicts(),
+            "schema_name": "taxonomy_conflicts",
         });
 
         match self.exec_ability("llm.chat", &input.to_string()) {
@@ -1264,6 +1389,8 @@ impl<'a> DocumentComposer<'a> {
                        principles. Analyze section redundancy with precision. Output ONLY valid JSON.",
             "prompt": prompt,
             "max_tokens": 4096,
+            "response_schema": schema_nyaya_merges(),
+            "schema_name": "nyaya_merges",
         });
 
         let raw = match self.exec_ability("llm.chat", &input.to_string()) {
@@ -1810,6 +1937,8 @@ plt.close()
             "prompt": prompt,
             "max_tokens": 8192,
             "thinking": false,
+            "response_schema": schema_chart_specs(),
+            "schema_name": "chart_specs",
         });
 
         let charts_json = match self.exec_ability("llm.chat", &input.to_string()) {

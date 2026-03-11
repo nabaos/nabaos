@@ -57,6 +57,40 @@ impl SearchBackend {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueryMode {
+    Template,   // Deterministic keyword + template expansion (default)
+    Llm,        // Legacy LLM-generated queries
+}
+
+impl Default for QueryMode {
+    fn default() -> Self {
+        match std::env::var("NABA_PEA_QUERY_MODE").as_deref() {
+            Ok("llm") => Self::Llm,
+            _ => Self::Template,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScoringMode {
+    HeuristicOnly,  // Tier 1 only — fast, no models
+    BertRerank,     // Tier 1 filter + Tier 2 BERT re-rank
+    Cascade,        // Tier 1 + Tier 2 if available, else heuristic only
+    Llm,            // Legacy LLM-only scoring
+}
+
+impl Default for ScoringMode {
+    fn default() -> Self {
+        match std::env::var("NABA_PEA_SCORING_MODE").as_deref() {
+            Ok("heuristic_only") => Self::HeuristicOnly,
+            Ok("bert_rerank") | Ok("bert") => Self::BertRerank,
+            Ok("llm") => Self::Llm,
+            _ => Self::Cascade,
+        }
+    }
+}
+
 pub struct ResearchConfig {
     pub max_search_queries: usize,
     pub max_candidates: usize,
@@ -70,6 +104,8 @@ pub struct ResearchConfig {
     /// Whether to supplement web search with OpenAlex academic paper search.
     /// Auto-detected from objective if not explicitly set.
     pub academic_supplement: Option<bool>,
+    pub query_mode: QueryMode,
+    pub scoring_mode: ScoringMode,
 }
 
 impl Default for ResearchConfig {
@@ -87,6 +123,8 @@ impl Default for ResearchConfig {
             brave_api_key: std::env::var("NABA_BRAVE_API_KEY").ok(),
             searxng_url: std::env::var("NABA_SEARXNG_URL").ok(),
             academic_supplement: None,
+            query_mode: QueryMode::default(),
+            scoring_mode: ScoringMode::default(),
         }
     }
 }
@@ -359,7 +397,101 @@ impl<'a> ResearchEngine<'a> {
 
     // -- Phase 1: Query Fan-Out -----------------------------------------------
 
+    /// Deterministic query expansion from objective + task keywords.
+    /// No LLM call — uses keyword extraction + templates.
+    fn generate_queries_template(&self, objective: &str, task: &str) -> Vec<String> {
+        let stopwords: HashSet<&str> = [
+            "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+            "being", "have", "has", "had", "do", "does", "did", "will", "would",
+            "could", "should", "may", "might", "shall", "can", "this", "that",
+            "these", "those", "it", "its", "as", "if", "not", "no", "so", "up",
+            "out", "about", "into", "over", "after", "how", "what", "which",
+            "who", "whom", "when", "where", "why", "all", "each", "every",
+            "both", "few", "more", "most", "other", "some", "such", "than",
+            "too", "very", "just", "also", "write", "create", "produce",
+            "generate", "comprehensive", "detailed", "report",
+        ].into_iter().collect();
+
+        // Extract keywords from objective
+        let keywords: Vec<&str> = objective
+            .split(|c: char| !c.is_alphanumeric() && c != '-')
+            .filter(|w| w.len() > 2 && !stopwords.contains(&w.to_ascii_lowercase().as_str()))
+            .collect();
+
+        let keyword_str = keywords.join(" ");
+        let short_keywords = keywords.iter().take(4).copied().collect::<Vec<_>>().join(" ");
+
+        let mut queries = Vec::with_capacity(20);
+
+        // Verbatim objective (trimmed)
+        let trimmed: String = objective.chars().take(150).collect();
+        queries.push(trimmed);
+
+        // Keyword-focused
+        queries.push(keyword_str.clone());
+        queries.push(short_keywords.clone());
+
+        // Academic angle
+        queries.push(format!("{} research paper", short_keywords));
+        queries.push(format!("{} survey peer-reviewed", short_keywords));
+        queries.push(format!("{} literature review", short_keywords));
+
+        // Recent
+        queries.push(format!("{} 2026", short_keywords));
+        queries.push(format!("{} 2025 2026", short_keywords));
+
+        // Data/empirical
+        queries.push(format!("{} benchmarks empirical data", short_keywords));
+        queries.push(format!("{} comparison analysis results", short_keywords));
+
+        // Broader context
+        queries.push(format!("{} state of the art", short_keywords));
+        queries.push(format!("{} challenges limitations", short_keywords));
+        queries.push(format!("{} future directions trends", short_keywords));
+
+        // Expert/opinion
+        queries.push(format!("{} expert analysis", short_keywords));
+
+        // Task-specific
+        if !task.is_empty() {
+            let task_kw: String = task
+                .split(|c: char| !c.is_alphanumeric() && c != '-')
+                .filter(|w| w.len() > 2 && !stopwords.contains(&w.to_ascii_lowercase().as_str()))
+                .take(4)
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !task_kw.is_empty() && task_kw != short_keywords {
+                queries.push(task_kw.clone());
+                queries.push(format!("{} research", task_kw));
+            }
+        }
+
+        // Academic supplement queries
+        if is_academic_objective(objective) {
+            queries.push(format!("arxiv {}", short_keywords));
+            queries.push(format!("{} meta-analysis systematic review", short_keywords));
+        }
+
+        // Dedup and cap
+        let mut seen = HashSet::new();
+        queries.retain(|q| {
+            let key = q.to_ascii_lowercase();
+            !key.is_empty() && seen.insert(key)
+        });
+        queries.truncate(self.config.max_search_queries);
+
+        eprintln!("[research] template expansion: {} queries from keywords {:?}",
+            queries.len(), &keywords[..keywords.len().min(6)]);
+
+        queries
+    }
+
     fn generate_search_queries(&self, objective: &str, task: &str) -> Vec<String> {
+        if self.config.query_mode == QueryMode::Template {
+            return self.generate_queries_template(objective, task);
+        }
+
         let count = self.config.max_search_queries;
 
         let input = serde_json::json!({
@@ -637,12 +769,133 @@ impl<'a> ResearchEngine<'a> {
         }
     }
 
-    // -- Phase 3: LLM Relevance Scoring ---------------------------------------
+    // -- Phase 3: Relevance Scoring (cascade dispatch) -------------------------
+
+    fn score_candidates_heuristic(&self, candidates: &mut [SearchCandidate], objective: &str) {
+        use super::heuristic_scorer::{extract_keywords, heuristic_score};
+        let keywords = extract_keywords(objective);
+        for candidate in candidates.iter_mut() {
+            candidate.relevance_score = Some(heuristic_score(candidate, &keywords));
+        }
+        candidates.sort_by(|a, b| {
+            b.relevance_score.unwrap_or(0.0)
+                .partial_cmp(&a.relevance_score.unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        eprintln!("[research] heuristic scoring: top={:.2}, median={:.2}",
+            candidates.first().and_then(|c| c.relevance_score).unwrap_or(0.0),
+            candidates.get(candidates.len() / 2).and_then(|c| c.relevance_score).unwrap_or(0.0),
+        );
+    }
+
+    #[cfg(feature = "bert")]
+    fn score_candidates_bert_rerank(&self, candidates: &mut [SearchCandidate], objective: &str) {
+        use super::heuristic_scorer::{extract_keywords, heuristic_score};
+        use super::bert_reranker::BertReranker;
+
+        // Tier 1: heuristic pre-filter (keep top 50%)
+        let keywords = extract_keywords(objective);
+        for candidate in candidates.iter_mut() {
+            candidate.relevance_score = Some(heuristic_score(candidate, &keywords));
+        }
+        candidates.sort_by(|a, b| {
+            b.relevance_score.unwrap_or(0.0)
+                .partial_cmp(&a.relevance_score.unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let cutoff = candidates.len() / 2;
+        if cutoff == 0 {
+            return;
+        }
+
+        // Tier 2: BERT re-rank survivors
+        let model_dir = std::env::var("NABA_DATA_DIR")
+            .unwrap_or_else(|_| {
+                std::env::var("HOME")
+                    .map(|h| format!("{}/.nabaos", h))
+                    .unwrap_or_else(|_| ".nabaos".into())
+            });
+        let model_path = std::path::Path::new(&model_dir).join("models");
+
+        match BertReranker::load(&model_path) {
+            Ok(mut reranker) => {
+                match reranker.embed(objective) {
+                    Ok(obj_emb) => {
+                        let pairs: Vec<(String, String)> = candidates[..cutoff]
+                            .iter()
+                            .map(|c| (c.title.clone(), c.snippet.clone()))
+                            .collect();
+                        let rankings = reranker.rank(&obj_emb, &pairs);
+                        // Blend: 0.4 * heuristic + 0.6 * bert
+                        for (rank_idx, bert_score) in &rankings {
+                            if let Some(c) = candidates.get_mut(*rank_idx) {
+                                let h = c.relevance_score.unwrap_or(0.0);
+                                c.relevance_score = Some(0.4 * h + 0.6 * bert_score);
+                            }
+                        }
+                        candidates[..cutoff].sort_by(|a, b| {
+                            b.relevance_score.unwrap_or(0.0)
+                                .partial_cmp(&a.relevance_score.unwrap_or(0.0))
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        eprintln!("[research] BERT re-rank: top={:.2}",
+                            candidates.first().and_then(|c| c.relevance_score).unwrap_or(0.0));
+                    }
+                    Err(e) => eprintln!("[research] BERT embed failed: {}, using heuristic only", e),
+                }
+            }
+            Err(e) => eprintln!("[research] BERT model not available: {}, using heuristic only", e),
+        }
+    }
 
     fn score_candidates(&self, candidates: &mut [SearchCandidate], objective: &str) {
         if candidates.is_empty() {
             return;
         }
+
+        match self.config.scoring_mode {
+            ScoringMode::HeuristicOnly => {
+                self.score_candidates_heuristic(candidates, objective);
+                return;
+            }
+            ScoringMode::BertRerank => {
+                #[cfg(feature = "bert")]
+                {
+                    self.score_candidates_bert_rerank(candidates, objective);
+                    return;
+                }
+                #[cfg(not(feature = "bert"))]
+                {
+                    eprintln!("[research] bert feature not enabled, falling back to heuristic");
+                    self.score_candidates_heuristic(candidates, objective);
+                    return;
+                }
+            }
+            ScoringMode::Cascade => {
+                #[cfg(feature = "bert")]
+                {
+                    let model_dir = std::env::var("NABA_DATA_DIR")
+                        .unwrap_or_else(|_| {
+                            std::env::var("HOME")
+                                .map(|h| format!("{}/.nabaos", h))
+                                .unwrap_or_else(|_| ".nabaos".into())
+                        });
+                    let model_path = std::path::Path::new(&model_dir).join("models");
+                    if model_path.join("model.onnx").exists() {
+                        self.score_candidates_bert_rerank(candidates, objective);
+                        return;
+                    }
+                    eprintln!("[research] BERT model not found, cascade falling through to heuristic");
+                }
+                self.score_candidates_heuristic(candidates, objective);
+                return;
+            }
+            ScoringMode::Llm => {
+                // Fall through to existing LLM scoring below
+            }
+        }
+
+        // === Existing LLM-based scoring (legacy, ScoringMode::Llm only) ===
 
         // Score in batches of 50 to reduce LLM calls (especially with thinking models)
         for batch in candidates.chunks_mut(50) {
@@ -1604,5 +1857,53 @@ mod tests {
     fn test_research_config_academic_supplement_default() {
         let config = ResearchConfig::default();
         assert!(config.academic_supplement.is_none());
+    }
+
+    #[test]
+    fn test_query_mode_default_is_template() {
+        assert_eq!(QueryMode::default(), QueryMode::Template);
+    }
+
+    #[test]
+    fn test_generate_queries_template_keyword_extraction() {
+        let objective = "survey of transformer efficiency techniques for edge deployment";
+        assert!(is_academic_objective(objective));
+
+        let stopwords: HashSet<&str> = ["a", "an", "the", "of", "for"].into_iter().collect();
+        let keywords: Vec<&str> = objective
+            .split(|c: char| !c.is_alphanumeric() && c != '-')
+            .filter(|w| w.len() > 2 && !stopwords.contains(w))
+            .collect();
+        assert!(keywords.contains(&"transformer"));
+        assert!(keywords.contains(&"efficiency"));
+        assert!(!keywords.contains(&"of"));
+        assert!(!keywords.contains(&"for"));
+    }
+
+    #[test]
+    fn test_generate_queries_template_deduplicates() {
+        let queries = vec!["test query".to_string(), "test query".to_string(), "other".to_string()];
+        let mut seen = HashSet::new();
+        let deduped: Vec<_> = queries.into_iter().filter(|q| {
+            let key = q.to_ascii_lowercase();
+            seen.insert(key)
+        }).collect();
+        assert_eq!(deduped.len(), 2);
+    }
+
+    #[test]
+    fn test_scoring_mode_default_is_cascade() {
+        assert_eq!(ScoringMode::default(), ScoringMode::Cascade);
+    }
+
+    #[test]
+    fn test_scoring_mode_from_env_str() {
+        let mode = match "heuristic_only" {
+            "heuristic_only" => ScoringMode::HeuristicOnly,
+            "bert_rerank" | "bert" => ScoringMode::BertRerank,
+            "llm" => ScoringMode::Llm,
+            _ => ScoringMode::Cascade,
+        };
+        assert_eq!(mode, ScoringMode::HeuristicOnly);
     }
 }

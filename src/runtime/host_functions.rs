@@ -118,6 +118,8 @@ pub struct AbilityRegistry {
     pub privilege_guard: Option<std::sync::Arc<crate::security::privilege::PrivilegeGuard>>,
     /// Optional LLM provider for llm.summarize / llm.chat abilities.
     llm_provider: Option<LlmProvider>,
+    /// Whether the configured LLM provider supports API-level structured output.
+    llm_provider_supports_structured: bool,
 }
 
 /// Specification for an ability (host function).
@@ -920,7 +922,9 @@ impl AbilityRegistry {
                     "type": "object",
                     "properties": {
                         "prompt": {"type": "string", "description": "Prompt to send to the LLM"},
-                        "system": {"type": "string", "description": "Optional system prompt (default: helpful assistant)"}
+                        "system": {"type": "string", "description": "Optional system prompt (default: helpful assistant)"},
+                        "response_schema": {"type": "object", "description": "Optional JSON Schema for structured output"},
+                        "schema_name": {"type": "string", "description": "Name for the structured output schema"}
                     },
                     "required": ["prompt"]
                 })),
@@ -952,12 +956,14 @@ impl AbilityRegistry {
             plugin_registry,
             privilege_guard: None,
             llm_provider: None,
+            llm_provider_supports_structured: false,
         }
     }
 
     /// Set the LLM provider for llm.summarize and llm.chat abilities.
-    pub fn set_llm_provider(&mut self, provider: LlmProvider) {
+    pub fn set_llm_provider(&mut self, provider: LlmProvider, supports_structured: bool) {
         self.llm_provider = Some(provider);
+        self.llm_provider_supports_structured = supports_structured;
     }
 
     /// Get a reference to the LLM provider, if configured.
@@ -1155,7 +1161,16 @@ impl AbilityRegistry {
                 let thinking = input.get("thinking").and_then(|v| v.as_bool()).unwrap_or(true);
                 let provider = self.llm_provider.as_ref()
                     .ok_or("No LLM provider configured for llm.chat")?;
-                let response = if thinking {
+                let response_schema = input.get("response_schema");
+                let schema_name = input.get("schema_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("structured_output");
+                let response = if let Some(schema) = response_schema {
+                    provider.complete_structured(
+                        system_prompt, prompt, schema, schema_name,
+                        max_tokens, self.llm_provider_supports_structured,
+                    )
+                } else if thinking {
                     provider.complete(system_prompt, prompt, max_tokens)
                 } else {
                     provider.complete_no_think(system_prompt, prompt, max_tokens)

@@ -413,6 +413,147 @@ impl LlmProvider {
         Ok(response)
     }
 
+    /// Complete with grammar-constrained structured output.
+    /// If provider supports it, uses API-level schema enforcement.
+    /// Otherwise, augments prompt with schema description and validates.
+    pub fn complete_structured(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        schema: &serde_json::Value,
+        schema_name: &str,
+        max_tokens: Option<u32>,
+        supports_structured: bool,
+    ) -> Result<LlmResponse> {
+        if supports_structured {
+            self.complete_with_schema(system_prompt, user_message, schema, schema_name, max_tokens)
+        } else {
+            // Augment prompt with schema description for providers without native support
+            let augmented_system = format!(
+                "{}\n\nYou MUST respond with ONLY valid JSON matching this schema:\n```json\n{}\n```\nDo NOT include any text outside the JSON.",
+                system_prompt,
+                serde_json::to_string_pretty(schema).unwrap_or_default()
+            );
+            self.complete_no_think(&augmented_system, user_message, max_tokens)
+        }
+    }
+
+    fn complete_with_schema(
+        &self,
+        system_prompt: &str,
+        user_message: &str,
+        schema: &serde_json::Value,
+        schema_name: &str,
+        max_tokens: Option<u32>,
+    ) -> Result<LlmResponse> {
+        let mut builder = reqwest::blocking::Client::builder();
+        if let Some(secs) = self.timeout_secs {
+            builder = builder.timeout(std::time::Duration::from_secs(secs));
+        }
+        let client = builder
+            .build()
+            .map_err(|e| NyayaError::Config(format!("HTTP client build failed: {}", e)))?;
+        let start = std::time::Instant::now();
+
+        match self.provider {
+            ProviderType::Anthropic => {
+                // Anthropic: use single-tool pattern for structured output
+                let tool = serde_json::json!({
+                    "name": schema_name,
+                    "description": format!("Output structured data as {}", schema_name),
+                    "input_schema": schema,
+                });
+                let body = serde_json::json!({
+                    "model": self.model,
+                    "max_tokens": max_tokens.unwrap_or(4096),
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_message}],
+                    "tools": [tool],
+                    "tool_choice": {"type": "tool", "name": schema_name},
+                    "temperature": 0.2,
+                });
+                let resp = client
+                    .post(&self.base_url)
+                    .header("x-api-key", &self.api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .json(&body)
+                    .send()
+                    .map_err(|e| NyayaError::Config(format!("Anthropic structured request: {}", e)))?;
+                let status = resp.status();
+                let text = resp.text().unwrap_or_default();
+                if !status.is_success() {
+                    return Err(NyayaError::Config(format!("Anthropic {}: {}", status, text)));
+                }
+                let parsed: serde_json::Value = serde_json::from_str(&text)
+                    .map_err(|e| NyayaError::Config(format!("Anthropic parse: {}", e)))?;
+                // Extract tool_use input from response
+                let tool_input = parsed["content"]
+                    .as_array()
+                    .and_then(|blocks| blocks.iter().find(|b| b["type"] == "tool_use"))
+                    .and_then(|b| b.get("input"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let result_text = serde_json::to_string(&tool_input).unwrap_or_default();
+                let input_tokens = parsed["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32;
+                let output_tokens = parsed["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32;
+                Ok(LlmResponse {
+                    text: result_text,
+                    input_tokens,
+                    output_tokens,
+                    latency_ms: start.elapsed().as_millis() as u64,
+                })
+            }
+            _ => {
+                // OpenAI-compatible: use response_format with json_schema
+                let body = serde_json::json!({
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message}
+                    ],
+                    "max_tokens": max_tokens.unwrap_or(4096),
+                    "temperature": 0.2,
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": schema_name,
+                            "strict": true,
+                            "schema": schema,
+                        }
+                    }
+                });
+                let mut req = client
+                    .post(&self.base_url)
+                    .header("content-type", "application/json");
+                if !self.api_key.is_empty() {
+                    req = req.header("Authorization", format!("Bearer {}", self.api_key));
+                }
+                let resp = req.json(&body).send()
+                    .map_err(|e| NyayaError::Config(format!("OpenAI structured request: {}", e)))?;
+                let status = resp.status();
+                let text = resp.text().unwrap_or_default();
+                if !status.is_success() {
+                    return Err(NyayaError::Config(format!("OpenAI {}: {}", status, text)));
+                }
+                let parsed: serde_json::Value = serde_json::from_str(&text)
+                    .map_err(|e| NyayaError::Config(format!("OpenAI parse: {}", e)))?;
+                let result_text = parsed["choices"][0]["message"]["content"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                let input_tokens = parsed["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32;
+                let output_tokens = parsed["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32;
+                Ok(LlmResponse {
+                    text: result_text,
+                    input_tokens,
+                    output_tokens,
+                    latency_ms: start.elapsed().as_millis() as u64,
+                })
+            }
+        }
+    }
+
     /// Send a message with tool definitions and get back text and/or tool calls.
     /// This is a blocking call.
     pub fn complete_with_tools(

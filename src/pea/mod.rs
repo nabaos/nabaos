@@ -1,3 +1,5 @@
+#[cfg(feature = "bert")]
+pub mod bert_reranker;
 pub mod bdi;
 pub mod bridge;
 pub mod budget;
@@ -8,6 +10,7 @@ pub mod document;
 pub mod engine;
 pub mod episode;
 pub mod executor;
+pub mod heuristic_scorer;
 pub mod htn;
 pub mod knowledge_graph;
 pub mod objective;
