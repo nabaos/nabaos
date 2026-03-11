@@ -3566,6 +3566,19 @@ fn cmd_setup(
                         }
                     }
 
+                    // Auto-install matplotlib for PEA chart generation
+                    if std::process::Command::new("python3")
+                        .args(["-c", "import matplotlib"])
+                        .output()
+                        .map(|o| !o.status.success())
+                        .unwrap_or(true)
+                    {
+                        eprintln!("    Installing matplotlib for chart generation...");
+                        let _ = std::process::Command::new("pip3")
+                            .args(["install", "matplotlib", "--break-system-packages", "--quiet"])
+                            .status();
+                    }
+
                     // Hardware scan + profile
                     println!();
                     println!("  {}●{} Scanning hardware...", cy, r);

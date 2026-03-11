@@ -2049,6 +2049,20 @@ fn exec_fetch_stock_image(
         }
     }
 
+    // --- Try web image search (Bing Image Search via scraping) ---
+    if let Ok(img_url) = search_web_image(query) {
+        if let Ok(attribution) = download_image(&img_url, &image_path) {
+            facts.insert("source".into(), "web_search".into());
+            facts.insert("attribution".into(), attribution);
+            facts.insert("path".into(), image_path.display().to_string());
+            return Ok((
+                image_path.display().to_string().into_bytes(),
+                Some(1),
+                facts,
+            ));
+        }
+    }
+
     // --- TikZ fallback ---
     let tikz_path = images_dir.join(format!("{}.tikz", query_hash));
     let tikz_code = format!(
@@ -2065,6 +2079,90 @@ fn exec_fetch_stock_image(
         Some(1),
         facts,
     ))
+}
+
+/// Search for an image URL via Bing Image Search HTML scraping.
+fn search_web_image(query: &str) -> Result<String, String> {
+    let search_url = format!(
+        "https://www.bing.com/images/search?q={}&qft=+filterui:license-L2_L3_L4&form=IRFLTR",
+        urlencoding::encode(query)
+    );
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp = client
+        .get(&search_url)
+        .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
+        .send()
+        .map_err(|e| format!("Bing image search failed: {}", e))?;
+
+    let html = resp.text().map_err(|e| format!("Read body: {}", e))?;
+
+    // Extract image URLs from Bing results (murl:"..." pattern)
+    if let Some(start) = html.find("murl\":\"") {
+        let rest = &html[start + 7..];
+        if let Some(end) = rest.find('"') {
+            let url = &rest[..end];
+            if url.starts_with("http") && (url.ends_with(".jpg") || url.ends_with(".png") || url.ends_with(".jpeg") || url.contains(".jpg") || url.contains(".png")) {
+                return Ok(url.to_string());
+            }
+        }
+    }
+
+    // Alternative: look for imgurl= pattern
+    if let Some(start) = html.find("imgurl:") {
+        let rest = &html[start + 7..];
+        if let Some(end) = rest.find(|c: char| c == '&' || c == '"' || c == ',') {
+            let url = &rest[..end];
+            if url.starts_with("http") {
+                return Ok(url.to_string());
+            }
+        }
+    }
+
+    Err("No suitable image found in search results".into())
+}
+
+/// Download an image from URL to local path. Returns attribution string.
+fn download_image(url: &str, dest: &std::path::Path) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp = client
+        .get(url)
+        .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
+        .send()
+        .map_err(|e| format!("Image download failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Image download HTTP {}", resp.status()));
+    }
+
+    let content_type = resp.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if !content_type.starts_with("image/") {
+        return Err(format!("Not an image: {}", content_type));
+    }
+
+    let bytes = resp.bytes().map_err(|e| format!("Read image: {}", e))?;
+    if bytes.len() < 5000 {
+        return Err("Image too small (<5KB)".into());
+    }
+
+    std::fs::write(dest, &bytes)
+        .map_err(|e| format!("Write image: {}", e))?;
+
+    // Attribution: domain name from URL
+    let domain = url.split("//").nth(1).and_then(|s| s.split('/').next()).unwrap_or("web");
+    Ok(format!("Image via {}", domain))
 }
 
 fn try_unsplash_download(

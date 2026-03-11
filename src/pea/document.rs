@@ -96,10 +96,14 @@ fn build_style_analysis_prompt(
              {{\"query\": \"search terms for stock photo\", \"placement\": \"chapter_header|section_illustration|title_page\", \"chapter\": \"chapter name or null\"}}\n\
            ]\n\
          }}\n\n\
-         Generate 3-8 image_queries that would enhance this document with relevant royalty-free photos. \
-         Queries should be specific and descriptive (e.g., \"mughlai biryani dish overhead photography\" \
-         not just \"food\"). Only include image_queries if images would genuinely enhance the content — \
-         for pure technical docs or code references, use an empty array.",
+         Generate 3-6 image_queries that would enhance this document. RULES for queries:\n\
+         - Be SPECIFIC to the actual content (e.g., \"UN Security Council emergency session 2026\" \
+         not generic \"diplomacy meeting\")\n\
+         - Include the year/event when relevant for news/current affairs topics\n\
+         - For sections with data/statistics, do NOT add image queries — charts will be auto-generated\n\
+         - For technical docs or code references, use an empty array\n\
+         - Prefer editorial/journalistic photography queries over generic stock photos\n\
+         - Each query should relate to a specific chapter, not the whole document",
         objective_desc, content_preview
     )
 }

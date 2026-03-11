@@ -154,6 +154,18 @@ impl<'a> DocumentComposer<'a> {
         let fact_notes = self.verify_numerical_claims(&sections);
         all_notes.extend(fact_notes);
 
+        // Phase 4d: Auto-generate data charts from section content
+        eprintln!("[composer] generating data charts...");
+        let chart_images = self.generate_charts(&sections, output_dir);
+        if !chart_images.is_empty() {
+            eprintln!("[composer] generated {} charts", chart_images.len());
+            all_notes.push(format!("Generated {} data visualization charts", chart_images.len()));
+        }
+
+        // Merge stock images + generated charts
+        let mut all_images: Vec<ImageEntry> = images.to_vec();
+        all_images.extend(chart_images);
+
         // Phase 5: Assemble final output
         eprintln!("[composer] assembling final document...");
         let doc = ComposedDocument {
@@ -163,7 +175,7 @@ impl<'a> DocumentComposer<'a> {
             review_notes: all_notes,
         };
 
-        self.assemble_output(&doc, images, style, output_dir)
+        self.assemble_output(&doc, &all_images, style, output_dir)
     }
 
     // -- Phase 1: Structure Planning ------------------------------------------
@@ -728,6 +740,174 @@ impl<'a> DocumentComposer<'a> {
                 vec![format!("Fact verification skipped: {}", e)]
             }
         }
+    }
+
+    // -- Phase 4d: Auto-generated Charts --------------------------------------
+
+    /// Ask LLM to identify data suitable for charts, generate matplotlib code,
+    /// execute it, and return chart images as ImageEntry tuples.
+    fn generate_charts(
+        &self,
+        sections: &[GeneratedSection],
+        output_dir: &Path,
+    ) -> Vec<ImageEntry> {
+        // Build a digest of all numerical data across sections
+        let digest: String = sections
+            .iter()
+            .filter_map(|s| {
+                let numbers: Vec<&str> = s.content
+                    .lines()
+                    .filter(|l| {
+                        l.chars().any(|c| c.is_ascii_digit())
+                            && (l.contains('%') || l.contains('$') || l.contains("billion")
+                                || l.contains("million") || l.contains("thousand")
+                                || l.contains("killed") || l.contains("casualties")
+                                || l.contains("growth") || l.contains("decline")
+                                || l.contains("increase") || l.contains("decrease")
+                                || l.contains("price") || l.contains("cost")
+                                || l.contains("population") || l.contains("rate"))
+                    })
+                    .collect();
+                if numbers.is_empty() {
+                    None
+                } else {
+                    Some(format!(
+                        "## {}\n{}",
+                        s.title,
+                        numbers.into_iter().take(10).collect::<Vec<_>>().join("\n")
+                    ))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        if digest.is_empty() {
+            eprintln!("[composer] no numerical data found for charts");
+            return vec![];
+        }
+
+        // Ask LLM to generate chart specifications
+        let prompt = format!(
+            "You are a data visualization expert. Read the numerical data below from a research \
+             document and generate 3-5 matplotlib Python scripts that create informative charts.\n\n\
+             DATA FROM DOCUMENT:\n{}\n\n\
+             For each chart, output a complete, self-contained Python script that:\n\
+             - Uses matplotlib only (import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt)\n\
+             - Sets figure size to (10, 6) with dpi=150\n\
+             - Uses a clean style (plt.style.use('seaborn-v0_8-whitegrid') or similar)\n\
+             - Has clear title, axis labels, and legend where needed\n\
+             - Saves to a specific filename using plt.savefig('chart_N.png', bbox_inches='tight')\n\
+             - Calls plt.close() at the end\n\
+             - Contains the actual data values extracted from the text above\n\
+             - Does NOT use plt.show()\n\n\
+             Chart types to consider:\n\
+             - Bar chart for comparing quantities across categories\n\
+             - Line chart for time series or trends\n\
+             - Horizontal bar for rankings\n\
+             - Pie chart for proportions (use sparingly)\n\n\
+             Respond as a JSON array of chart objects:\n\
+             [{{\"caption\": \"descriptive caption\", \"filename\": \"chart_1.png\", \"code\": \"import matplotlib...\"}}]\n\n\
+             Output ONLY valid JSON, no explanation.",
+            crate::pea::research::safe_slice(&digest, 4000),
+        );
+
+        let input = serde_json::json!({
+            "system": "You are a data visualization expert. Output ONLY a JSON array of chart specifications. \
+                       Each chart must be a complete, self-contained Python script using matplotlib.",
+            "prompt": prompt,
+            "max_tokens": 8192,
+            "thinking": false,
+        });
+
+        let charts_json = match self.registry.execute_ability(
+            self.manifest,
+            "llm.chat",
+            &input.to_string(),
+        ) {
+            Ok(result) => {
+                let raw = String::from_utf8_lossy(&result.output).to_string();
+                let raw = strip_thinking_tokens(&raw);
+                extract_json(&raw).to_string()
+            }
+            Err(e) => {
+                eprintln!("[composer] chart specification failed: {}", e);
+                return vec![];
+            }
+        };
+
+        let chart_specs: Vec<serde_json::Value> = match serde_json::from_str(&charts_json) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[composer] chart JSON parse failed: {}", e);
+                return vec![];
+            }
+        };
+
+        let charts_dir = output_dir.join("charts");
+        let _ = std::fs::create_dir_all(&charts_dir);
+
+        let mut chart_images: Vec<ImageEntry> = Vec::new();
+
+        for spec in &chart_specs {
+            let caption = spec.get("caption").and_then(|v| v.as_str()).unwrap_or("Data Chart");
+            let filename = spec.get("filename").and_then(|v| v.as_str()).unwrap_or("chart.png");
+            let code = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
+
+            if code.is_empty() {
+                continue;
+            }
+
+            // Patch the savefig path to use our charts directory
+            let chart_path = charts_dir.join(filename);
+            let patched_code = code.replace(
+                &format!("'{}'", filename),
+                &format!("'{}'", chart_path.to_string_lossy()),
+            ).replace(
+                &format!("\"{}\"", filename),
+                &format!("\"{}\"", chart_path.to_string_lossy()),
+            );
+
+            // Execute via script.run
+            let script_input = serde_json::json!({
+                "lang": "python3",
+                "code": patched_code,
+            });
+
+            match self.registry.execute_ability(
+                self.manifest,
+                "script.run",
+                &script_input.to_string(),
+            ) {
+                Ok(_) => {
+                    if chart_path.exists() {
+                        let file_size = std::fs::metadata(&chart_path)
+                            .map(|m| m.len())
+                            .unwrap_or(0);
+                        if file_size > 1000 {
+                            // Valid image (>1KB)
+                            eprintln!(
+                                "[composer] chart '{}' generated ({} bytes)",
+                                caption, file_size
+                            );
+                            chart_images.push((
+                                caption.to_string(),
+                                chart_path,
+                                Some("Auto-generated data visualization".to_string()),
+                            ));
+                        } else {
+                            eprintln!("[composer] chart '{}' too small ({}B), skipping", filename, file_size);
+                        }
+                    } else {
+                        eprintln!("[composer] chart '{}' not found after execution", filename);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[composer] chart '{}' execution failed: {}", filename, e);
+                }
+            }
+        }
+
+        chart_images
     }
 
     // -- Phase 5: Final Assembly ----------------------------------------------
