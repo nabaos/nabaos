@@ -615,7 +615,11 @@ impl Orchestrator {
                     let base = base.strip_suffix("/v1").unwrap_or(base);
                     provider.base_url = format!("{}/v1/chat/completions", base);
                 }
-                ability_registry.set_llm_provider(provider);
+                let supports_structured = provider_registry
+                    .get(prov_id)
+                    .map(|def| def.supports_structured_output)
+                    .unwrap_or(false);
+                ability_registry.set_llm_provider(provider, supports_structured);
                 break;
             }
         }
