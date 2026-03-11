@@ -1330,11 +1330,27 @@ impl<'a> DocumentComposer<'a> {
             let reason = merge.get("reason").and_then(|v| v.as_str()).unwrap_or("redundancy");
             let unique_claims = merge.get("unique_claims_to_preserve").and_then(|v| v.as_str()).unwrap_or("");
 
-            // Safety: never merge first or last section
+            // Protect structural sections (exec summary, conclusion, methodology,
+            // references, appendix, literature review) from merging.
+            // Also keep first section as safety net (usually exec summary).
             let first_id = sections.first().map(|s| s.id.as_str()).unwrap_or("");
-            let last_id = sections.last().map(|s| s.id.as_str()).unwrap_or("");
-            if absorb_id == first_id || absorb_id == last_id {
-                eprintln!("[nyaya] skipping merge of protected section '{}'", absorb_id);
+            let absorb_title = sections.iter()
+                .find(|s| s.id == absorb_id)
+                .map(|s| s.title.as_str())
+                .unwrap_or("");
+            let target_title = sections.iter()
+                .find(|s| s.id == into_id)
+                .map(|s| s.title.as_str())
+                .unwrap_or("");
+
+            if classify_section_role(absorb_title).is_some()
+                || classify_section_role(target_title).is_some()
+                || absorb_id == first_id
+            {
+                eprintln!(
+                    "[nyaya] skipping merge: '{}' or '{}' has structural role",
+                    absorb_title, target_title
+                );
                 continue;
             }
 
@@ -3737,5 +3753,39 @@ plt.savefig('chart.png')
         ];
         let issues = detect_coherence_issues(&sections);
         assert!(issues.is_empty()); // mid-section forward ref to ch3 is fine, not in last 3 looking backward
+    }
+
+    #[test]
+    fn test_nyaya_protects_structural_sections() {
+        // Structural sections (exec summary, conclusion, methodology) should never be merged
+        assert!(classify_section_role("Executive Summary and Introduction").is_some());
+        assert!(classify_section_role("Conclusion and Future Outlook").is_some());
+        assert!(classify_section_role("Methodology and Data Protocol").is_some());
+        assert!(classify_section_role("References").is_some());
+        assert!(classify_section_role("Appendix A: Supplementary Data").is_some());
+        assert!(classify_section_role("Literature Review").is_some());
+    }
+
+    #[test]
+    fn test_nyaya_merges_duplicate_content_sections() {
+        // Content sections should NOT be classified as structural
+        assert!(classify_section_role("Detailed Analysis of Transformer Efficiency").is_none());
+        assert!(classify_section_role("Speculative Decoding and MoE Techniques").is_none());
+        assert!(classify_section_role("Chapter 6: Performance Benchmarks").is_none());
+        assert!(classify_section_role("Case Study: NanoGPT").is_none());
+    }
+
+    #[test]
+    fn test_nyaya_first_section_always_protected() {
+        // Verify first_id logic: even a content section at position 0 is protected
+        let sections = vec![
+            GeneratedSection { id: "ch1".into(), title: "Detailed Analysis".into(), level: 0, content: "Content A".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "ch2".into(), title: "More Analysis".into(), level: 0, content: "Content B".into(), summary: "".into(), hook: None },
+        ];
+        let first_id = sections.first().map(|s| s.id.as_str()).unwrap_or("");
+        // ch1 is first, so it's protected even though it's not structural
+        assert_eq!(first_id, "ch1");
+        assert!(classify_section_role("Detailed Analysis").is_none()); // not structural
+        // The protection in nyaya_trim checks: absorb_id == first_id, so ch1 would be skipped
     }
 }

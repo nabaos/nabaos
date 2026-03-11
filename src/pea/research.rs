@@ -67,6 +67,9 @@ pub struct ResearchConfig {
     pub search_backend: SearchBackend,
     pub brave_api_key: Option<String>,
     pub searxng_url: Option<String>,
+    /// Whether to supplement web search with OpenAlex academic paper search.
+    /// Auto-detected from objective if not explicitly set.
+    pub academic_supplement: Option<bool>,
 }
 
 impl Default for ResearchConfig {
@@ -83,8 +86,25 @@ impl Default for ResearchConfig {
             ),
             brave_api_key: std::env::var("NABA_BRAVE_API_KEY").ok(),
             searxng_url: std::env::var("NABA_SEARXNG_URL").ok(),
+            academic_supplement: None,
         }
     }
+}
+
+/// Heuristic: does the objective look like it needs academic sources?
+/// Checks for academic keywords without requiring an LLM call.
+fn is_academic_objective(objective: &str) -> bool {
+    let lower = objective.to_ascii_lowercase();
+    let keywords = [
+        "survey", "review", "research", "study", "analysis",
+        "paper", "literature", "journal", "academic", "scholarly",
+        "empirical", "theoretical", "methodology", "hypothesis",
+        "regression", "statistical", "econometric", "meta-analysis",
+        "systematic review", "citation", "peer-reviewed",
+        "transformer", "neural", "machine learning", "deep learning",
+        "algorithm", "computational", "optimization",
+    ];
+    keywords.iter().filter(|k| lower.contains(*k)).count() >= 2
 }
 
 #[derive(Clone)]
@@ -275,6 +295,15 @@ impl<'a> ResearchEngine<'a> {
         let mut candidates = self.search_all_engines(&queries);
         eprintln!("[research] found {} unique candidates", candidates.len());
 
+        // Phase 2b: Academic supplement — add OpenAlex results if objective is academic
+        let use_academic = self.config.academic_supplement
+            .unwrap_or_else(|| is_academic_objective(objective));
+        if use_academic {
+            eprintln!("[research] academic objective detected, supplementing with OpenAlex");
+            let academic = self.search_openalex(&queries);
+            candidates.extend(academic);
+        }
+
         let total_candidates = candidates.len();
 
         // Phase 3: LLM relevance scoring
@@ -394,6 +423,38 @@ impl<'a> ResearchEngine<'a> {
             SearchBackend::BraveApi => self.search_via_brave_api(queries),
             SearchBackend::SearXng => self.search_via_searxng(queries),
         }
+    }
+
+    // -- Phase 2b: OpenAlex Academic Search ------------------------------------
+
+    fn search_openalex(&self, queries: &[String]) -> Vec<SearchCandidate> {
+        use crate::modules::research::OpenAlexClient;
+        let client = OpenAlexClient::new();
+        let mut candidates = Vec::new();
+        for query in queries.iter().take(2) {
+            match client.search_works(query, 15) {
+                Ok(works) => {
+                    for work in works {
+                        let url = work.doi
+                            .as_ref()
+                            .map(|d| if d.starts_with("http") { d.clone() } else { format!("https://doi.org/{}", d) })
+                            .unwrap_or_else(|| work.id.clone());
+                        let snippet = work.abstract_text.clone()
+                            .unwrap_or_else(|| OpenAlexClient::format_citation(&work));
+                        candidates.push(SearchCandidate {
+                            url,
+                            title: work.title,
+                            snippet,
+                            source_engine: "openalex".to_string(),
+                            relevance_score: None,
+                        });
+                    }
+                }
+                Err(e) => eprintln!("[research] OpenAlex query '{}' failed: {}", query, e),
+            }
+        }
+        eprintln!("[research] OpenAlex: found {} academic results", candidates.len());
+        candidates
     }
 
     /// Original 4-engine HTML scraping rotation (Bing/DDG/Brave/Google).
@@ -1513,5 +1574,35 @@ mod tests {
     fn test_source_tier_reporting_default() {
         assert_eq!(SourceTier::from_url("https://www.reuters.com/article"), SourceTier::Reporting);
         assert_eq!(SourceTier::from_url("https://www.bbc.com/news"), SourceTier::Reporting);
+    }
+
+    #[test]
+    fn test_is_academic_objective_positive() {
+        assert!(is_academic_objective("survey of transformer efficiency techniques"));
+        assert!(is_academic_objective("A comprehensive research study on deep learning optimization"));
+        assert!(is_academic_objective("literature review of neural network architectures"));
+    }
+
+    #[test]
+    fn test_is_academic_objective_negative() {
+        assert!(!is_academic_objective("write a recipe for chocolate cake"));
+        assert!(!is_academic_objective("plan my weekend trip to Paris"));
+        assert!(!is_academic_objective("how to fix a leaky faucet"));
+    }
+
+    #[test]
+    fn test_is_academic_two_keyword_threshold() {
+        // Single keyword → false
+        assert!(!is_academic_objective("a survey of popular restaurants"));
+        assert!(!is_academic_objective("research into the best hiking trails"));
+        // Two keywords → true
+        assert!(is_academic_objective("survey of research methods"));
+        assert!(is_academic_objective("empirical study of market trends"));
+    }
+
+    #[test]
+    fn test_research_config_academic_supplement_default() {
+        let config = ResearchConfig::default();
+        assert!(config.academic_supplement.is_none());
     }
 }
