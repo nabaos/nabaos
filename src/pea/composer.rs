@@ -198,6 +198,14 @@ impl<'a> DocumentComposer<'a> {
             all_notes.push("Nyaya trimmer disabled (ablation)".to_string());
         }
 
+        // Phase 4f: Source key mapping — replace raw URLs with clean citations
+        eprintln!("[composer] applying source key mapping...");
+        let source_registry = build_source_registry(corpus);
+        if let Some(refs) = apply_source_keys(&mut sections, &source_registry) {
+            eprintln!("[composer] added References section ({} sources)", source_registry.len());
+            sections.push(refs);
+        }
+
         // Phase 4d: Auto-generate data charts + PRISMA flow diagram
         eprintln!("[composer] generating data charts...");
         let chart_images = self.generate_charts(&sections, corpus, output_dir);
@@ -1964,6 +1972,188 @@ pub fn strip_thinking_tokens_pub(text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Source Key Mapping — clean citations
+// ---------------------------------------------------------------------------
+
+/// Look up a short display name for a known domain.
+fn lookup_short_name(domain: &str) -> Option<&'static str> {
+    let d = domain.trim_start_matches("www.");
+    match d {
+        "reuters.com" => Some("Reuters"),
+        "cgtn.com" => Some("CGTN"),
+        "bbc.com" | "bbc.co.uk" => Some("BBC"),
+        "un.org" => Some("UN"),
+        "brookings.edu" => Some("Brookings"),
+        "nytimes.com" => Some("NYT"),
+        "washingtonpost.com" => Some("Washington Post"),
+        "theguardian.com" => Some("The Guardian"),
+        "aljazeera.com" => Some("Al Jazeera"),
+        "apnews.com" => Some("AP"),
+        "cnbc.com" => Some("CNBC"),
+        "cnn.com" => Some("CNN"),
+        "ft.com" => Some("FT"),
+        "economist.com" => Some("The Economist"),
+        "foreignaffairs.com" => Some("Foreign Affairs"),
+        "foreignpolicy.com" => Some("Foreign Policy"),
+        "nature.com" => Some("Nature"),
+        "science.org" => Some("Science"),
+        "arxiv.org" => Some("arXiv"),
+        "who.int" => Some("WHO"),
+        "worldbank.org" => Some("World Bank"),
+        "imf.org" => Some("IMF"),
+        "europa.eu" => Some("EU"),
+        "whitehouse.gov" => Some("White House"),
+        "state.gov" => Some("State Dept"),
+        "defense.gov" => Some("DoD"),
+        "rand.org" => Some("RAND"),
+        "csis.org" => Some("CSIS"),
+        "cfr.org" => Some("CFR"),
+        "iiss.org" => Some("IISS"),
+        "sipri.org" => Some("SIPRI"),
+        "globaltimes.cn" => Some("Global Times"),
+        "scmp.com" => Some("SCMP"),
+        "xinhua.net" | "xinhuanet.com" => Some("Xinhua"),
+        "japantimes.co.jp" => Some("Japan Times"),
+        "dw.com" => Some("DW"),
+        "france24.com" => Some("France 24"),
+        "hindustantimes.com" => Some("HT"),
+        "timesofindia.indiatimes.com" => Some("TOI"),
+        "ndtv.com" => Some("NDTV"),
+        "thehindu.com" => Some("The Hindu"),
+        "bloomberg.com" => Some("Bloomberg"),
+        "forbes.com" => Some("Forbes"),
+        "bbc.com" => Some("BBC"),
+        "politico.com" | "politico.eu" => Some("Politico"),
+        _ => None,
+    }
+}
+
+/// Capitalize the second-level domain as a fallback short name.
+fn domain_fallback(domain: &str) -> String {
+    let d = domain.trim_start_matches("www.");
+    // Take second-level domain: "foo.example.com" → "example"
+    let parts: Vec<&str> = d.split('.').collect();
+    let name = if parts.len() >= 2 {
+        parts[parts.len() - 2]
+    } else {
+        parts.first().copied().unwrap_or(d)
+    };
+    let mut c = name.chars();
+    match c.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().to_string() + c.as_str(),
+    }
+}
+
+/// Build a mapping from source URL → short display name.
+fn build_source_registry(corpus: &ResearchCorpus) -> HashMap<String, String> {
+    let mut registry = HashMap::new();
+    let mut name_counts: HashMap<String, usize> = HashMap::new();
+
+    for source in &corpus.sources {
+        let url = &source.url;
+        // Extract domain from URL
+        let domain = url
+            .split("://")
+            .nth(1)
+            .unwrap_or(url)
+            .split('/')
+            .next()
+            .unwrap_or("");
+
+        let base_name = lookup_short_name(domain)
+            .map(String::from)
+            .unwrap_or_else(|| domain_fallback(domain));
+
+        let count = name_counts.entry(base_name.clone()).or_insert(0);
+        *count += 1;
+        let display_name = if *count > 1 {
+            format!("{}{}", base_name, count)
+        } else {
+            base_name
+        };
+
+        registry.insert(url.clone(), display_name);
+    }
+
+    registry
+}
+
+/// Replace `[text](url)` markdown links in section content with `(ShortName)` inline citations.
+/// Returns a References section if any links were replaced.
+fn apply_source_keys(
+    sections: &mut Vec<GeneratedSection>,
+    registry: &HashMap<String, String>,
+) -> Option<GeneratedSection> {
+    let link_re = regex::Regex::new(r"\[([^\]]*)\]\((https?://[^\)]+)\)").ok()?;
+
+    let mut ref_list: Vec<(String, String)> = Vec::new(); // (short_name, url)
+    let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for section in sections.iter_mut() {
+        if section.id == "references" {
+            continue;
+        }
+        let mut new_content = String::new();
+        let mut last_end = 0;
+
+        for cap in link_re.captures_iter(&section.content) {
+            let full_match = cap.get(0).unwrap();
+            let url = cap.get(2).unwrap().as_str();
+
+            // Look up short name from registry, or derive from URL
+            let domain = url
+                .split("://")
+                .nth(1)
+                .unwrap_or(url)
+                .split('/')
+                .next()
+                .unwrap_or("");
+            let short_name = registry
+                .get(url)
+                .cloned()
+                .unwrap_or_else(|| {
+                    lookup_short_name(domain)
+                        .map(String::from)
+                        .unwrap_or_else(|| domain_fallback(domain))
+                });
+
+            new_content.push_str(&section.content[last_end..full_match.start()]);
+            new_content.push_str(&format!("({})", short_name));
+            last_end = full_match.end();
+
+            if seen_urls.insert(url.to_string()) {
+                ref_list.push((short_name, url.to_string()));
+            }
+        }
+
+        if last_end > 0 {
+            new_content.push_str(&section.content[last_end..]);
+            section.content = new_content;
+        }
+    }
+
+    if ref_list.is_empty() {
+        return None;
+    }
+
+    // Build a numbered references section
+    let mut refs_content = String::new();
+    for (i, (name, url)) in ref_list.iter().enumerate() {
+        refs_content.push_str(&format!("{}. {} — {}\n", i + 1, name, url));
+    }
+
+    Some(GeneratedSection {
+        id: "references".into(),
+        title: "References".into(),
+        level: 0,
+        content: refs_content,
+        summary: format!("{} sources cited", ref_list.len()),
+        hook: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -2360,5 +2550,66 @@ mod tests {
         dedup_outline_sections(&mut outline2);
         assert_eq!(outline2.sections.len(), 2);
         assert_eq!(outline2.sections[0].id, "ch1");
+    }
+
+    // --- Source key mapping tests ---
+
+    #[test]
+    fn test_lookup_known_domains() {
+        assert_eq!(lookup_short_name("reuters.com"), Some("Reuters"));
+        assert_eq!(lookup_short_name("www.reuters.com"), Some("Reuters"));
+        assert_eq!(lookup_short_name("cgtn.com"), Some("CGTN"));
+        assert_eq!(lookup_short_name("bbc.co.uk"), Some("BBC"));
+        assert_eq!(lookup_short_name("un.org"), Some("UN"));
+    }
+
+    #[test]
+    fn test_unknown_domain_fallback() {
+        assert_eq!(domain_fallback("example.com"), "Example");
+        assert_eq!(domain_fallback("www.mysite.org"), "Mysite");
+        assert_eq!(domain_fallback("news.somesite.co.uk"), "Co");
+    }
+
+    #[test]
+    fn test_source_keys_replaces_links() {
+        let mut sections = vec![
+            GeneratedSection {
+                id: "ch1".into(),
+                title: "Analysis".into(),
+                level: 0,
+                content: "According to [a report](https://reuters.com/article/123) the situation is dire.".into(),
+                summary: "".into(),
+                hook: None,
+            },
+        ];
+        let registry: HashMap<String, String> = [
+            ("https://reuters.com/article/123".into(), "Reuters".into()),
+        ].into_iter().collect();
+
+        let refs = apply_source_keys(&mut sections, &registry);
+        assert!(sections[0].content.contains("(Reuters)"));
+        assert!(!sections[0].content.contains("https://reuters.com"));
+        assert!(refs.is_some());
+    }
+
+    #[test]
+    fn test_source_keys_creates_references() {
+        let mut sections = vec![
+            GeneratedSection {
+                id: "ch1".into(),
+                title: "Test".into(),
+                level: 0,
+                content: "See [report](https://bbc.com/news/1) and [analysis](https://cgtn.com/a/2).".into(),
+                summary: "".into(),
+                hook: None,
+            },
+        ];
+        let registry = HashMap::new();
+
+        let refs = apply_source_keys(&mut sections, &registry).unwrap();
+        assert_eq!(refs.id, "references");
+        assert!(refs.content.contains("BBC"));
+        assert!(refs.content.contains("CGTN"));
+        assert!(refs.content.contains("https://bbc.com/news/1"));
     }
 }
