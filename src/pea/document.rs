@@ -204,6 +204,16 @@ pub fn assemble_document(
     let backend = LatexBackend::detect();
 
     let mut current_tex = tex_source;
+
+    // 2b. LaTeX lint + auto-fix
+    let lint_errors = lint_latex(&current_tex);
+    if !lint_errors.is_empty() {
+        for e in &lint_errors {
+            eprintln!("[pea/doc] lint: {:?} — {}", e.severity, e.detail);
+        }
+        current_tex = auto_fix_lint(&current_tex, &lint_errors);
+    }
+
     let max_retries = 3;
 
     for attempt in 0..max_retries {
@@ -941,6 +951,161 @@ infographics, flowcharts, timelines, and data visualizations. Output ONLY the \
 \\begin{tikzpicture}...\\end{tikzpicture} block with no surrounding text.";
 
 // ---------------------------------------------------------------------------
+// LaTeX Lint + Auto-Fix
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub enum LintSeverity {
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct LintError {
+    pub severity: LintSeverity,
+    pub kind: &'static str,
+    pub detail: String,
+    pub line: Option<usize>,
+}
+
+/// Lint a LaTeX document for common quality issues.
+pub(crate) fn lint_latex(tex: &str) -> Vec<LintError> {
+    let mut errors = Vec::new();
+
+    let mut chapter_titles: Vec<String> = Vec::new();
+
+    for (line_num, line) in tex.lines().enumerate() {
+        let ln = Some(line_num + 1);
+
+        // Check for unresolved references: "Figure ??", "Table ??", "Chapter ??"
+        if line.contains("Figure ??") || line.contains("Table ??") || line.contains("Chapter ??")
+            || line.contains("Section ??")
+        {
+            errors.push(LintError {
+                severity: LintSeverity::Error,
+                kind: "unresolved_ref",
+                detail: format!("Unresolved reference on line {}", line_num + 1),
+                line: ln,
+            });
+        }
+
+        // Check for duplicate \chapter{Title}
+        if let Some(start) = line.find("\\chapter{") {
+            let rest = &line[start + 9..];
+            if let Some(end) = rest.find('}') {
+                let title = rest[..end].to_string();
+                if chapter_titles.contains(&title) {
+                    errors.push(LintError {
+                        severity: LintSeverity::Warning,
+                        kind: "duplicate_chapter",
+                        detail: format!("Duplicate chapter title: '{}'", title),
+                        line: ln,
+                    });
+                } else {
+                    chapter_titles.push(title);
+                }
+            }
+        }
+
+        // Check for bare URLs not in \url{} or \href{}
+        if (line.contains("http://") || line.contains("https://")) {
+            // Simple heuristic: URL not preceded by \url{ or \href{
+            let has_bare_url = {
+                let mut found = false;
+                for proto in &["http://", "https://"] {
+                    if let Some(pos) = line.find(proto) {
+                        let before = if pos >= 5 { &line[pos.saturating_sub(10)..pos] } else { &line[..pos] };
+                        if !before.contains("\\url{") && !before.contains("\\href{") && !before.contains("url=") {
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                found
+            };
+            if has_bare_url {
+                errors.push(LintError {
+                    severity: LintSeverity::Warning,
+                    kind: "bare_url",
+                    detail: format!("Bare URL on line {}", line_num + 1),
+                    line: ln,
+                });
+            }
+        }
+
+        // Check for overly wide tabulars (>6 columns)
+        if line.contains("\\begin{tabular}") {
+            if let Some(start) = line.find("\\begin{tabular}{") {
+                let rest = &line[start + 16..];
+                if let Some(end) = rest.find('}') {
+                    let col_spec = &rest[..end];
+                    let col_count = col_spec
+                        .chars()
+                        .filter(|c| matches!(c, 'l' | 'c' | 'r' | 'p' | 'X'))
+                        .count();
+                    if col_count > 6 {
+                        errors.push(LintError {
+                            severity: LintSeverity::Warning,
+                            kind: "wide_tabular",
+                            detail: format!("Tabular with {} columns (>6) on line {}", col_count, line_num + 1),
+                            line: ln,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    errors
+}
+
+/// Auto-fix lint errors where possible. Currently wraps bare URLs in \url{}.
+pub(crate) fn auto_fix_lint(tex: &str, errors: &[LintError]) -> String {
+    let has_bare_urls = errors.iter().any(|e| e.kind == "bare_url");
+    if !has_bare_urls {
+        return tex.to_string();
+    }
+
+    let url_re = regex::Regex::new(r"(https?://[^\s\}\)>,]+)").unwrap();
+    let mut result = String::with_capacity(tex.len() + 64);
+
+    for line in tex.lines() {
+        if (line.contains("http://") || line.contains("https://"))
+            && !line.contains("\\url{")
+            && !line.contains("\\href{")
+        {
+            // Replace URLs not already wrapped
+            let mut new_line = String::new();
+            let mut last = 0;
+            for m in url_re.find_iter(line) {
+                let before = &line[..m.start()];
+                // Check if preceded by \url{ or \href{
+                let already_wrapped = before.ends_with("\\url{") || before.ends_with("\\href{");
+                new_line.push_str(&line[last..m.start()]);
+                if already_wrapped {
+                    new_line.push_str(m.as_str());
+                } else {
+                    new_line.push_str(&format!("\\url{{{}}}", m.as_str()));
+                }
+                last = m.end();
+            }
+            new_line.push_str(&line[last..]);
+            result.push_str(&new_line);
+        } else {
+            result.push_str(line);
+        }
+        result.push('\n');
+    }
+
+    // Remove trailing extra newline if original didn't have one
+    if !tex.ends_with('\n') && result.ends_with('\n') {
+        result.pop();
+    }
+
+    result
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1290,5 +1455,51 @@ mod tests {
         assert!(!config.should_skip_stock_images());
         let config2 = StyleConfig { theme: "oriental".into(), ..Default::default() };
         assert!(!config2.should_skip_stock_images());
+    }
+
+    // --- LaTeX lint tests ---
+
+    #[test]
+    fn test_lint_unresolved_refs() {
+        let tex = "See Figure ?? for details.\nAlso Table ?? shows data.";
+        let errors = lint_latex(tex);
+        assert_eq!(errors.iter().filter(|e| e.kind == "unresolved_ref").count(), 2);
+    }
+
+    #[test]
+    fn test_lint_duplicate_chapters() {
+        let tex = "\\chapter{Introduction}\nSome text.\n\\chapter{Introduction}\nMore text.";
+        let errors = lint_latex(tex);
+        assert!(errors.iter().any(|e| e.kind == "duplicate_chapter"));
+    }
+
+    #[test]
+    fn test_lint_bare_url() {
+        let tex = "Visit https://example.com for more info.";
+        let errors = lint_latex(tex);
+        assert!(errors.iter().any(|e| e.kind == "bare_url"));
+    }
+
+    #[test]
+    fn test_lint_bare_url_not_in_href() {
+        let tex = "Visit \\url{https://example.com} for more info.";
+        let errors = lint_latex(tex);
+        assert!(!errors.iter().any(|e| e.kind == "bare_url"));
+    }
+
+    #[test]
+    fn test_auto_fix_wraps_urls() {
+        let tex = "Visit https://example.com for more info.";
+        let errors = lint_latex(tex);
+        let fixed = auto_fix_lint(tex, &errors);
+        assert!(fixed.contains("\\url{https://example.com}"));
+        assert!(!fixed.contains(" https://example.com "));
+    }
+
+    #[test]
+    fn test_lint_wide_tabular() {
+        let tex = "\\begin{tabular}{l c c c c c c c}\ndata\n\\end{tabular}";
+        let errors = lint_latex(tex);
+        assert!(errors.iter().any(|e| e.kind == "wide_tabular"));
     }
 }

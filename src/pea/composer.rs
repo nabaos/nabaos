@@ -2101,7 +2101,6 @@ fn lookup_short_name(domain: &str) -> Option<&'static str> {
         "thehindu.com" => Some("The Hindu"),
         "bloomberg.com" => Some("Bloomberg"),
         "forbes.com" => Some("Forbes"),
-        "bbc.com" => Some("BBC"),
         "politico.com" | "politico.eu" => Some("Politico"),
         _ => None,
     }
