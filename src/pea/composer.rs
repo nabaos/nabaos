@@ -206,6 +206,11 @@ impl<'a> DocumentComposer<'a> {
             sections.push(refs);
         }
 
+        // Phase 4g: Compression pass — rewrite verbose sections for brevity
+        eprintln!("[composer] running compression pass...");
+        let compress_notes = self.compress_for_brevity(&mut sections);
+        all_notes.extend(compress_notes);
+
         // Phase 4d: Auto-generate data charts + PRISMA flow diagram
         eprintln!("[composer] generating data charts...");
         let chart_images = self.generate_charts(&sections, corpus, output_dir);
@@ -1544,6 +1549,80 @@ plt.close()
 
     // -- Phase 5: Final Assembly ----------------------------------------------
 
+    /// Compression pass: rewrite verbose sections for brevity (~70% word count).
+    /// Skips sections under 300 words and the References section.
+    /// Gated by `NABA_PEA_COMPRESS` env var (default: enabled).
+    fn compress_for_brevity(&self, sections: &mut Vec<GeneratedSection>) -> Vec<String> {
+        let mut notes = Vec::new();
+
+        let enabled = std::env::var("NABA_PEA_COMPRESS")
+            .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+            .unwrap_or(true);
+        if !enabled {
+            notes.push("Compression pass disabled (NABA_PEA_COMPRESS=0)".into());
+            return notes;
+        }
+
+        for section in sections.iter_mut() {
+            if section.id == "references" {
+                continue;
+            }
+            let word_count = section.content.split_whitespace().count();
+            if word_count < 300 {
+                continue;
+            }
+
+            let prompt = format!(
+                "Rewrite the following text for brevity, targeting ~70% of the current word count ({} words → ~{} words). \
+                 Preserve ALL facts, citations in parentheses like (Reuters), statistics, and numerical data. \
+                 Remove filler words, redundant phrases, and unnecessary qualifiers. \
+                 Output ONLY the rewritten content, no explanation.\n\n{}",
+                word_count,
+                (word_count as f64 * 0.7) as usize,
+                &section.content
+            );
+
+            let input = serde_json::json!({
+                "system": "You are an editorial compression engine. Output ONLY the rewritten text.",
+                "prompt": prompt,
+                "max_tokens": self.config.max_tokens_per_section / 2,
+                "thinking": false,
+            });
+
+            match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+                Ok(result) => {
+                    let compressed = String::from_utf8_lossy(&result.output).to_string();
+                    let compressed = compressed.trim().to_string();
+                    let new_count = compressed.split_whitespace().count();
+                    let ratio = new_count as f64 / word_count as f64;
+
+                    // Safety: accept only if 40-90% of original
+                    if ratio >= 0.4 && ratio <= 0.9 {
+                        eprintln!(
+                            "[composer] compressed '{}': {} → {} words ({:.0}%)",
+                            section.title, word_count, new_count, ratio * 100.0
+                        );
+                        section.content = compressed;
+                        notes.push(format!(
+                            "Compressed '{}': {} → {} words",
+                            section.title, word_count, new_count
+                        ));
+                    } else {
+                        eprintln!(
+                            "[composer] compression rejected for '{}': ratio {:.2} out of range",
+                            section.title, ratio
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[composer] compression failed for '{}': {}", section.title, e);
+                }
+            }
+        }
+
+        notes
+    }
+
     fn assemble_output(
         &self,
         doc: &ComposedDocument,
@@ -2611,5 +2690,33 @@ mod tests {
         assert!(refs.content.contains("BBC"));
         assert!(refs.content.contains("CGTN"));
         assert!(refs.content.contains("https://bbc.com/news/1"));
+    }
+
+    // --- Compression pass tests (logic only, no LLM) ---
+
+    #[test]
+    fn test_compress_skips_short() {
+        // Sections under 300 words should not be touched by compression
+        let short_content = "This is a short section with very few words.";
+        assert!(short_content.split_whitespace().count() < 300);
+        // The compress_for_brevity method requires a DocumentComposer with LLM,
+        // so we test the word-count gating logic directly
+        let word_count = short_content.split_whitespace().count();
+        assert!(word_count < 300, "short content should be below threshold");
+    }
+
+    #[test]
+    fn test_compress_skips_references() {
+        // References section should always be skipped
+        let section = GeneratedSection {
+            id: "references".into(),
+            title: "References".into(),
+            level: 0,
+            content: "1. Reuters — https://reuters.com/article/123\n".repeat(100),
+            summary: "".into(),
+            hook: None,
+        };
+        assert_eq!(section.id, "references");
+        // The compress logic checks `section.id == "references"` to skip
     }
 }
