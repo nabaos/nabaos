@@ -66,18 +66,22 @@ impl StyleConfig {
     /// Returns true when stock images should be skipped (analytical/report themes).
     /// Override with `NABA_PEA_SKIP_STOCKS=0` env var.
     pub fn should_skip_stock_images(&self) -> bool {
+        // Env var override takes priority
         if let Ok(v) = std::env::var("NABA_PEA_SKIP_STOCKS") {
             if v == "0" || v.eq_ignore_ascii_case("false") {
                 return false;
             }
         }
-        if !self.skip_stock_images {
-            return false;
-        }
-        matches!(
+        // Analytical/report themes ALWAYS skip stock images regardless of LLM output
+        let is_analytical_theme = matches!(
             self.theme.to_ascii_lowercase().as_str(),
             "analytical" | "academic" | "corporate" | "technical" | "minimal" | "editorial" | "clean"
-        )
+        );
+        if is_analytical_theme {
+            return true;
+        }
+        // Non-analytical themes keep stock images by default
+        false
     }
 }
 
