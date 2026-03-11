@@ -197,14 +197,24 @@ pub struct ComposerConfig {
     pub max_depth: usize,
     pub review_rounds: usize,
     pub max_tokens_per_section: u32,
+    /// Whether to run statistical analysis before composition.
+    /// None = auto-detect from objective, Some(true) = force on, Some(false) = force off.
+    /// Env: NABA_PEA_STATS=true|false|auto
+    pub statistical_analysis: Option<bool>,
 }
 
 impl Default for ComposerConfig {
     fn default() -> Self {
+        let stats = match std::env::var("NABA_PEA_STATS").as_deref() {
+            Ok("true") => Some(true),
+            Ok("false") => Some(false),
+            _ => None, // auto-detect
+        };
         Self {
             max_depth: 3,
             review_rounds: 2,
             max_tokens_per_section: 8192,
+            statistical_analysis: stats,
         }
     }
 }
@@ -299,6 +309,39 @@ impl<'a> DocumentComposer<'a> {
         std::fs::create_dir_all(output_dir)
             .map_err(|e| NyayaError::Config(format!("create output dir: {}", e)))?;
 
+        // Phase 0: Statistical Analysis (if applicable)
+        let stat_results = {
+            let run_stats = self.config.statistical_analysis
+                .unwrap_or_else(|| crate::pea::statistical::is_statistical_objective(objective));
+            if run_stats {
+                eprintln!("[composer] running statistical analysis phase...");
+                let analyzer = crate::pea::statistical::StatisticalAnalyzer::new(
+                    self.registry, self.manifest,
+                );
+                match analyzer.analyze(objective, corpus) {
+                    Ok(Some(results)) => {
+                        eprintln!(
+                            "[composer] statistical analysis complete: {} summaries, {} findings",
+                            results.summaries.len(),
+                            results.key_findings.len()
+                        );
+                        Some(results)
+                    }
+                    Ok(None) => {
+                        eprintln!("[composer] statistical analysis: no quantitative data found");
+                        None
+                    }
+                    Err(e) => {
+                        eprintln!("[composer] statistical analysis failed (non-fatal): {}", e);
+                        None
+                    }
+                }
+            } else {
+                eprintln!("[composer] statistical analysis: skipped (not applicable)");
+                None
+            }
+        };
+
         // Phase 1: Plan structure
         eprintln!("[composer] planning document structure...");
         let mut outline = self.plan_structure(objective, corpus, task_results)?;
@@ -325,7 +368,7 @@ impl<'a> DocumentComposer<'a> {
 
         // Phase 3: Generate sections
         eprintln!("[composer] generating sections...");
-        let mut sections = self.generate_sections(&outline, corpus, task_results)?;
+        let mut sections = self.generate_sections(&outline, corpus, task_results, stat_results.as_ref())?;
         eprintln!("[composer] generated {} sections", sections.len());
 
         // Phase 4: Quality review (2 rounds)
@@ -541,6 +584,7 @@ impl<'a> DocumentComposer<'a> {
         outline: &DocumentOutline,
         corpus: &ResearchCorpus,
         task_results: &[(String, String)],
+        stat_results: Option<&crate::pea::statistical::StatisticalResults>,
     ) -> Result<Vec<GeneratedSection>> {
         let flat = flatten_outline(&outline.sections);
 
@@ -594,16 +638,23 @@ impl<'a> DocumentComposer<'a> {
                 )
             };
 
+            // Statistical analysis context (if available)
+            let stat_context = stat_results
+                .map(|r| format!("\n\n{}", r.as_context()))
+                .unwrap_or_default();
+
             let prompt = format!(
                 "You are writing section \"{}\" of \"{}\".\n\n\
                  CONTEXT FROM PREVIOUS SECTIONS:\n{}\n\n\
                  RESEARCH SOURCES for this section:\n{}\n\n\
-                 TASK RESULTS:\n{}\n\n\
+                 TASK RESULTS:\n{}\
+                 {}\n\n\
                  SECTION REQUIREMENTS:\n{}\
                  {}\n\n\
                  Write this section. Requirements:\n\
                  - Make it engaging and well-structured\n\
                  - Cite sources with [Author/Site](URL) format\n\
+                 - Reference statistical findings where relevant to strengthen claims\n\
                  - End with a hook/transition that leads into the next section: \"{}\"\n\
                  - Do NOT include \\section{{}} or chapter headers — just the body content\n\n\
                  After the content, on a NEW line write:\n\
@@ -614,6 +665,7 @@ impl<'a> DocumentComposer<'a> {
                 if prev_context.is_empty() { "(first section)" } else { &prev_context },
                 relevant_sources,
                 task_context,
+                stat_context,
                 section.description,
                 phrase_warning,
                 next_title,
