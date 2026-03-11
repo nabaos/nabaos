@@ -59,8 +59,8 @@ impl<'a> PeaBridge<'a> {
         match route {
             TaskRoute::Llm => self.execute_llm(task_description, objective_description, prior_results, cached_web_context),
             TaskRoute::Media => self.execute_media(task_description, objective_description, prior_results),
-            TaskRoute::FileSystem => self.execute_filesystem(task_description, objective_description, prior_results),
-            TaskRoute::Swarm => self.execute_swarm(task_description, objective_description, prior_results),
+            TaskRoute::FileSystem => self.execute_filesystem(task_description, objective_description, prior_results, cached_web_context),
+            TaskRoute::Swarm => self.execute_swarm(task_description, objective_description, prior_results, cached_web_context),
             _ => self.execute_llm(task_description, objective_description, prior_results, cached_web_context),
         }
     }
@@ -257,12 +257,13 @@ impl<'a> PeaBridge<'a> {
         task_description: &str,
         objective_description: &str,
         prior_results: &[(String, String)],
+        cached_web_context: Option<&str>,
     ) -> TaskResult {
         // Use LLM to generate the content, then write directly to output_dir.
         // We use std::fs::write instead of the sandboxed files.write ability
         // because PEA output writes are internal engine operations and the
         // sandbox's path traversal guard rejects absolute paths.
-        let content_result = self.execute_llm(task_description, objective_description, prior_results, None);
+        let content_result = self.execute_llm(task_description, objective_description, prior_results, cached_web_context);
         if !content_result.success {
             return content_result;
         }
@@ -304,9 +305,10 @@ impl<'a> PeaBridge<'a> {
         task_description: &str,
         objective_description: &str,
         prior_results: &[(String, String)],
+        cached_web_context: Option<&str>,
     ) -> TaskResult {
         // Swarm route now handled by execute_llm which does web search for all tasks
-        self.execute_llm(task_description, objective_description, prior_results, None)
+        self.execute_llm(task_description, objective_description, prior_results, cached_web_context)
     }
 
     // -- Search helpers -------------------------------------------------------

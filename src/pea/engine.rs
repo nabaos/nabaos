@@ -453,8 +453,50 @@ impl PeaEngine {
 
             match action {
                 BdiAction::Persist => {
-                    // Find next ready primitive task and execute it.
-                    // Compound tasks complete when all children complete.
+                    // Execute all ready primitive tasks in a loop within this tick,
+                    // rather than waiting for the next heartbeat between each task.
+                    loop {
+                    // Re-promote tasks whose dependencies just completed
+                    {
+                        let mut all_tasks = self.store.list_tasks(&obj.id)?;
+                        HtnDecomposer::promote_ready_tasks(&mut all_tasks);
+                        // Auto-complete compound tasks whose children are all done
+                        let done_ids: std::collections::HashSet<String> = all_tasks
+                            .iter()
+                            .filter(|t| matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped))
+                            .map(|t| t.id.clone())
+                            .collect();
+                        let compounds_to_complete: Vec<String> = all_tasks
+                            .iter()
+                            .filter(|t| {
+                                t.task_type == TaskType::Compound
+                                    && !matches!(t.status, TaskStatus::Completed | TaskStatus::Skipped)
+                            })
+                            .filter(|t| {
+                                let prefix = format!("{}.", t.id);
+                                let children: Vec<&PeaTask> = all_tasks
+                                    .iter()
+                                    .filter(|c| c.id.starts_with(&prefix))
+                                    .collect();
+                                !children.is_empty()
+                                    && children.iter().all(|c| done_ids.contains(&c.id))
+                            })
+                            .map(|t| t.id.clone())
+                            .collect();
+                        let now_inner = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        for t in all_tasks.iter_mut() {
+                            if compounds_to_complete.contains(&t.id) {
+                                t.status = TaskStatus::Completed;
+                                t.completed_at = Some(now_inner);
+                            }
+                        }
+                        for t in &all_tasks {
+                            self.store.save_task(t)?;
+                        }
+                    }
                     let ready = self.store.list_ready_tasks(&obj.id)?;
                     if let Some(next) = ready.iter().find(|t| t.task_type == TaskType::Primitive) {
                         self.store
@@ -473,17 +515,45 @@ impl PeaEngine {
 
                         // Compute research once per desire, cache context + corpus.
                         // Check in-memory cache first, then disk, then run fresh.
+                        // Use content hash of objective description for disk cache key
+                        // so the same query reuses research across restarts/re-commits.
                         let desire_id = &next.desire_id;
                         if !self.research_cache.contains_key(desire_id) {
                             use crate::pea::research::{ResearchConfig, ResearchCorpus, ResearchEngine};
+                            use std::hash::{Hash, Hasher};
+                            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                            obj.description.hash(&mut hasher);
+                            let desc_hash = format!("{:x}", hasher.finish());
                             let corpus_path = data_dir
                                 .join("pea_output")
                                 .join(&obj.id)
-                                .join(format!("research_{}.json", desire_id));
+                                .join(format!("research_{}.json", desc_hash));
 
                             // Try disk cache (valid for 4 hours)
+                            // Also check for any research_*.json in the obj dir as fallback
+                            // (handles old desire-id-based filenames)
+                            let fallback_corpus = if !corpus_path.exists() {
+                                let obj_dir = data_dir.join("pea_output").join(&obj.id);
+                                std::fs::read_dir(&obj_dir).ok().and_then(|entries| {
+                                    entries.filter_map(|e| e.ok())
+                                        .find(|e| {
+                                            let name = e.file_name().to_string_lossy().to_string();
+                                            name.starts_with("research_") && name.ends_with(".json")
+                                        })
+                                        .map(|e| e.path())
+                                })
+                            } else {
+                                None
+                            };
+                            let effective_corpus_path = if corpus_path.exists() {
+                                corpus_path.clone()
+                            } else if let Some(ref fb) = fallback_corpus {
+                                fb.clone()
+                            } else {
+                                corpus_path.clone()
+                            };
                             let corpus = if let Some(cached) = ResearchCorpus::load_from_disk(
-                                &corpus_path,
+                                &effective_corpus_path,
                                 std::time::Duration::from_secs(4 * 3600),
                             ) {
                                 eprintln!(
@@ -512,9 +582,30 @@ impl PeaEngine {
                                 let kg_path = data_dir
                                     .join("pea_output")
                                     .join(&obj.id)
-                                    .join(format!("kg_{}.json", desire_id));
+                                    .join(format!("kg_{}.json", desc_hash));
 
-                                let kg = if let Some(cached_kg) = KnowledgeGraph::load_from_disk(&kg_path) {
+                                // Also try fallback kg file
+                                let fallback_kg = if !kg_path.exists() {
+                                    let obj_dir = data_dir.join("pea_output").join(&obj.id);
+                                    std::fs::read_dir(&obj_dir).ok().and_then(|entries| {
+                                        entries.filter_map(|e| e.ok())
+                                            .find(|e| {
+                                                let name = e.file_name().to_string_lossy().to_string();
+                                                name.starts_with("kg_") && name.ends_with(".json")
+                                            })
+                                            .map(|e| e.path())
+                                    })
+                                } else {
+                                    None
+                                };
+                                let effective_kg_path = if kg_path.exists() {
+                                    kg_path.clone()
+                                } else if let Some(ref fb) = fallback_kg {
+                                    fb.clone()
+                                } else {
+                                    kg_path.clone()
+                                };
+                                let kg = if let Some(cached_kg) = KnowledgeGraph::load_from_disk(&effective_kg_path) {
                                     eprintln!(
                                         "[pea] reusing cached KG for desire {} ({} entities)",
                                         desire_id, cached_kg.entities.len()
@@ -584,6 +675,14 @@ impl PeaEngine {
                                 result.output.len(),
                                 result.cost_usd
                             ));
+
+                            // Re-check budget before continuing to next task
+                            let obj_now = self.store.load_objective(&obj.id)?.unwrap_or_else(|| obj.clone());
+                            let bc = BudgetController::new(obj_now.budget_usd, obj_now.spent_usd, obj_now.budget_strategy.clone());
+                            if bc.current_mode() == BudgetMode::Exhausted {
+                                break;
+                            }
+                            continue; // Execute next ready task immediately
                         } else {
                             // Task failed — retry or mark failed
                             let mut updated_task = next.clone();
@@ -602,10 +701,13 @@ impl PeaEngine {
                                 ));
                             }
                             self.store.save_task(&updated_task)?;
+                            break; // Don't continue loop on failure
                         }
                     } else {
                         actions.push("Persisting — no ready tasks".to_string());
+                        break;
                     }
+                    } // end loop
                 }
                 BdiAction::Commit { desire_id } => {
                     actions.push(format!("Committing to desire '{}'", desire_id));
@@ -1114,19 +1216,42 @@ impl PeaEngine {
                             ));
                             cached_corpus.clone()
                         } else {
-                            eprintln!("[pea] no cached corpus, running fresh research for composition");
-                            let research = ResearchEngine::new(
-                                registry,
-                                manifest,
-                                ResearchConfig::default(),
-                            );
-                            let c = research.execute(&obj.description, "compile final document");
-                            actions.push(format!(
-                                "Research: {} sources from {} candidates",
-                                c.sources.len(),
-                                c.total_candidates,
-                            ));
-                            c
+                            // Try disk cache before running fresh research
+                            use crate::pea::research::ResearchCorpus;
+                            let obj_dir = data_dir.join("pea_output").join(&obj.id);
+                            let disk_corpus = std::fs::read_dir(&obj_dir).ok().and_then(|entries| {
+                                entries.filter_map(|e| e.ok())
+                                    .find(|e| {
+                                        let name = e.file_name().to_string_lossy().to_string();
+                                        name.starts_with("research_") && name.ends_with(".json")
+                                    })
+                                    .and_then(|e| ResearchCorpus::load_from_disk(
+                                        &e.path(),
+                                        std::time::Duration::from_secs(4 * 3600),
+                                    ))
+                            });
+                            if let Some(cached) = disk_corpus {
+                                eprintln!("[pea] reusing disk-cached research corpus ({} sources) for composition", cached.sources.len());
+                                actions.push(format!(
+                                    "Research: reused disk cache ({} sources)",
+                                    cached.sources.len(),
+                                ));
+                                cached
+                            } else {
+                                eprintln!("[pea] no cached corpus, running fresh research for composition");
+                                let research = ResearchEngine::new(
+                                    registry,
+                                    manifest,
+                                    ResearchConfig::default(),
+                                );
+                                let c = research.execute(&obj.description, "compile final document");
+                                actions.push(format!(
+                                    "Research: {} sources from {} candidates",
+                                    c.sources.len(),
+                                    c.total_candidates,
+                                ));
+                                c
+                            }
                         };
 
                         let composer = DocumentComposer::new(
@@ -1135,6 +1260,22 @@ impl PeaEngine {
                             ComposerConfig::default(),
                         );
                         // Look up KG for the desire that triggered composition
+                        // Try in-memory first, then disk cache
+                        if self.kg_cache.is_empty() {
+                            use crate::pea::knowledge_graph::KnowledgeGraph;
+                            let obj_dir = data_dir.join("pea_output").join(&obj.id);
+                            if let Some(kg) = std::fs::read_dir(&obj_dir).ok().and_then(|entries| {
+                                entries.filter_map(|e| e.ok())
+                                    .find(|e| {
+                                        let name = e.file_name().to_string_lossy().to_string();
+                                        name.starts_with("kg_") && name.ends_with(".json")
+                                    })
+                                    .and_then(|e| KnowledgeGraph::load_from_disk(&e.path()))
+                            }) {
+                                eprintln!("[pea] reusing disk-cached KG ({} entities) for composition", kg.entities.len());
+                                self.kg_cache.insert("_composition".to_string(), kg);
+                            }
+                        }
                         let kg_ref = self.kg_cache.values().next();
                         composer.compose_document_with_kg(
                             &obj.description,

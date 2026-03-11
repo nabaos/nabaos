@@ -229,7 +229,7 @@ pub fn builtin_providers() -> Vec<ProviderDef> {
     providers.push(openai_compat(
         "novita",
         "Novita AI",
-        "https://api.novita.ai",
+        "https://api.novita.ai/openai/v1",
     ));
     providers.push(openai_compat(
         "sambanova",

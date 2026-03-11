@@ -608,7 +608,13 @@ impl Orchestrator {
         // Wire LLM provider into AbilityRegistry for llm.summarize / llm.chat
         let ability_model_override = config.llm_model.as_deref();
         for prov_id in &provider_registry.list_configured() {
-            if let Ok(provider) = provider_registry.build_provider(prov_id, ability_model_override) {
+            if let Ok(mut provider) = provider_registry.build_provider(prov_id, ability_model_override) {
+                // Apply custom base URL override (same logic as resolve_llm_provider)
+                if let Some(ref base_url) = config.llm_base_url {
+                    let base = base_url.trim_end_matches('/');
+                    let base = base.strip_suffix("/v1").unwrap_or(base);
+                    provider.base_url = format!("{}/v1/chat/completions", base);
+                }
                 ability_registry.set_llm_provider(provider);
                 break;
             }
