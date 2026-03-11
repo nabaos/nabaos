@@ -1160,7 +1160,11 @@ impl AbilityRegistry {
                 } else {
                     provider.complete_no_think(system_prompt, prompt, max_tokens)
                 }.map_err(|e| format!("LLM chat failed: {}", e))?;
-                (response.text.into_bytes(), None, HashMap::new())
+                let mut facts = HashMap::new();
+                facts.insert("input_tokens".into(), response.input_tokens.to_string());
+                facts.insert("output_tokens".into(), response.output_tokens.to_string());
+                facts.insert("latency_ms".into(), response.latency_ms.to_string());
+                (response.text.into_bytes(), None, facts)
             }
 
             "script.run" => {

@@ -7,8 +7,10 @@
 //   4. Quality Review: 2-round coherence + readability review with targeted fixes
 //   5. Final Assembly: Combine sections into HTML/LaTeX/PDF output
 
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::core::error::{NyayaError, Result};
 use crate::pea::document::{self, ImageEntry, StyleConfig};
@@ -21,10 +23,55 @@ use crate::runtime::manifest::AgentManifest;
 // Core types
 // ---------------------------------------------------------------------------
 
+/// Tracks cumulative LLM token usage across the composition pipeline.
+#[derive(Debug, Default)]
+pub struct TokenTracker {
+    input_tokens: Cell<u64>,
+    output_tokens: Cell<u64>,
+    llm_calls: Cell<u32>,
+    llm_latency_ms: Cell<u64>,
+}
+
+impl TokenTracker {
+    /// Accumulate token data from an AbilityResult's facts.
+    fn track(&self, facts: &HashMap<String, String>) {
+        if let Some(v) = facts.get("input_tokens") {
+            if let Ok(n) = v.parse::<u64>() {
+                self.input_tokens.set(self.input_tokens.get() + n);
+            }
+        }
+        if let Some(v) = facts.get("output_tokens") {
+            if let Ok(n) = v.parse::<u64>() {
+                self.output_tokens.set(self.output_tokens.get() + n);
+            }
+        }
+        if let Some(v) = facts.get("latency_ms") {
+            if let Ok(n) = v.parse::<u64>() {
+                self.llm_latency_ms.set(self.llm_latency_ms.get() + n);
+            }
+        }
+        self.llm_calls.set(self.llm_calls.get() + 1);
+    }
+
+    fn log_summary(&self, wall_elapsed: std::time::Duration) {
+        eprintln!("╔══════════════════════════════════════════════════╗");
+        eprintln!("║            PEA Token Usage Summary               ║");
+        eprintln!("╠══════════════════════════════════════════════════╣");
+        eprintln!("║  LLM calls:      {:>8}                       ║", self.llm_calls.get());
+        eprintln!("║  Input tokens:   {:>8}                       ║", self.input_tokens.get());
+        eprintln!("║  Output tokens:  {:>8}                       ║", self.output_tokens.get());
+        eprintln!("║  Total tokens:   {:>8}                       ║", self.input_tokens.get() + self.output_tokens.get());
+        eprintln!("║  LLM latency:    {:>7.1}s                       ║", self.llm_latency_ms.get() as f64 / 1000.0);
+        eprintln!("║  Wall time:      {:>7.1}s                       ║", wall_elapsed.as_secs_f64());
+        eprintln!("╚══════════════════════════════════════════════════╝");
+    }
+}
+
 pub struct DocumentComposer<'a> {
     registry: &'a AbilityRegistry,
     manifest: &'a AgentManifest,
     config: ComposerConfig,
+    tokens: TokenTracker,
 }
 
 pub struct ComposerConfig {
@@ -93,7 +140,16 @@ impl<'a> DocumentComposer<'a> {
         manifest: &'a AgentManifest,
         config: ComposerConfig,
     ) -> Self {
-        Self { registry, manifest, config }
+        Self { registry, manifest, config, tokens: TokenTracker::default() }
+    }
+
+    /// Execute an ability and track token usage from the result.
+    fn exec_ability(&self, ability: &str, input: &str) -> std::result::Result<crate::runtime::host_functions::AbilityResult, String> {
+        let result = self.registry.execute_ability(self.manifest, ability, input);
+        if let Ok(ref r) = result {
+            self.tokens.track(&r.facts);
+        }
+        result
     }
 
     /// Full composition pipeline: plan → order → generate → review → assemble.
@@ -120,6 +176,7 @@ impl<'a> DocumentComposer<'a> {
         output_dir: &Path,
         kg: Option<&KnowledgeGraph>,
     ) -> Result<PathBuf> {
+        let pipeline_start = Instant::now();
         std::fs::create_dir_all(output_dir)
             .map_err(|e| NyayaError::Config(format!("create output dir: {}", e)))?;
 
@@ -251,7 +308,9 @@ impl<'a> DocumentComposer<'a> {
             review_notes: all_notes,
         };
 
-        self.assemble_output(&doc, &all_images, style, output_dir)
+        let result = self.assemble_output(&doc, &all_images, style, output_dir);
+        self.tokens.log_summary(pipeline_start.elapsed());
+        result
     }
 
     // -- Phase 1: Structure Planning ------------------------------------------
@@ -434,11 +493,7 @@ impl<'a> DocumentComposer<'a> {
                 "thinking": false,
             });
 
-            let (content, summary, hook) = match self.registry.execute_ability(
-                self.manifest,
-                "llm.chat",
-                &input.to_string(),
-            ) {
+            let (content, summary, hook) = match self.exec_ability("llm.chat", &input.to_string()) {
                 Ok(result) => {
                     let output = String::from_utf8_lossy(&result.output).to_string();
                     parse_section_output(&output)
@@ -538,11 +593,7 @@ impl<'a> DocumentComposer<'a> {
             "max_tokens": 4096,
         });
 
-        let issues = match self.registry.execute_ability(
-            self.manifest,
-            "llm.chat",
-            &input.to_string(),
-        ) {
+        let issues = match self.exec_ability("llm.chat", &input.to_string()) {
             Ok(result) => {
                 let raw = String::from_utf8_lossy(&result.output).to_string();
                 parse_review_issues(&raw)
@@ -608,11 +659,7 @@ impl<'a> DocumentComposer<'a> {
                         "thinking": false,
                     });
 
-                    if let Ok(result) = self.registry.execute_ability(
-                        self.manifest,
-                        "llm.chat",
-                        &fix_input.to_string(),
-                    ) {
+                    if let Ok(result) = self.exec_ability("llm.chat", &fix_input.to_string()) {
                         let fixed = String::from_utf8_lossy(&result.output).to_string();
                         if !fixed.is_empty() && fixed.len() > section.content.len() / 4 {
                             section.content = fixed;
@@ -697,7 +744,7 @@ impl<'a> DocumentComposer<'a> {
                 "thinking": false,
             });
 
-            match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+            match self.exec_ability("llm.chat", &input.to_string()) {
                 Ok(result) => {
                     let output = String::from_utf8_lossy(&result.output).to_string();
                     let (content, summary, hook) = parse_section_output(&output);
@@ -784,7 +831,7 @@ impl<'a> DocumentComposer<'a> {
             "max_tokens": 4096,
         });
 
-        match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+        match self.exec_ability("llm.chat", &input.to_string()) {
             Ok(result) => {
                 let raw = String::from_utf8_lossy(&result.output).to_string();
                 let raw = strip_thinking_tokens(&raw);
@@ -879,7 +926,7 @@ impl<'a> DocumentComposer<'a> {
             "thinking": false,
         });
 
-        match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+        match self.exec_ability("llm.chat", &input.to_string()) {
             Ok(result) => {
                 let raw = String::from_utf8_lossy(&result.output).to_string();
                 let raw = strip_thinking_tokens(&raw);
@@ -927,9 +974,7 @@ impl<'a> DocumentComposer<'a> {
                                     "max_tokens": self.config.max_tokens_per_section,
                                     "thinking": false,
                                 });
-                                if let Ok(fix_result) = self.registry.execute_ability(
-                                    self.manifest, "llm.chat", &fix_input.to_string()
-                                ) {
+                                if let Ok(fix_result) = self.exec_ability("llm.chat", &fix_input.to_string()) {
                                     let fixed = String::from_utf8_lossy(&fix_result.output).to_string();
                                     let fixed = strip_thinking_tokens(&fixed).trim().to_string();
                                     if !fixed.is_empty() && fixed.len() > section.content.len() / 3 {
@@ -1117,7 +1162,7 @@ impl<'a> DocumentComposer<'a> {
             "max_tokens": 4096,
         });
 
-        let raw = match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+        let raw = match self.exec_ability("llm.chat", &input.to_string()) {
             Ok(result) => {
                 let output = String::from_utf8_lossy(&result.output).to_string();
                 strip_thinking_tokens(&output)
@@ -1449,7 +1494,7 @@ plt.close()
             "code": code,
         });
 
-        match self.registry.execute_ability(self.manifest, "script.run", &script_input.to_string()) {
+        match self.exec_ability("script.run", &script_input.to_string()) {
             Ok(_) if prisma_path.exists() => {
                 eprintln!("[composer] PRISMA flow diagram generated");
                 Some((
@@ -1556,7 +1601,7 @@ plt.close()
             "code": code,
         });
 
-        match self.registry.execute_ability(self.manifest, "script.run", &script_input.to_string()) {
+        match self.exec_ability("script.run", &script_input.to_string()) {
             Ok(_) if dist_path.exists() => {
                 eprintln!("[composer] source distribution chart generated");
                 Some((
@@ -1647,11 +1692,7 @@ plt.close()
             "thinking": false,
         });
 
-        let charts_json = match self.registry.execute_ability(
-            self.manifest,
-            "llm.chat",
-            &input.to_string(),
-        ) {
+        let charts_json = match self.exec_ability("llm.chat", &input.to_string()) {
             Ok(result) => {
                 let raw = String::from_utf8_lossy(&result.output).to_string();
                 let raw = strip_thinking_tokens(&raw);
@@ -1699,11 +1740,7 @@ plt.close()
                 "code": patched_code,
             });
 
-            match self.registry.execute_ability(
-                self.manifest,
-                "script.run",
-                &script_input.to_string(),
-            ) {
+            match self.exec_ability("script.run", &script_input.to_string()) {
                 Ok(_) => {
                     if chart_path.exists() {
                         let file_size = std::fs::metadata(&chart_path)
@@ -1777,7 +1814,7 @@ plt.close()
                 "thinking": false,
             });
 
-            match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+            match self.exec_ability("llm.chat", &input.to_string()) {
                 Ok(result) => {
                     let compressed = String::from_utf8_lossy(&result.output).to_string();
                     let compressed = compressed.trim().to_string();
