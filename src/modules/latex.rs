@@ -75,6 +75,30 @@ impl LatexBackend {
             .into_owned();
         Ok(output_dir.join(format!("{}.pdf", stem)))
     }
+
+    /// Compile twice for documents with ToC/references (first pass generates
+    /// .toc/.aux, second reads them). Tectonic handles multi-pass internally.
+    pub fn compile_twice(&self, tex_path: &Path, output_dir: &Path) -> Result<PathBuf> {
+        match self {
+            LatexBackend::Tectonic(_) => {
+                // Tectonic handles multi-pass internally
+                self.compile(tex_path, output_dir)
+            }
+            LatexBackend::PdfLatex(_) | LatexBackend::XeLatex(_) => {
+                // First pass: generates .toc/.aux
+                eprintln!("[latex] pass 1/2...");
+                let _ = self.compile(tex_path, output_dir);
+                // Second pass: reads .toc/.aux for proper ToC and refs
+                eprintln!("[latex] pass 2/2...");
+                self.compile(tex_path, output_dir)
+            }
+            LatexBackend::NotFound => {
+                Err(NyayaError::Config(
+                    "No LaTeX backend found. Install tectonic, pdflatex, or xelatex.".into(),
+                ))
+            }
+        }
+    }
 }
 
 /// A single line item on an invoice.

@@ -220,8 +220,26 @@ pub fn assemble_document(
         std::fs::write(&tex_path, &current_tex)
             .map_err(|e| NyayaError::Config(format!("Failed to write .tex file: {}", e)))?;
 
-        match backend.compile(&tex_path, output_dir) {
-            Ok(pdf_path) => return Ok(pdf_path),
+        // Use double-pass for documents with ToC (gated by NABA_PEA_DOUBLE_PASS)
+        let double_pass = std::env::var("NABA_PEA_DOUBLE_PASS")
+            .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+            .unwrap_or(true);
+        let compile_result = if double_pass && current_tex.contains("\\tableofcontents") {
+            backend.compile_twice(&tex_path, output_dir)
+        } else {
+            backend.compile(&tex_path, output_dir)
+        };
+
+        match compile_result {
+            Ok(pdf_path) => {
+                // Post-compile QA: analyse log + toc
+                let toc_path = output_dir.join("output.toc");
+                let (qa_warnings, _critical) = analyse_compile_log(&log_path, &toc_path);
+                for w in &qa_warnings {
+                    eprintln!("[pea/doc] compile QA: {}", w);
+                }
+                return Ok(pdf_path);
+            }
             Err(compile_err) => {
                 if attempt + 1 >= max_retries {
                     // All retries exhausted — fall back to HTML
@@ -951,6 +969,55 @@ infographics, flowcharts, timelines, and data visualizations. Output ONLY the \
 \\begin{tikzpicture}...\\end{tikzpicture} block with no surrounding text.";
 
 // ---------------------------------------------------------------------------
+// Compile Log QA
+// ---------------------------------------------------------------------------
+
+/// Analyse a LaTeX compile log and .toc file for quality issues.
+/// Returns (warnings, has_critical_issues).
+pub(crate) fn analyse_compile_log(log_path: &Path, toc_path: &Path) -> (Vec<String>, bool) {
+    let mut warnings = Vec::new();
+    let mut critical = false;
+
+    // Analyse .log file
+    if let Ok(log) = std::fs::read_to_string(log_path) {
+        let unresolved_refs = log.lines()
+            .filter(|l| l.contains("LaTeX Warning: Reference"))
+            .count();
+        if unresolved_refs > 0 {
+            warnings.push(format!("{} unresolved reference(s)", unresolved_refs));
+            if unresolved_refs > 3 {
+                critical = true;
+            }
+        }
+
+        let overfull = log.lines()
+            .filter(|l| l.contains("Overfull \\hbox"))
+            .count();
+        if overfull > 5 {
+            warnings.push(format!("{} overfull hbox warnings", overfull));
+        }
+    }
+
+    // Check .toc file
+    if toc_path.exists() {
+        match std::fs::read_to_string(toc_path) {
+            Ok(toc) if toc.trim().is_empty() => {
+                warnings.push("Table of Contents is empty".into());
+                critical = true;
+            }
+            Ok(_) => {} // toc present and non-empty
+            Err(_) => {
+                warnings.push("Could not read .toc file".into());
+            }
+        }
+    } else {
+        warnings.push("No .toc file generated".into());
+    }
+
+    (warnings, critical)
+}
+
+// ---------------------------------------------------------------------------
 // LaTeX Lint + Auto-Fix
 // ---------------------------------------------------------------------------
 
@@ -1501,5 +1568,51 @@ mod tests {
         let tex = "\\begin{tabular}{l c c c c c c c}\ndata\n\\end{tabular}";
         let errors = lint_latex(tex);
         assert!(errors.iter().any(|e| e.kind == "wide_tabular"));
+    }
+
+    // --- Compile log QA tests ---
+
+    #[test]
+    fn test_analyse_log_ref_warnings() {
+        let dir = std::env::temp_dir().join("nabaos_test_log_refs");
+        let _ = std::fs::create_dir_all(&dir);
+        let log_path = dir.join("output.log");
+        std::fs::write(&log_path, "LaTeX Warning: Reference `fig1' on page 3 undefined.\nLaTeX Warning: Reference `tab2' on page 5 undefined.\n").unwrap();
+        let toc_path = dir.join("output.toc");
+        std::fs::write(&toc_path, "\\contentsline {chapter}{Introduction}{1}").unwrap();
+
+        let (warnings, critical) = analyse_compile_log(&log_path, &toc_path);
+        assert!(warnings.iter().any(|w| w.contains("2 unresolved")));
+        assert!(!critical); // only 2, threshold is >3
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_analyse_log_empty_toc() {
+        let dir = std::env::temp_dir().join("nabaos_test_log_toc_empty");
+        let _ = std::fs::create_dir_all(&dir);
+        let log_path = dir.join("output.log");
+        std::fs::write(&log_path, "").unwrap();
+        let toc_path = dir.join("output.toc");
+        std::fs::write(&toc_path, "  \n").unwrap();
+
+        let (warnings, critical) = analyse_compile_log(&log_path, &toc_path);
+        assert!(warnings.iter().any(|w| w.contains("empty")));
+        assert!(critical);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_analyse_log_present_toc() {
+        let dir = std::env::temp_dir().join("nabaos_test_log_toc_ok");
+        let _ = std::fs::create_dir_all(&dir);
+        let log_path = dir.join("output.log");
+        std::fs::write(&log_path, "Output written on output.pdf").unwrap();
+        let toc_path = dir.join("output.toc");
+        std::fs::write(&toc_path, "\\contentsline {chapter}{Introduction}{1}\n\\contentsline {chapter}{Analysis}{5}").unwrap();
+
+        let (warnings, _critical) = analyse_compile_log(&log_path, &toc_path);
+        assert!(!warnings.iter().any(|w| w.contains("empty")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
