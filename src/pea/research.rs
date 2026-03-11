@@ -96,7 +96,7 @@ pub struct SearchCandidate {
     pub relevance_score: Option<f32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SourceTier {
     /// Government statements, UN documents, official data
     Primary,
@@ -151,7 +151,7 @@ impl SourceTier {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct FetchedSource {
     pub url: String,
     pub title: String,
@@ -161,13 +161,13 @@ pub struct FetchedSource {
     pub tier: SourceTier,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum FetchMethod {
     Http,
     ChromePool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ResearchCorpus {
     pub query: String,
     pub sources: Vec<FetchedSource>,
@@ -212,6 +212,31 @@ impl ResearchCorpus {
         }
 
         ctx
+    }
+
+    /// Save corpus to disk as JSON for reuse across runs.
+    pub fn save_to_disk(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        std::fs::write(path, json)
+    }
+
+    /// Load corpus from disk if it exists and is fresh enough.
+    /// Returns None if file doesn't exist or is older than `max_age`.
+    pub fn load_from_disk(
+        path: &std::path::Path,
+        max_age: std::time::Duration,
+    ) -> Option<Self> {
+        let metadata = std::fs::metadata(path).ok()?;
+        let modified = metadata.modified().ok()?;
+        if modified.elapsed().ok()? > max_age {
+            return None;
+        }
+        let json = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&json).ok()
     }
 }
 

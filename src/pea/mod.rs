@@ -9,6 +9,7 @@ pub mod engine;
 pub mod episode;
 pub mod executor;
 pub mod htn;
+pub mod knowledge_graph;
 pub mod objective;
 pub mod output_store;
 pub mod pramana;

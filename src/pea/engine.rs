@@ -37,6 +37,8 @@ pub struct PeaEngine {
     /// research pipeline (search + fetch + score) on every tick.
     /// Stores (context_string, corpus) so composition can reuse the corpus.
     research_cache: std::collections::HashMap<String, (String, crate::pea::research::ResearchCorpus)>,
+    /// Knowledge graph per desire_id — extracted entities and relationships.
+    kg_cache: std::collections::HashMap<String, crate::pea::knowledge_graph::KnowledgeGraph>,
 }
 
 fn uuid_simple() -> String {
@@ -75,6 +77,7 @@ impl PeaEngine {
             htn: HtnDecomposer::default(),
             pramana: PramanaValidator::default(),
             research_cache: std::collections::HashMap::new(),
+            kg_cache: std::collections::HashMap::new(),
         })
     }
 
@@ -469,16 +472,64 @@ impl PeaEngine {
                             .collect();
 
                         // Compute research once per desire, cache context + corpus.
+                        // Check in-memory cache first, then disk, then run fresh.
                         let desire_id = &next.desire_id;
                         if !self.research_cache.contains_key(desire_id) {
-                            use crate::pea::research::{ResearchConfig, ResearchEngine};
-                            let re = ResearchEngine::new(registry, manifest, ResearchConfig::default());
-                            let corpus = re.execute(&obj.description, &next.description);
+                            use crate::pea::research::{ResearchConfig, ResearchCorpus, ResearchEngine};
+                            let corpus_path = data_dir
+                                .join("pea_output")
+                                .join(&obj.id)
+                                .join(format!("research_{}.json", desire_id));
+
+                            // Try disk cache (valid for 4 hours)
+                            let corpus = if let Some(cached) = ResearchCorpus::load_from_disk(
+                                &corpus_path,
+                                std::time::Duration::from_secs(4 * 3600),
+                            ) {
+                                eprintln!(
+                                    "[pea] reusing cached research for desire {} ({} sources)",
+                                    desire_id, cached.sources.len()
+                                );
+                                cached
+                            } else {
+                                let re = ResearchEngine::new(registry, manifest, ResearchConfig::default());
+                                let corpus = re.execute(&obj.description, &next.description);
+                                // Persist to disk for reuse
+                                if let Err(e) = corpus.save_to_disk(&corpus_path) {
+                                    eprintln!("[pea] failed to persist research corpus: {}", e);
+                                }
+                                corpus
+                            };
+
                             let ctx = if corpus.sources.is_empty() {
                                 String::new()
                             } else {
                                 corpus.to_context_string()
                             };
+                            // Build knowledge graph from corpus
+                            if !self.kg_cache.contains_key(desire_id) && !corpus.sources.is_empty() {
+                                use crate::pea::knowledge_graph::KnowledgeGraph;
+                                let kg_path = data_dir
+                                    .join("pea_output")
+                                    .join(&obj.id)
+                                    .join(format!("kg_{}.json", desire_id));
+
+                                let kg = if let Some(cached_kg) = KnowledgeGraph::load_from_disk(&kg_path) {
+                                    eprintln!(
+                                        "[pea] reusing cached KG for desire {} ({} entities)",
+                                        desire_id, cached_kg.entities.len()
+                                    );
+                                    cached_kg
+                                } else {
+                                    let kg = KnowledgeGraph::from_corpus(&corpus, registry, manifest);
+                                    if let Err(e) = kg.save_to_disk(&kg_path) {
+                                        eprintln!("[pea] failed to persist KG: {}", e);
+                                    }
+                                    kg
+                                };
+                                self.kg_cache.insert(desire_id.clone(), kg);
+                            }
+
                             self.research_cache.insert(desire_id.clone(), (ctx, corpus));
                         }
                         let cached_context = self.research_cache.get(desire_id).map(|(ctx, _)| ctx.clone());
@@ -635,8 +686,9 @@ impl PeaEngine {
                     completed_desire_id,
                     next_desire_id,
                 } => {
-                    // Evict research cache for the completed desire
+                    // Evict research + KG cache for the completed desire
                     self.research_cache.remove(&completed_desire_id);
+                    self.kg_cache.remove(&completed_desire_id);
                     self.store
                         .update_desire_status(&completed_desire_id, &DesireStatus::Achieved)?;
                     actions.push(format!(
@@ -1082,13 +1134,16 @@ impl PeaEngine {
                             manifest,
                             ComposerConfig::default(),
                         );
-                        composer.compose_document(
+                        // Look up KG for the desire that triggered composition
+                        let kg_ref = self.kg_cache.values().next();
+                        composer.compose_document_with_kg(
                             &obj.description,
                             &corpus,
                             &task_results,
                             &images,
                             &style_config,
                             &output_dir,
+                            kg_ref,
                         )
                     };
 

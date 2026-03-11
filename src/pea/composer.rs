@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::error::{NyayaError, Result};
 use crate::pea::document::{self, ImageEntry, StyleConfig};
+use crate::pea::knowledge_graph::KnowledgeGraph;
 use crate::pea::research::ResearchCorpus;
 use crate::runtime::host_functions::AbilityRegistry;
 use crate::runtime::manifest::AgentManifest;
@@ -105,6 +106,20 @@ impl<'a> DocumentComposer<'a> {
         style: &StyleConfig,
         output_dir: &Path,
     ) -> Result<PathBuf> {
+        self.compose_document_with_kg(objective, corpus, task_results, images, style, output_dir, None)
+    }
+
+    /// Composition pipeline with optional knowledge graph for structural deduplication.
+    pub fn compose_document_with_kg(
+        &self,
+        objective: &str,
+        corpus: &ResearchCorpus,
+        task_results: &[(String, String)],
+        images: &[ImageEntry],
+        style: &StyleConfig,
+        output_dir: &Path,
+        kg: Option<&KnowledgeGraph>,
+    ) -> Result<PathBuf> {
         std::fs::create_dir_all(output_dir)
             .map_err(|e| NyayaError::Config(format!("create output dir: {}", e)))?;
 
@@ -164,7 +179,7 @@ impl<'a> DocumentComposer<'a> {
         if nyaya_trim_enabled {
             let before_count = sections.len();
             eprintln!("[composer] applying Nyaya trimmer ({} sections)...", before_count);
-            let trim_notes = self.nyaya_trim(&mut sections);
+            let trim_notes = self.nyaya_trim(&mut sections, kg);
             let after_count = sections.len();
             if before_count != after_count {
                 eprintln!(
@@ -777,9 +792,13 @@ impl<'a> DocumentComposer<'a> {
 
     /// Run the Nyaya trimmer on generated sections.
     ///
-    /// Uses LLM to analyze claim overlap and categorical mapping, then merges
-    /// redundant sections. Returns trim notes for the review log.
-    fn nyaya_trim(&self, sections: &mut Vec<GeneratedSection>) -> Vec<String> {
+    /// Uses KG entity overlap (when available) + LLM analysis to identify
+    /// redundant sections and merge them. Returns trim notes for the review log.
+    fn nyaya_trim(
+        &self,
+        sections: &mut Vec<GeneratedSection>,
+        kg: Option<&KnowledgeGraph>,
+    ) -> Vec<String> {
         let mut notes = Vec::new();
 
         if sections.len() < 4 {
@@ -787,6 +806,38 @@ impl<'a> DocumentComposer<'a> {
             return notes;
         }
 
+        // Phase A: KG-based structural overlap (fast, no LLM call)
+        if let Some(kg) = kg {
+            if !kg.entities.is_empty() {
+                eprintln!("[nyaya] running KG-based entity overlap analysis ({} entities)...", kg.entities.len());
+                let mut kg_overlaps = Vec::new();
+                for i in 1..sections.len().saturating_sub(1) {
+                    for j in (i + 1)..sections.len().saturating_sub(1) {
+                        let ratio = kg.overlap_ratio(&sections[i].content, &sections[j].content);
+                        if ratio > 0.5 {
+                            kg_overlaps.push((i, j, ratio));
+                        }
+                    }
+                }
+                if !kg_overlaps.is_empty() {
+                    kg_overlaps.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+                    for (i, j, ratio) in &kg_overlaps {
+                        eprintln!(
+                            "[nyaya] KG overlap: '{}' ↔ '{}' = {:.0}%",
+                            sections[*i].title, sections[*j].title, ratio * 100.0
+                        );
+                    }
+                    notes.push(format!(
+                        "KG overlap: {} section pairs with >50% entity overlap",
+                        kg_overlaps.len()
+                    ));
+                }
+
+                // Feed KG overlap data into the LLM prompt below
+            }
+        }
+
+        // Phase B: LLM-based claim analysis (includes KG entity data if available)
         // Build section digest for LLM analysis
         let section_digest: String = sections
             .iter()
@@ -796,9 +847,23 @@ impl<'a> DocumentComposer<'a> {
                 } else {
                     s.content.clone()
                 };
+                // Include KG entities found in this section (if KG available)
+                let entity_info = if let Some(kg) = kg {
+                    let entities = kg.entities_in_text(&s.content);
+                    if entities.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "\nEntities: {}",
+                            entities.iter().take(10).map(|e| format!("{}({})", e.name, e.entity_type.label())).collect::<Vec<_>>().join(", ")
+                        )
+                    }
+                } else {
+                    String::new()
+                };
                 format!(
-                    "SECTION [{}] \"{}\"\nSummary: {}\nContent preview:\n{}\n",
-                    s.id, s.title, s.summary, preview
+                    "SECTION [{}] \"{}\"\nSummary: {}{}\nContent preview:\n{}\n",
+                    s.id, s.title, s.summary, entity_info, preview
                 )
             })
             .collect::<Vec<_>>()
@@ -1826,6 +1891,16 @@ fn strip_thinking_tokens(text: &str) -> String {
 fn parse_review_issues(raw: &str) -> Vec<serde_json::Value> {
     let json_str = extract_json(raw);
     serde_json::from_str::<Vec<serde_json::Value>>(json_str).unwrap_or_default()
+}
+
+/// Public wrapper for `extract_json` — used by KG module.
+pub fn extract_json_pub(raw: &str) -> &str {
+    extract_json(raw)
+}
+
+/// Public wrapper for `strip_thinking_tokens` — used by KG module.
+pub fn strip_thinking_tokens_pub(text: &str) -> String {
+    strip_thinking_tokens(text)
 }
 
 // ---------------------------------------------------------------------------
