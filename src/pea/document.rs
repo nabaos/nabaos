@@ -706,7 +706,7 @@ pub(crate) fn postprocess_latex(tex: &str, images: &[ImageEntry], output_dir: &P
 
     // Fix image paths: replace any absolute/relative paths with just filenames
     // since we'll copy images to output_dir
-    for (_, path, _) in images {
+    for (caption, path, _) in images {
         if let Some(filename) = path.file_name() {
             let filename_str = filename.to_string_lossy();
             // Copy image to output dir
@@ -719,7 +719,58 @@ pub(crate) fn postprocess_latex(tex: &str, images: &[ImageEntry], output_dir: &P
         }
     }
 
+    // Wrap bare \includegraphics (not already inside \begin{figure}) in figure envs with labels
+    result = wrap_bare_includegraphics(&result, images);
+
     result
+}
+
+/// Wrap \includegraphics lines that aren't inside a figure environment into
+/// proper figure floats with caption and label. This prevents "Figure ??" refs.
+fn wrap_bare_includegraphics(tex: &str, images: &[ImageEntry]) -> String {
+    let lines: Vec<&str> = tex.lines().collect();
+    let mut output = Vec::with_capacity(lines.len());
+    let mut fig_counter = 0;
+    let mut in_figure = false;
+
+    for (i, line) in lines.iter().enumerate() {
+        if line.contains("\\begin{figure}") {
+            in_figure = true;
+        }
+        if line.contains("\\end{figure}") {
+            in_figure = false;
+        }
+
+        if line.contains("\\includegraphics") && !in_figure {
+            fig_counter += 1;
+            let label = format!("fig:auto{}", fig_counter);
+
+            // Try to find a matching caption from images
+            let caption = images.iter()
+                .find(|(_, p, _)| {
+                    if let Some(fname) = p.file_name() {
+                        line.contains(&fname.to_string_lossy().as_ref())
+                    } else {
+                        false
+                    }
+                })
+                .map(|(c, _, _)| c.as_str())
+                .unwrap_or("Figure");
+
+            let safe_caption = super::super::modules::latex::latex_escape(caption);
+
+            output.push("\\begin{figure}[htbp]".to_string());
+            output.push("\\centering".to_string());
+            output.push(line.to_string());
+            output.push(format!("\\caption{{{}}}", safe_caption));
+            output.push(format!("\\label{{{}}}", label));
+            output.push("\\end{figure}".to_string());
+        } else {
+            output.push(line.to_string());
+        }
+    }
+
+    output.join("\n")
 }
 
 /// Ask the LLM to fix LaTeX compilation errors, then sanitize the result.
@@ -1129,8 +1180,24 @@ pub(crate) fn lint_latex(tex: &str) -> Vec<LintError> {
 /// Auto-fix lint errors where possible. Currently wraps bare URLs in \url{}.
 pub(crate) fn auto_fix_lint(tex: &str, errors: &[LintError]) -> String {
     let has_bare_urls = errors.iter().any(|e| e.kind == "bare_url");
-    if !has_bare_urls {
+    let has_unresolved = errors.iter().any(|e| e.kind == "unresolved_ref");
+
+    if !has_bare_urls && !has_unresolved {
         return tex.to_string();
+    }
+
+    // Fix "Figure ??", "Table ??", etc. by removing the unresolved reference
+    let mut tex = tex.to_string();
+    if has_unresolved {
+        let ref_re = regex::Regex::new(r"(Figure|Table|Chapter|Section)\s+\?\?").unwrap();
+        tex = ref_re.replace_all(&tex, |caps: &regex::Captures| {
+            let kind = caps.get(1).unwrap().as_str();
+            format!("the {}", kind.to_lowercase())
+        }).to_string();
+    }
+
+    if !has_bare_urls {
+        return tex;
     }
 
     let url_re = regex::Regex::new(r"(https?://[^\s\}\)>,]+)").unwrap();
@@ -1614,5 +1681,40 @@ mod tests {
         let (warnings, _critical) = analyse_compile_log(&log_path, &toc_path);
         assert!(!warnings.iter().any(|w| w.contains("empty")));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- PRISMA linkage + figure wrapping tests ---
+
+    #[test]
+    fn test_wrap_bare_includegraphics() {
+        let tex = "Some text\n\\includegraphics[width=0.8\\textwidth]{prisma_flow.png}\nMore text";
+        let images: Vec<ImageEntry> = vec![
+            ("PRISMA Flow Diagram".into(), PathBuf::from("prisma_flow.png"), None),
+        ];
+        let result = wrap_bare_includegraphics(tex, &images);
+        assert!(result.contains("\\begin{figure}"));
+        assert!(result.contains("\\label{fig:auto1}"));
+        assert!(result.contains("\\caption{PRISMA Flow Diagram}"));
+        assert!(result.contains("\\end{figure}"));
+    }
+
+    #[test]
+    fn test_wrap_skips_existing_figure_env() {
+        let tex = "\\begin{figure}\n\\includegraphics{chart.png}\n\\end{figure}";
+        let images: Vec<ImageEntry> = vec![];
+        let result = wrap_bare_includegraphics(tex, &images);
+        // Should NOT double-wrap
+        assert_eq!(result.matches("\\begin{figure}").count(), 1);
+    }
+
+    #[test]
+    fn test_auto_fix_resolves_figure_qq() {
+        let tex = "See Figure ?? for the methodology.\nAlso Table ?? shows results.";
+        let errors = lint_latex(tex);
+        let fixed = auto_fix_lint(tex, &errors);
+        assert!(!fixed.contains("Figure ??"));
+        assert!(!fixed.contains("Table ??"));
+        assert!(fixed.contains("the figure"));
+        assert!(fixed.contains("the table"));
     }
 }
