@@ -1111,6 +1111,16 @@ impl<'a> DocumentComposer<'a> {
             eprintln!("[composer] matplotlib not available, skipping LLM-driven data charts");
         }
 
+        // 4. Dedup charts by file content hash (removes identical images)
+        let before = chart_images.len();
+        chart_images = dedup_chart_images(chart_images);
+        if chart_images.len() < before {
+            eprintln!(
+                "[composer] chart dedup: {} → {} (removed {} duplicates)",
+                before, chart_images.len(), before - chart_images.len()
+            );
+        }
+
         chart_images
     }
 
@@ -1488,6 +1498,9 @@ plt.close()
 
         let mut chart_images: Vec<ImageEntry> = Vec::new();
 
+        // Dedup chart specs by caption similarity before executing
+        let chart_specs = dedup_chart_specs(chart_specs);
+
         for spec in &chart_specs {
             let caption = spec.get("caption").and_then(|v| v.as_str()).unwrap_or("Data Chart");
             let filename = spec.get("filename").and_then(|v| v.as_str()).unwrap_or("chart.png");
@@ -1683,6 +1696,91 @@ fn reorder_outline_sections(outline: &mut DocumentOutline) {
     outline.sections.extend(front);
     outline.sections.extend(body);
     outline.sections.extend(back);
+}
+
+/// Dedup chart specs by caption similarity before execution.
+/// Prevents the LLM from generating multiple charts with nearly identical captions.
+fn dedup_chart_specs(specs: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let mut kept: Vec<serde_json::Value> = Vec::new();
+    let mut seen_captions: Vec<String> = Vec::new();
+
+    for spec in specs {
+        let caption = spec
+            .get("caption")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        // Normalize: strip punctuation, lowercase
+        let words: Vec<&str> = caption
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() > 2)
+            .collect();
+
+        let is_dup = seen_captions.iter().any(|prev| {
+            let prev_words: Vec<&str> = prev
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| w.len() > 2)
+                .collect();
+            if prev_words.is_empty() || words.is_empty() {
+                return false;
+            }
+            let shared = words.iter().filter(|w| prev_words.contains(w)).count();
+            let max_len = words.len().max(prev_words.len());
+            (shared as f64 / max_len as f64) > 0.7
+        });
+
+        if !is_dup {
+            seen_captions.push(caption);
+            kept.push(spec);
+        } else {
+            let orig = spec.get("caption").and_then(|v| v.as_str()).unwrap_or("");
+            eprintln!("[composer] chart dedup: skipping near-duplicate caption '{}'", orig);
+        }
+    }
+
+    kept
+}
+
+/// Dedup chart images by file content hash. Removes identical images
+/// (same pixel data) that may have different captions.
+fn dedup_chart_images(images: Vec<ImageEntry>) -> Vec<ImageEntry> {
+    use std::collections::HashSet;
+
+    let mut seen_hashes: HashSet<u64> = HashSet::new();
+    let mut kept: Vec<ImageEntry> = Vec::new();
+
+    for entry in images {
+        let hash = match std::fs::read(&entry.1) {
+            Ok(bytes) => {
+                // Simple FNV-1a hash of file contents
+                let mut h: u64 = 0xcbf29ce484222325;
+                for byte in &bytes {
+                    h ^= *byte as u64;
+                    h = h.wrapping_mul(0x100000001b3);
+                }
+                h
+            }
+            Err(_) => {
+                // Can't read file, keep it
+                kept.push(entry);
+                continue;
+            }
+        };
+
+        if seen_hashes.insert(hash) {
+            kept.push(entry);
+        } else {
+            eprintln!(
+                "[composer] chart dedup: removing identical image '{}'",
+                entry.0
+            );
+            // Delete the duplicate file
+            let _ = std::fs::remove_file(&entry.1);
+        }
+    }
+
+    kept
 }
 
 /// Deduplicate near-identical top-level section titles.
@@ -2717,5 +2815,60 @@ mod tests {
         };
         assert_eq!(section.id, "references");
         // The compress logic checks `section.id == "references"` to skip
+    }
+
+    // --- Chart dedup tests ---
+
+    #[test]
+    fn test_dedup_chart_specs_removes_similar_captions() {
+        let specs: Vec<serde_json::Value> = vec![
+            serde_json::json!({"caption": "Scenario Probability Assessment", "filename": "chart_1.png", "code": "import matplotlib"}),
+            serde_json::json!({"caption": "Scenario Probability Assessment Chart", "filename": "chart_2.png", "code": "import matplotlib"}),
+            serde_json::json!({"caption": "Economic Impact by Region", "filename": "chart_3.png", "code": "import matplotlib"}),
+        ];
+        let deduped = dedup_chart_specs(specs);
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0]["caption"], "Scenario Probability Assessment");
+        assert_eq!(deduped[1]["caption"], "Economic Impact by Region");
+    }
+
+    #[test]
+    fn test_dedup_chart_specs_keeps_distinct() {
+        let specs: Vec<serde_json::Value> = vec![
+            serde_json::json!({"caption": "GDP Growth Comparison", "filename": "chart_1.png", "code": "x"}),
+            serde_json::json!({"caption": "Military Expenditure Timeline", "filename": "chart_2.png", "code": "x"}),
+            serde_json::json!({"caption": "Source Distribution by Type", "filename": "chart_3.png", "code": "x"}),
+        ];
+        let deduped = dedup_chart_specs(specs);
+        assert_eq!(deduped.len(), 3);
+    }
+
+    #[test]
+    fn test_dedup_chart_images_by_content() {
+        let dir = std::env::temp_dir().join("nabaos_test_chart_dedup");
+        let _ = std::fs::create_dir_all(&dir);
+
+        // Write two identical files and one different
+        let img_a = dir.join("chart_a.png");
+        let img_b = dir.join("chart_b.png");
+        let img_c = dir.join("chart_c.png");
+        std::fs::write(&img_a, b"identical content here").unwrap();
+        std::fs::write(&img_b, b"identical content here").unwrap();
+        std::fs::write(&img_c, b"different content").unwrap();
+
+        let images: Vec<ImageEntry> = vec![
+            ("Chart A".into(), img_a.clone(), Some("auto".into())),
+            ("Chart B".into(), img_b.clone(), Some("auto".into())),
+            ("Chart C".into(), img_c.clone(), Some("auto".into())),
+        ];
+
+        let deduped = dedup_chart_images(images);
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].0, "Chart A");
+        assert_eq!(deduped[1].0, "Chart C");
+        // Duplicate file should be cleaned up
+        assert!(!img_b.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
