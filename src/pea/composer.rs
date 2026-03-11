@@ -195,6 +195,9 @@ impl<'a> DocumentComposer<'a> {
         // Phase 1b2: Deduplicate near-identical section titles
         dedup_outline_sections(&mut outline);
 
+        // Phase 1b3: Role-based deduplication (catches variants like "Executive Summary" vs "Executive Summary & Introduction")
+        dedup_by_role(&mut outline);
+
         // Phase 1c: Cap total sections at 15
         cap_section_count(&mut outline, 15);
 
@@ -243,6 +246,10 @@ impl<'a> DocumentComposer<'a> {
         }
         all_notes.extend(wash_notes);
 
+        // Phase 4d2: Evidence gate — analytical sections must contain data
+        eprintln!("[composer] enforcing evidence gate...");
+        self.enforce_evidence_gate(&mut sections);
+
         // Phase 4e: Nyaya trimmer — deduplicate and merge sections using
         // Anadhigata (novelty), Pramana hierarchy (evidence priority), and
         // Padartha structure (categorical coherence).
@@ -281,6 +288,14 @@ impl<'a> DocumentComposer<'a> {
         eprintln!("[composer] running compression pass...");
         let compress_notes = self.compress_for_brevity(&mut sections);
         all_notes.extend(compress_notes);
+
+        // Phase 4g2: Global coherence pass — detect and fix circular references
+        eprintln!("[composer] checking global coherence...");
+        let coherence_issues = detect_coherence_issues(&sections);
+        if !coherence_issues.is_empty() {
+            eprintln!("[composer] {} coherence issues found", coherence_issues.len());
+            fix_coherence_issues(&mut sections, &coherence_issues);
+        }
 
         // Phase 4d: Auto-generate data charts + PRISMA flow diagram
         eprintln!("[composer] generating data charts...");
@@ -1024,6 +1039,95 @@ impl<'a> DocumentComposer<'a> {
         }
     }
 
+    // -- Phase 4d2: Evidence Gate -----------------------------------------------
+
+    /// Enforce evidence gate: analytical sections must contain data tables, statistical
+    /// coefficients, or similar empirical evidence. Sections that lack evidence are
+    /// sent back to the LLM for revision.
+    fn enforce_evidence_gate(&self, sections: &mut Vec<GeneratedSection>) {
+        // Collect indices and titles as owned data to avoid borrow conflict
+        let analytical: Vec<(usize, String)> = detect_analytical_sections(sections)
+            .into_iter()
+            .map(|(i, t)| (i, t.to_string()))
+            .collect();
+        if analytical.is_empty() {
+            return;
+        }
+
+        for (idx, title) in &analytical {
+            let (has_evidence, _) = check_evidence_presence(&sections[*idx].content);
+            if has_evidence {
+                eprintln!("[composer] evidence gate: '{}' passed", title);
+                continue;
+            }
+
+            eprintln!("[composer] evidence gate: '{}' lacks empirical data — requesting revision", title);
+
+            let prompt = format!(
+                "This section is titled '{}' but contains no data tables, regression coefficients, \
+                 or statistical results. Rewrite it to either: (a) include a concrete data table with \
+                 at least 3 rows of numerical data, OR (b) change the title to accurately reflect \
+                 narrative content (e.g., 'Discussion of Economic Patterns' instead of 'Empirical \
+                 Analysis'). Output ONLY the revised section title on the first line, then a blank \
+                 line, then the revised content.\n\n{}",
+                title, &sections[*idx].content
+            );
+
+            let input = serde_json::json!({
+                "system": "You are a peer-review quality gate for research documents. \
+                           Ensure analytical sections contain real data or rename them honestly.",
+                "prompt": prompt,
+                "max_tokens": self.config.max_tokens_per_section,
+                "thinking": false,
+            });
+
+            match self.exec_ability("llm.chat", &input.to_string()) {
+                Ok(result) => {
+                    let raw = String::from_utf8_lossy(&result.output).to_string();
+                    let raw = strip_thinking_tokens(&raw);
+
+                    // Parse: first line = title, then blank line, then content
+                    let parts: Vec<&str> = raw.splitn(3, '\n').collect();
+                    if parts.len() >= 3 {
+                        let new_title = parts[0].trim().to_string();
+                        let new_content = parts[2..].join("\n").trim().to_string();
+
+                        let (now_has_evidence, markers) = check_evidence_presence(&new_content);
+                        if now_has_evidence {
+                            eprintln!(
+                                "[composer] evidence gate: '{}' revised with data ({})",
+                                title, markers.join(", ")
+                            );
+                            sections[*idx].content = new_content;
+                        } else if new_title != sections[*idx].title {
+                            eprintln!(
+                                "[composer] evidence gate: '{}' retitled to '{}'",
+                                title, new_title
+                            );
+                            sections[*idx].title = new_title;
+                            sections[*idx].content = new_content;
+                        } else {
+                            eprintln!(
+                                "[composer] evidence gate: '{}' revision still lacks data, accepting as-is",
+                                title
+                            );
+                        }
+                    } else if !raw.is_empty() {
+                        // LLM returned content without title separation — accept if has evidence
+                        let (now_has, _) = check_evidence_presence(&raw);
+                        if now_has {
+                            sections[*idx].content = raw;
+                            eprintln!("[composer] evidence gate: '{}' revised with data", title);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[composer] evidence gate: LLM revision failed for '{}': {}", title, e);
+                }
+            }
+        }
+    }
+
     // -- Phase 4e: Nyaya Trimmer -----------------------------------------------
     //
     // Applies three Nyaya-inspired rules to merge redundant sections:
@@ -1726,6 +1830,11 @@ plt.close()
                 continue;
             }
 
+            if !validate_chart_data(code) {
+                eprintln!("[composer] chart rejected: trivial data in '{}'", caption);
+                continue;
+            }
+
             let chart_path = charts_dir.join(filename);
             let patched_code = code.replace(
                 &format!("'{}'", filename),
@@ -2036,6 +2145,29 @@ fn dedup_chart_specs(specs: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
     kept
 }
 
+/// Validate chart data: reject charts where all data values are identical (trivial/meaningless).
+fn validate_chart_data(code: &str) -> bool {
+    // Find bracket-enclosed number lists like [1, 1, 1, 1, 1]
+    let list_re = regex::Regex::new(r"\[([0-9][0-9.,\s]*)\]").unwrap();
+
+    for cap in list_re.captures_iter(code) {
+        let inner = cap.get(1).unwrap().as_str();
+        let values: Vec<f64> = inner
+            .split(',')
+            .filter_map(|s| s.trim().parse::<f64>().ok())
+            .collect();
+
+        if values.len() >= 3 {
+            let first = values[0];
+            if values.iter().all(|v| (*v - first).abs() < f64::EPSILON) {
+                return false; // all identical → reject
+            }
+        }
+    }
+
+    true // no trivial data found
+}
+
 /// Dedup chart images by file content hash. Removes identical images
 /// (same pixel data) that may have different captions.
 fn dedup_chart_images(images: Vec<ImageEntry>) -> Vec<ImageEntry> {
@@ -2127,6 +2259,170 @@ fn dedup_outline_sections(outline: &mut DocumentOutline) {
         idx += 1;
         k
     });
+}
+
+/// Classify a section title into a canonical role for deduplication.
+/// Returns `None` for sections that don't map to a well-known structural role.
+fn classify_section_role(title: &str) -> Option<&'static str> {
+    let t = title.to_ascii_lowercase();
+    if t.contains("executive summary") || (t.contains("summary") && t.contains("introduction")) {
+        Some("executive_summary")
+    } else if t.contains("methodology") || t.contains("data protocol") || t.contains("prisma") {
+        Some("methodology")
+    } else if t.contains("conclusion") || t.contains("synthesis") || t.contains("future outlook") {
+        Some("conclusion")
+    } else if t.contains("literature review") || t.contains("theoretical framework") {
+        Some("literature_review")
+    } else if t.contains("references") || t.contains("bibliography") {
+        Some("references")
+    } else if t.contains("appendix") {
+        Some("appendix")
+    } else {
+        None
+    }
+}
+
+/// Deduplicate outline sections by structural role.
+/// If multiple sections share the same role (e.g., two "Executive Summary" variants),
+/// keep only the first occurrence.
+fn dedup_by_role(outline: &mut DocumentOutline) {
+    let mut seen_roles: HashMap<&'static str, usize> = HashMap::new();
+    let mut keep = vec![true; outline.sections.len()];
+
+    for (i, section) in outline.sections.iter().enumerate() {
+        if let Some(role) = classify_section_role(&section.title) {
+            if let Some(&first_idx) = seen_roles.get(role) {
+                eprintln!(
+                    "[composer] role dedup: dropped '{}' (duplicate {} role, kept '{}')",
+                    section.title, role, outline.sections[first_idx].title
+                );
+                keep[i] = false;
+            } else {
+                seen_roles.insert(role, i);
+            }
+        }
+    }
+
+    let mut idx = 0;
+    outline.sections.retain(|_| {
+        let k = keep[idx];
+        idx += 1;
+        k
+    });
+}
+
+/// Detect coherence issues: circular references, backward navigation cues in late sections.
+fn detect_coherence_issues(sections: &[GeneratedSection]) -> Vec<(usize, String)> {
+    let mut issues = Vec::new();
+    let total = sections.len();
+    if total < 2 {
+        return issues;
+    }
+
+    // Patterns for circular/backward references
+    let circular_re = regex::Regex::new(
+        r"(?i)(we now|let us now|now we)\s+(turn|refer|return)\s+to\s+(the\s+)?(executive|introduction|chapter\s*[12])"
+    ).unwrap();
+    let backward_ref_re = regex::Regex::new(
+        r"(?i)(as\s+(discussed|described|outlined|mentioned)\s+in)\s+(the\s+)?(executive summary|introduction|chapter\s*[12])"
+    ).unwrap();
+
+    // Only check the last 3 sections (or fewer if document is short)
+    let start = total.saturating_sub(3);
+    for i in start..total {
+        let section = &sections[i];
+        let role = classify_section_role(&section.title);
+
+        for line in section.content.lines() {
+            if circular_re.is_match(line) {
+                issues.push((i, format!(
+                    "circular reference in '{}': \"{}\"",
+                    section.title,
+                    line.trim().chars().take(80).collect::<String>()
+                )));
+            }
+            if backward_ref_re.is_match(line) {
+                // Only flag backward refs in conclusion/synthesis sections
+                if matches!(role, Some("conclusion")) {
+                    issues.push((i, format!(
+                        "backward reference in conclusion '{}': \"{}\"",
+                        section.title,
+                        line.trim().chars().take(80).collect::<String>()
+                    )));
+                }
+            }
+        }
+    }
+
+    issues
+}
+
+/// Fix coherence issues by removing offending sentences.
+fn fix_coherence_issues(sections: &mut Vec<GeneratedSection>, issues: &[(usize, String)]) {
+    let circular_re = regex::Regex::new(
+        r"(?i)[^.]*(?:(?:we now|let us now|now we)\s+(?:turn|refer|return)\s+to\s+(?:the\s+)?(?:executive|introduction|chapter\s*[12])|(?:as\s+(?:discussed|described|outlined|mentioned)\s+in)\s+(?:the\s+)?(?:executive summary|introduction|chapter\s*[12]))[^.]*\.\s*"
+    ).unwrap();
+
+    for (idx, desc) in issues {
+        eprintln!("[composer] coherence fix: removed circular ref in '{}'", sections[*idx].title);
+        let original = sections[*idx].content.clone();
+        sections[*idx].content = circular_re.replace_all(&original, "").trim().to_string();
+        let _ = desc; // used in logging above
+    }
+}
+
+/// Identify sections whose titles indicate analytical/empirical content.
+fn detect_analytical_sections(sections: &[GeneratedSection]) -> Vec<(usize, &str)> {
+    let keywords = ["empirical", "regression", "data analysis", "statistical", "quantitative", "econometric"];
+    sections
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            let t = s.title.to_ascii_lowercase();
+            if keywords.iter().any(|kw| t.contains(kw)) {
+                Some((i, s.title.as_str()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Check whether content contains empirical evidence markers (tables, statistics, data).
+fn check_evidence_presence(content: &str) -> (bool, Vec<&'static str>) {
+    let mut found = Vec::new();
+
+    // LaTeX tables
+    if content.contains("\\begin{tabular}") || content.contains("\\begin{table}") {
+        found.push("LaTeX tabular/table");
+    }
+
+    // Markdown tables (3+ pipe-separated columns)
+    let md_table_lines = content.lines().filter(|l| l.matches('|').count() >= 3).count();
+    if md_table_lines >= 2 {
+        found.push("Markdown table");
+    }
+
+    // Statistical markers
+    let stat_re = regex::Regex::new(r"(?i)(β\s*=\s*[\-0-9]|p\s*<\s*0\.|[Rr]²\s*=|n\s*=\s*\d{2,})").unwrap();
+    if stat_re.is_match(content) {
+        found.push("statistical coefficients");
+    }
+
+    // Data markers: digits followed by %
+    let pct_re = regex::Regex::new(r"\d+\.?\d*\s*\\?%").unwrap();
+    if pct_re.find_iter(content).count() >= 2 {
+        found.push("percentage data");
+    }
+
+    // Dollar amounts
+    let dollar_re = regex::Regex::new(r"\$\s*\d+").unwrap();
+    if dollar_re.is_match(content) {
+        found.push("dollar amounts");
+    }
+
+    let has = !found.is_empty();
+    (has, found)
 }
 
 /// Cap total section count (including nested children) to `max_sections`.
@@ -3264,5 +3560,182 @@ mod tests {
         assert_eq!(ordered[0].title, "Introduction");
         assert_eq!(ordered[1].title, "Analysis");
         assert_eq!(ordered[2].title, "References");
+    }
+
+    // --- Role-based dedup tests ---
+
+    #[test]
+    fn test_role_dedup_exec_summary_variants() {
+        let mut outline = DocumentOutline {
+            title: "Test".into(),
+            needs_toc: false,
+            sections: vec![
+                OutlineSection { id: "ch1".into(), title: "Executive Summary".into(), level: 0, description: "".into(), depends_on: vec![], generation_order: None, children: vec![] },
+                OutlineSection { id: "ch2".into(), title: "Analysis".into(), level: 0, description: "".into(), depends_on: vec![], generation_order: None, children: vec![] },
+                OutlineSection { id: "ch3".into(), title: "Executive Summary & Introduction".into(), level: 0, description: "".into(), depends_on: vec![], generation_order: None, children: vec![] },
+            ],
+        };
+        dedup_by_role(&mut outline);
+        assert_eq!(outline.sections.len(), 2);
+        assert_eq!(outline.sections[0].title, "Executive Summary");
+        assert_eq!(outline.sections[1].title, "Analysis");
+    }
+
+    #[test]
+    fn test_role_dedup_methodology_variants() {
+        let mut outline = DocumentOutline {
+            title: "Test".into(),
+            needs_toc: false,
+            sections: vec![
+                OutlineSection { id: "ch1".into(), title: "Methodology".into(), level: 0, description: "".into(), depends_on: vec![], generation_order: None, children: vec![] },
+                OutlineSection { id: "ch2".into(), title: "Data Protocol and PRISMA Review".into(), level: 0, description: "".into(), depends_on: vec![], generation_order: None, children: vec![] },
+                OutlineSection { id: "ch3".into(), title: "Results".into(), level: 0, description: "".into(), depends_on: vec![], generation_order: None, children: vec![] },
+            ],
+        };
+        dedup_by_role(&mut outline);
+        assert_eq!(outline.sections.len(), 2);
+        assert_eq!(outline.sections[0].title, "Methodology");
+        assert_eq!(outline.sections[2 - 1].title, "Results");
+    }
+
+    #[test]
+    fn test_role_dedup_keeps_distinct() {
+        let mut outline = DocumentOutline {
+            title: "Test".into(),
+            needs_toc: false,
+            sections: vec![
+                OutlineSection { id: "ch1".into(), title: "Executive Summary".into(), level: 0, description: "".into(), depends_on: vec![], generation_order: None, children: vec![] },
+                OutlineSection { id: "ch2".into(), title: "Methodology".into(), level: 0, description: "".into(), depends_on: vec![], generation_order: None, children: vec![] },
+                OutlineSection { id: "ch3".into(), title: "Results".into(), level: 0, description: "".into(), depends_on: vec![], generation_order: None, children: vec![] },
+                OutlineSection { id: "ch4".into(), title: "Conclusion".into(), level: 0, description: "".into(), depends_on: vec![], generation_order: None, children: vec![] },
+            ],
+        };
+        dedup_by_role(&mut outline);
+        assert_eq!(outline.sections.len(), 4); // all distinct roles, nothing removed
+    }
+
+    // --- Evidence gate tests ---
+
+    #[test]
+    fn test_evidence_gate_flags_empty_empirical() {
+        let sections = vec![
+            GeneratedSection {
+                id: "ch7".into(), title: "Empirical Analysis".into(), level: 0,
+                content: "This section discusses the economic trends observed in the data. The patterns suggest growth.".into(),
+                summary: "".into(), hook: None,
+            },
+        ];
+        let analytical = detect_analytical_sections(&sections);
+        assert_eq!(analytical.len(), 1);
+        assert_eq!(analytical[0].1, "Empirical Analysis");
+        let (has_evidence, _) = check_evidence_presence(&sections[0].content);
+        assert!(!has_evidence);
+    }
+
+    #[test]
+    fn test_evidence_gate_passes_with_table() {
+        let content = "The results are shown below:\n\\begin{tabular}{lcc}\nCountry & GDP & Growth \\\\\nIndia & 3.5T & 7.2\\% \\\\\n\\end{tabular}";
+        let (has_evidence, markers) = check_evidence_presence(content);
+        assert!(has_evidence);
+        assert!(markers.iter().any(|m| m.contains("tabular")));
+    }
+
+    #[test]
+    fn test_evidence_gate_passes_narrative_title() {
+        let sections = vec![
+            GeneratedSection {
+                id: "ch7".into(), title: "Discussion of Economic Patterns".into(), level: 0,
+                content: "The economy shows growth.".into(),
+                summary: "".into(), hook: None,
+            },
+        ];
+        let analytical = detect_analytical_sections(&sections);
+        assert!(analytical.is_empty()); // not flagged as analytical
+    }
+
+    // --- Chart data validation tests ---
+
+    #[test]
+    fn test_validate_chart_rejects_uniform_data() {
+        let code = r#"
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+data = [1, 1, 1, 1, 1]
+labels = ['A', 'B', 'C', 'D', 'E']
+plt.bar(labels, data)
+plt.savefig('chart.png')
+"#;
+        assert!(!validate_chart_data(code));
+    }
+
+    #[test]
+    fn test_validate_chart_accepts_varied_data() {
+        let code = r#"
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+data = [10, 25, 15, 30, 20]
+labels = ['A', 'B', 'C', 'D', 'E']
+plt.bar(labels, data)
+plt.savefig('chart.png')
+"#;
+        assert!(validate_chart_data(code));
+    }
+
+    // --- Coherence tests ---
+
+    #[test]
+    fn test_detect_circular_ref_in_conclusion() {
+        let sections = vec![
+            GeneratedSection { id: "ch1".into(), title: "Executive Summary".into(), level: 0, content: "Overview of the report.".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "ch2".into(), title: "Analysis".into(), level: 0, content: "The data shows trends.".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "ch3".into(), title: "Conclusion".into(), level: 0,
+                content: "In summary, the analysis is complete. We now turn to the Executive Summary for a high-level view.".into(),
+                summary: "".into(), hook: None },
+        ];
+        let issues = detect_coherence_issues(&sections);
+        assert!(!issues.is_empty());
+        assert!(issues[0].1.contains("circular"));
+    }
+
+    #[test]
+    fn test_detect_forward_ref_to_exec_summary() {
+        let sections = vec![
+            GeneratedSection { id: "ch1".into(), title: "Executive Summary".into(), level: 0, content: "Overview.".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "ch2".into(), title: "Analysis".into(), level: 0, content: "Data trends.".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "ch3".into(), title: "Synthesis".into(), level: 0,
+                content: "As discussed in the executive summary, the outlook is positive.".into(),
+                summary: "".into(), hook: None },
+        ];
+        let issues = detect_coherence_issues(&sections);
+        assert!(!issues.is_empty());
+    }
+
+    #[test]
+    fn test_fix_removes_circular_sentence() {
+        let mut sections = vec![
+            GeneratedSection { id: "ch1".into(), title: "Executive Summary".into(), level: 0, content: "Overview.".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "ch2".into(), title: "Conclusion".into(), level: 0,
+                content: "The analysis is complete. We now turn to the Executive Summary for details. This concludes the report.".into(),
+                summary: "".into(), hook: None },
+        ];
+        let issues = detect_coherence_issues(&sections);
+        fix_coherence_issues(&mut sections, &issues);
+        assert!(!sections[1].content.contains("We now turn to the Executive Summary"));
+        assert!(sections[1].content.contains("The analysis is complete"));
+    }
+
+    #[test]
+    fn test_no_false_positive_on_valid_ref() {
+        let sections = vec![
+            GeneratedSection { id: "ch1".into(), title: "Introduction".into(), level: 0, content: "We begin with an overview.".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "ch2".into(), title: "Analysis".into(), level: 0,
+                content: "As discussed in Chapter 3, the data supports our hypothesis.".into(),
+                summary: "".into(), hook: None },
+            GeneratedSection { id: "ch3".into(), title: "Conclusion".into(), level: 0, content: "The findings are significant.".into(), summary: "".into(), hook: None },
+        ];
+        let issues = detect_coherence_issues(&sections);
+        assert!(issues.is_empty()); // mid-section forward ref to ch3 is fine, not in last 3 looking backward
     }
 }

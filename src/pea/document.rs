@@ -1095,6 +1095,7 @@ pub(crate) fn lint_latex(tex: &str) -> Vec<LintError> {
     let mut errors = Vec::new();
 
     let mut chapter_titles: Vec<String> = Vec::new();
+    let mut caption_texts: Vec<(String, usize)> = Vec::new();
 
     for (line_num, line) in tex.lines().enumerate() {
         let ln = Some(line_num + 1);
@@ -1176,6 +1177,48 @@ pub(crate) fn lint_latex(tex: &str) -> Vec<LintError> {
                 }
             }
         }
+
+        // Track \caption{...} texts for duplicate detection
+        if let Some(start) = line.find("\\caption{") {
+            let rest = &line[start + 9..];
+            if let Some(end) = rest.find('}') {
+                let cap_text = rest[..end].to_string();
+                caption_texts.push((cap_text, line_num + 1));
+            }
+        }
+
+        // Prompt residue: caption that looks like a search query (>80 chars ending with a year)
+        if let Some(start) = line.find("\\caption{") {
+            let rest = &line[start + 9..];
+            if let Some(end) = rest.find('}') {
+                let cap = &rest[..end];
+                let year_suffix = regex::Regex::new(r"\b(20\d{2}|19\d{2})\s*$").unwrap();
+                if cap.len() > 80 && year_suffix.is_match(cap) {
+                    errors.push(LintError {
+                        severity: LintSeverity::Warning,
+                        kind: "prompt_residue_caption",
+                        detail: format!("Possible prompt residue in caption on line {}: '{}...'", line_num + 1, &cap[..60]),
+                        line: ln,
+                    });
+                }
+            }
+        }
+    }
+
+    // Check for duplicate captions across the entire document
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (text, line) in &caption_texts {
+        let normalized = text.trim().to_ascii_lowercase();
+        if let Some(&first_line) = seen.get(&normalized) {
+            errors.push(LintError {
+                severity: LintSeverity::Warning,
+                kind: "duplicate_caption",
+                detail: format!("Duplicate caption '{}' on line {} (first on line {})", text, line, first_line),
+                line: Some(*line),
+            });
+        } else {
+            seen.insert(normalized, *line);
+        }
     }
 
     errors
@@ -1185,13 +1228,32 @@ pub(crate) fn lint_latex(tex: &str) -> Vec<LintError> {
 pub(crate) fn auto_fix_lint(tex: &str, errors: &[LintError]) -> String {
     let has_bare_urls = errors.iter().any(|e| e.kind == "bare_url");
     let has_unresolved = errors.iter().any(|e| e.kind == "unresolved_ref");
+    let has_dup_captions = errors.iter().any(|e| e.kind == "duplicate_caption");
 
-    if !has_bare_urls && !has_unresolved {
+    if !has_bare_urls && !has_unresolved && !has_dup_captions {
         return tex.to_string();
     }
 
-    // Fix "Figure ??", "Table ??", etc. by removing the unresolved reference
+    // Fix duplicate captions by appending sequential letters
     let mut tex = tex.to_string();
+    if has_dup_captions {
+        let mut caption_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let cap_re = regex::Regex::new(r"\\caption\{([^}]+)\}").unwrap();
+        tex = cap_re.replace_all(&tex, |caps: &regex::Captures| {
+            let text = caps.get(1).unwrap().as_str();
+            let key = text.trim().to_ascii_lowercase();
+            let count = caption_counts.entry(key).or_insert(0);
+            *count += 1;
+            if *count > 1 {
+                let suffix = (b'a' + (*count - 1) as u8) as char;
+                format!("\\caption{{{} ({})}}", text, suffix)
+            } else {
+                caps[0].to_string()
+            }
+        }).to_string();
+    }
+
+    // Fix "Figure ??", "Table ??", etc. by removing the unresolved reference
     if has_unresolved {
         let ref_re = regex::Regex::new(r"(Figure|Table|Chapter|Section)\s+\?\?").unwrap();
         tex = ref_re.replace_all(&tex, |caps: &regex::Captures| {
@@ -1720,5 +1782,25 @@ mod tests {
         assert!(!fixed.contains("Table ??"));
         assert!(fixed.contains("the figure"));
         assert!(fixed.contains("the table"));
+    }
+
+    #[test]
+    fn test_lint_duplicate_captions() {
+        let tex = "\\caption{Solar Energy Growth}\nsome text\n\\caption{Solar Energy Growth}\n";
+        let errors = lint_latex(tex);
+        let dup_errors: Vec<_> = errors.iter().filter(|e| e.kind == "duplicate_caption").collect();
+        assert_eq!(dup_errors.len(), 1);
+
+        // Auto-fix should add sequential letters
+        let fixed = auto_fix_lint(tex, &errors);
+        assert!(fixed.contains("Solar Energy Growth (b)"));
+    }
+
+    #[test]
+    fn test_lint_prompt_residue() {
+        let tex = "\\caption{Photovoltaic power station Kenya rural electrification solar panels community development Africa 2022}\n";
+        let errors = lint_latex(tex);
+        let residue: Vec<_> = errors.iter().filter(|e| e.kind == "prompt_residue_caption").collect();
+        assert_eq!(residue.len(), 1);
     }
 }
