@@ -143,7 +143,7 @@ impl LlmProvider {
             api_key: api_key.to_string(),
             model: model.to_string(),
             base_url: "https://api.anthropic.com/v1/messages".to_string(),
-            timeout_secs: None,
+            timeout_secs: Some(300),
         }
     }
 
@@ -153,7 +153,7 @@ impl LlmProvider {
             api_key: api_key.to_string(),
             model: model.to_string(),
             base_url: "https://api.openai.com/v1/chat/completions".to_string(),
-            timeout_secs: None,
+            timeout_secs: Some(300),
         }
     }
 
@@ -165,7 +165,7 @@ impl LlmProvider {
             api_key: api_key.to_string(),
             model: model.to_string(),
             base_url: format!("{}/v1/chat/completions", base),
-            timeout_secs: None,
+            timeout_secs: Some(300), // 5 min default for remote APIs
         }
     }
 
@@ -175,7 +175,7 @@ impl LlmProvider {
             api_key: api_key.to_string(),
             model: model.to_string(),
             base_url: "https://api.deepseek.com/v1/chat/completions".to_string(),
-            timeout_secs: None,
+            timeout_secs: Some(300),
         }
     }
 
