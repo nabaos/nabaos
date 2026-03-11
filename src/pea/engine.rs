@@ -796,36 +796,68 @@ impl PeaEngine {
                         String::new()
                     };
 
+                    // Build current date for temporal context
+                    let current_date = {
+                        let secs = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let days = secs / 86400;
+                        let y = (days * 400 / 146097) + 1970;
+                        format!("{}", y)
+                    };
+
+                    // Collect fetched source URLs as reality evidence
+                    let fetched_urls: Vec<String> = self.research_cache
+                        .get(&desire_id)
+                        .map(|(_, corpus)| {
+                            corpus.sources.iter().map(|s| s.url.clone()).collect()
+                        })
+                        .unwrap_or_default();
+                    let url_evidence = if fetched_urls.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "\nVERIFIED SOURCE URLs (fetched successfully, HTTP 200):\n{}\n\
+                             If a claim is attributed to one of these URLs, treat it as SOURCED, not fabricated.\n",
+                            fetched_urls.iter().take(50).cloned().collect::<Vec<_>>().join("\n")
+                        )
+                    };
+
                     let prompt = format!(
-                        "You are a rigorous quality assurance reviewer. Review these task outputs for the objective below.\n\n\
+                        "You are a quality assurance reviewer. Today's date is {} (current year). \
+                         Content below is based on LIVE web research from real sources fetched today.\n\n\
+                         CRITICAL RULES:\n\
+                         - Do NOT flag current events as fabricated simply because they are recent or dramatic.\n\
+                         - Do NOT rewrite content as 'fictional scenario' or 'speculative analysis'.\n\
+                         - Do NOT add disclaimers stating events did not occur.\n\
+                         - Your role: check INTERNAL CONSISTENCY, citation completeness, and formatting ONLY.\n\n\
                          OBJECTIVE: {}\n\n\
                          TASK RESULTS:\n{}\n\
+                         {}\
                          {}\n\
-                         Check for ALL of these failure modes. Quote problematic text (max 80 chars) for each issue found.\n\n\
-                         1. FABRICATED CITATIONS — unverifiable references, hallucination markers (suspiciously round numbers, \
-                         fictional journal names, non-existent URLs). Any invented citation is severity=high.\n\
-                         2. CROSS-TASK CONTRADICTIONS — facts, dates, quantities, or names that diverge between sections. \
-                         Compare every factual claim across all task outputs.\n\
-                         3. CONTENT TRUNCATION — abrupt endings mid-sentence, placeholder text (\"TBD\", \"TODO\", \"[insert]\", \
-                         \"...\"), or sections that trail off without conclusion.\n\
-                         4. SHALLOW RESPONSES — generic filler paragraphs without concrete examples, data points, or named \
-                         entities. Vague claims like \"many studies show\" without specifics.\n\
-                         5. MISSING REQUIRED CONTENT — elements explicitly requested in the objective but absent from outputs.\n\
-                         6. STRUCTURAL ISSUES — missing conclusion, missing bibliography (when academic), missing executive \
-                         summary, orphaned section references.\n\
-                         7. DOCUMENT COMPILATION ERRORS — LaTeX/build log issues (if log provided).\n\n\
-                         Severity rules: fabricated citations = always high; cross-task contradictions = high; \
-                         truncation = high; shallow content = medium; missing content = medium-high based on importance; \
+                         Check for these failure modes ONLY:\n\n\
+                         1. INTERNAL CONTRADICTIONS — facts, dates, quantities, or names that diverge between sections. \
+                         Compare claims across all task outputs.\n\
+                         2. CONTENT TRUNCATION — abrupt endings mid-sentence, placeholder text (\"TBD\", \"TODO\", \"[insert]\"), \
+                         or sections that trail off without conclusion.\n\
+                         3. MISSING REQUIRED CONTENT — elements explicitly requested in the objective but absent from outputs.\n\
+                         4. STRUCTURAL ISSUES — missing conclusion, missing executive summary, orphaned section references.\n\
+                         5. DOCUMENT COMPILATION ERRORS — LaTeX/build log issues (if log provided).\n\n\
+                         Severity rules: contradictions = high; truncation = high; missing content = medium-high; \
                          structural = medium; compilation = low unless it blocks output.\n\n\
-                         For each issue found, provide a specific remediation task that FIXES the problem (not just flags it).\n\n\
+                         For each issue, provide a SPECIFIC remediation task as a surgical fix \
+                         (e.g. 'In section X, replace Y with Z') — NOT full rewrites.\n\n\
                          Output JSON ONLY (no markdown fences):\n\
                          {{\"issues\": [{{\"task\": \"task description\", \"problem\": \"what's wrong — quote: [excerpt]\", \
                          \"severity\": \"high|medium|low\"}}], \
-                         \"remediation_tasks\": [{{\"description\": \"specific action to fix the issue\", \"depends_on\": []}}]}}\n\n\
+                         \"remediation_tasks\": [{{\"description\": \"specific surgical fix\", \"depends_on\": []}}]}}\n\n\
                          If everything looks good, output: {{\"issues\": [], \"remediation_tasks\": []}}",
+                        current_date,
                         obj.description,
                         task_section,
                         log_section,
+                        url_evidence,
                     );
 
                     let input = serde_json::json!({
@@ -1020,7 +1052,7 @@ impl PeaEngine {
                     // research if no cached corpus is available.
                     let compose_result = {
                         use crate::pea::composer::{ComposerConfig, DocumentComposer};
-                        use crate::pea::research::{ResearchConfig, ResearchEngine, ResearchCorpus};
+                        use crate::pea::research::{ResearchConfig, ResearchEngine};
 
                         let corpus = if let Some((_, cached_corpus)) = self.research_cache.values().next() {
                             eprintln!("[pea] reusing cached research corpus ({} sources) for composition", cached_corpus.sources.len());

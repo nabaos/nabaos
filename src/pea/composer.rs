@@ -117,6 +117,12 @@ impl<'a> DocumentComposer<'a> {
             outline.needs_toc,
         );
 
+        // Phase 1b: Enforce section ordering — Exec Summary first, Methodology last
+        reorder_outline_sections(&mut outline);
+
+        // Phase 1c: Cap total sections at 15
+        cap_section_count(&mut outline, 15);
+
         // Phase 2: Compute generation order
         compute_generation_order(&mut outline);
 
@@ -211,9 +217,12 @@ impl<'a> DocumentComposer<'a> {
                ]\n\
              }}\n\n\
              RULES:\n\
-             - Use 3-8 top-level chapters for substantial documents\n\
+             - Use 3-8 top-level chapters, 12-15 sections MAXIMUM (including subsections)\n\
+             - Merge related topics into single chapters with subsections instead of separate chapters\n\
+             - REQUIRED ORDER: Executive Summary/Introduction FIRST, Methodology/PRISMA LAST (as appendix)\n\
              - Introduction and Conclusion should depend on body chapters\n\
              - Each section needs a clear description of what it covers\n\
+             - Do NOT create duplicate sections (e.g. avoid separate 'Key Findings' + 'Synthesis' + 'Conclusion')\n\
              - Output ONLY valid JSON, no explanation",
             objective, corpus_summary, task_summaries,
         );
@@ -223,6 +232,7 @@ impl<'a> DocumentComposer<'a> {
                        No explanation, no markdown fences.",
             "prompt": prompt,
             "max_tokens": 4096,
+            "thinking": false,
         });
 
         let result = self
@@ -258,6 +268,7 @@ impl<'a> DocumentComposer<'a> {
         ordered.sort_by_key(|s| s.generation_order.unwrap_or(usize::MAX));
 
         let mut generated: Vec<GeneratedSection> = Vec::new();
+        let mut used_phrases: Vec<String> = Vec::new();
 
         for section in &ordered {
             // Build context from previously generated sections
@@ -291,12 +302,24 @@ impl<'a> DocumentComposer<'a> {
                 .collect::<Vec<_>>()
                 .join("\n\n");
 
+            // Build used-phrases warning
+            let phrase_warning = if used_phrases.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\n\nAVOID REPETITION — these phrases have been used in previous sections and MUST NOT be repeated verbatim:\n{}\n\
+                     Use different wording to express similar ideas.\n",
+                    used_phrases.iter().take(20).map(|p| format!("- \"{}\"", p)).collect::<Vec<_>>().join("\n")
+                )
+            };
+
             let prompt = format!(
                 "You are writing section \"{}\" of \"{}\".\n\n\
                  CONTEXT FROM PREVIOUS SECTIONS:\n{}\n\n\
                  RESEARCH SOURCES for this section:\n{}\n\n\
                  TASK RESULTS:\n{}\n\n\
-                 SECTION REQUIREMENTS:\n{}\n\n\
+                 SECTION REQUIREMENTS:\n{}\
+                 {}\n\n\
                  Write this section. Requirements:\n\
                  - Make it engaging and well-structured\n\
                  - Cite sources with [Author/Site](URL) format\n\
@@ -311,6 +334,7 @@ impl<'a> DocumentComposer<'a> {
                 relevant_sources,
                 task_context,
                 section.description,
+                phrase_warning,
                 next_title,
             );
 
@@ -319,6 +343,7 @@ impl<'a> DocumentComposer<'a> {
                            engaging content with proper citations. Follow the format exactly.",
                 "prompt": prompt,
                 "max_tokens": self.config.max_tokens_per_section,
+                "thinking": false,
             });
 
             let (content, summary, hook) = match self.registry.execute_ability(
@@ -345,6 +370,9 @@ impl<'a> DocumentComposer<'a> {
                 section.title,
                 content.len()
             );
+
+            // Extract notable phrases (8+ words) for repetition tracking
+            extract_notable_phrases(&content, &mut used_phrases);
 
             generated.push(GeneratedSection {
                 id: section.id.clone(),
@@ -391,8 +419,9 @@ impl<'a> DocumentComposer<'a> {
                  - Are there contradictions between sections?\n\
                  - Do hooks/transitions work?\n\n\
                  DOCUMENT:\n{}\n\n\
-                 For each issue, respond in JSON array:\n\
-                 [{{\"section_id\": \"...\", \"problem\": \"...\", \"fix\": \"...\"}}]\n\
+                 For each issue, provide a SURGICAL fix as a find-and-replace patch.\n\
+                 Respond in JSON array:\n\
+                 [{{\"section_id\": \"...\", \"problem\": \"...\", \"find\": \"exact text to replace\", \"replace\": \"corrected text\"}}]\n\
                  If no issues, respond: []",
                 doc_preview,
             )
@@ -404,8 +433,9 @@ impl<'a> DocumentComposer<'a> {
                  - Are there incomplete thoughts or abrupt endings?\n\
                  - Is the level of detail appropriate?\n\n\
                  DOCUMENT:\n{}\n\n\
-                 For each issue, respond in JSON array:\n\
-                 [{{\"section_id\": \"...\", \"problem\": \"...\", \"fix\": \"...\"}}]\n\
+                 For each issue, provide a SURGICAL fix as a find-and-replace patch.\n\
+                 Respond in JSON array:\n\
+                 [{{\"section_id\": \"...\", \"problem\": \"...\", \"find\": \"exact text to replace\", \"replace\": \"corrected text\"}}]\n\
                  If no issues, respond: []",
                 doc_preview,
             )
@@ -448,43 +478,57 @@ impl<'a> DocumentComposer<'a> {
             issues.len()
         );
 
-        // Apply fixes by re-generating affected sections
+        // Apply fixes: prefer surgical find-and-replace, fall back to LLM rewrite
         for issue in &issues {
             let section_id = issue.get("section_id").and_then(|v| v.as_str()).unwrap_or("");
             let problem = issue.get("problem").and_then(|v| v.as_str()).unwrap_or("");
-            let fix = issue.get("fix").and_then(|v| v.as_str()).unwrap_or("");
+            let find_text = issue.get("find").and_then(|v| v.as_str()).unwrap_or("");
+            let replace_text = issue.get("replace").and_then(|v| v.as_str()).unwrap_or("");
 
             notes.push(format!(
-                "Round {} fix [{}]: {} → {}",
-                round, section_id, problem, fix
+                "Round {} fix [{}]: {}",
+                round, section_id, problem
             ));
 
-            // Find and fix the section
             if let Some(section) = sections.iter_mut().find(|s| s.id == section_id) {
-                let fix_prompt = format!(
-                    "Revise this section to fix the following issue:\n\
-                     ISSUE: {}\n\
-                     SUGGESTED FIX: {}\n\n\
-                     CURRENT CONTENT:\n{}\n\n\
-                     Output ONLY the revised section content (no headers, no metadata).",
-                    problem, fix, section.content,
-                );
+                // Try surgical string replacement first (no LLM call needed)
+                if !find_text.is_empty() && section.content.contains(find_text) {
+                    section.content = section.content.replacen(find_text, replace_text, 1);
+                    eprintln!(
+                        "[composer] surgical fix in '{}': replaced {} chars",
+                        section_id, find_text.len()
+                    );
+                } else {
+                    // Fallback: LLM rewrite for this section
+                    let fix = issue.get("fix").and_then(|v| v.as_str())
+                        .or(Some(replace_text))
+                        .unwrap_or("");
+                    let fix_prompt = format!(
+                        "Revise this section to fix the following issue:\n\
+                         ISSUE: {}\n\
+                         SUGGESTED FIX: {}\n\n\
+                         CURRENT CONTENT:\n{}\n\n\
+                         Output ONLY the revised section content (no headers, no metadata).",
+                        problem, fix, section.content,
+                    );
 
-                let fix_input = serde_json::json!({
-                    "system": "You are a document editor. Fix the specified issue while preserving \
-                               the overall structure and citations. Output ONLY the revised content.",
-                    "prompt": fix_prompt,
-                    "max_tokens": self.config.max_tokens_per_section,
-                });
+                    let fix_input = serde_json::json!({
+                        "system": "You are a document editor. Fix the specified issue while preserving \
+                                   the overall structure and citations. Output ONLY the revised content.",
+                        "prompt": fix_prompt,
+                        "max_tokens": self.config.max_tokens_per_section,
+                        "thinking": false,
+                    });
 
-                if let Ok(result) = self.registry.execute_ability(
-                    self.manifest,
-                    "llm.chat",
-                    &fix_input.to_string(),
-                ) {
-                    let fixed = String::from_utf8_lossy(&result.output).to_string();
-                    if !fixed.is_empty() && fixed.len() > section.content.len() / 4 {
-                        section.content = fixed;
+                    if let Ok(result) = self.registry.execute_ability(
+                        self.manifest,
+                        "llm.chat",
+                        &fix_input.to_string(),
+                    ) {
+                        let fixed = String::from_utf8_lossy(&result.output).to_string();
+                        if !fixed.is_empty() && fixed.len() > section.content.len() / 4 {
+                            section.content = fixed;
+                        }
                     }
                 }
             }
@@ -562,6 +606,7 @@ impl<'a> DocumentComposer<'a> {
                            engaging content with proper citations. Follow the format exactly.",
                 "prompt": prompt,
                 "max_tokens": self.config.max_tokens_per_section,
+                "thinking": false,
             });
 
             match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
@@ -716,6 +761,63 @@ impl<'a> DocumentComposer<'a> {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 1b: Section Reordering — Executive Summary first, Methodology last
+// ---------------------------------------------------------------------------
+
+/// Move Executive Summary / Introduction to the front and Methodology / PRISMA
+/// / Appendix sections to the end.  This ensures a professional document
+/// structure regardless of what the LLM planner produces.
+fn reorder_outline_sections(outline: &mut DocumentOutline) {
+    let front_keywords = ["executive summary", "introduction", "overview"];
+    let back_keywords = ["methodology", "prisma", "appendix", "references", "bibliography"];
+
+    let lower_title = |s: &OutlineSection| s.title.to_ascii_lowercase();
+
+    // Partition: front sections, body, back sections
+    let mut front = Vec::new();
+    let mut body = Vec::new();
+    let mut back = Vec::new();
+
+    for section in outline.sections.drain(..) {
+        let t = lower_title(&section);
+        if front_keywords.iter().any(|kw| t.contains(kw)) {
+            front.push(section);
+        } else if back_keywords.iter().any(|kw| t.contains(kw)) {
+            back.push(section);
+        } else {
+            body.push(section);
+        }
+    }
+
+    outline.sections.extend(front);
+    outline.sections.extend(body);
+    outline.sections.extend(back);
+}
+
+/// Cap total section count (including nested children) to `max_sections`.
+/// Drops excess leaf sections from the end of the outline.
+fn cap_section_count(outline: &mut DocumentOutline, max_sections: usize) {
+    fn count_sections(sections: &[OutlineSection]) -> usize {
+        sections.iter().map(|s| 1 + count_sections(&s.children)).sum()
+    }
+
+    let total = count_sections(&outline.sections);
+    if total <= max_sections {
+        return;
+    }
+
+    eprintln!(
+        "[composer] capping sections from {} to {} max",
+        total, max_sections
+    );
+
+    // Simple strategy: truncate top-level sections (keep first max_sections - children)
+    while count_sections(&outline.sections) > max_sections && outline.sections.len() > 3 {
+        outline.sections.pop();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Phase 2: Topological Sort (Kahn's algorithm)
 // ---------------------------------------------------------------------------
 
@@ -808,6 +910,36 @@ fn flatten_outline(sections: &[OutlineSection]) -> Vec<OutlineSection> {
 fn flatten_outline_mut(sections: &mut [OutlineSection]) -> Vec<OutlineSection> {
     // Clone for reading — we assign orders separately via assign_generation_orders
     flatten_outline(sections)
+}
+
+/// Extract notable phrases (8+ words) from content for repetition tracking.
+/// Only keeps distinctive phrases that appear to be analytical claims.
+fn extract_notable_phrases(content: &str, phrases: &mut Vec<String>) {
+    // Split into sentences and look for substantial phrases
+    for line in content.lines() {
+        let line = line.trim();
+        if line.len() < 40 { continue; }
+        // Skip citation lines, headers, and metadata
+        if line.starts_with('[') || line.starts_with('#') || line.starts_with("SUMMARY:") || line.starts_with("HOOK:") {
+            continue;
+        }
+        // Extract phrases: look for clauses between punctuation that are 8+ words
+        for sentence in line.split(|c: char| c == '.' || c == ';') {
+            let words: Vec<&str> = sentence.split_whitespace().collect();
+            if words.len() >= 8 && words.len() <= 20 {
+                let phrase = words.join(" ");
+                // Only track if it looks like a substantive claim (contains a verb-like word)
+                if phrase.len() >= 40 && !phrases.iter().any(|p| p == &phrase) {
+                    phrases.push(phrase);
+                }
+            }
+        }
+    }
+    // Keep only the last 30 phrases to avoid prompt bloat
+    if phrases.len() > 30 {
+        let drain_count = phrases.len() - 30;
+        phrases.drain(..drain_count);
+    }
 }
 
 /// Extract JSON object/array from LLM response (handles markdown fences).
@@ -931,7 +1063,7 @@ fn select_relevant_sources(corpus: &ResearchCorpus, description: &str, title: &s
             } else {
                 s.content.clone()
             };
-            format!("Source: {} ({})\n{}\n", s.title, s.url, preview)
+            format!("Source [{}]: {} ({})\n{}\n", s.tier.label(), s.title, s.url, preview)
         })
         .collect::<Vec<_>>()
         .join("\n---\n")

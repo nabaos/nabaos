@@ -96,6 +96,61 @@ pub struct SearchCandidate {
     pub relevance_score: Option<f32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceTier {
+    /// Government statements, UN documents, official data
+    Primary,
+    /// Think tanks, academic papers, research institutes
+    Analytical,
+    /// News wires, journalism, reporting
+    Reporting,
+    /// Wikipedia, liveblogs, aggregators
+    Aggregator,
+}
+
+impl SourceTier {
+    /// Classify a source by its URL domain.
+    pub fn from_url(url: &str) -> Self {
+        let u = url.to_ascii_lowercase();
+        // Primary: government, UN, official
+        if u.contains(".gov") || u.contains("un.org") || u.contains("who.int")
+            || u.contains("worldbank.org") || u.contains("imf.org")
+            || u.contains("nato.int") || u.contains("europa.eu")
+            || u.contains("state.gov") || u.contains("mod.gov")
+        {
+            return Self::Primary;
+        }
+        // Analytical: think tanks, academic
+        if u.contains("arxiv.org") || u.contains("scholar.google")
+            || u.contains("jstor.org") || u.contains("nature.com")
+            || u.contains("sciencedirect") || u.contains("brookings.edu")
+            || u.contains("rand.org") || u.contains("cfr.org")
+            || u.contains("sipri.org") || u.contains("csis.org")
+            || u.contains(".edu/") || u.contains("openalex.org")
+        {
+            return Self::Analytical;
+        }
+        // Aggregator: Wikipedia, Reddit, etc.
+        if u.contains("wikipedia.org") || u.contains("reddit.com")
+            || u.contains("liveblog") || u.contains("quora.com")
+            || u.contains("stackexchange") || u.contains("medium.com")
+        {
+            return Self::Aggregator;
+        }
+        // Default: reporting (news)
+        Self::Reporting
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Primary => "primary",
+            Self::Analytical => "analytical",
+            Self::Reporting => "reporting",
+            Self::Aggregator => "aggregator",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct FetchedSource {
     pub url: String,
@@ -103,6 +158,7 @@ pub struct FetchedSource {
     pub content: String,
     pub fetch_method: FetchMethod,
     pub char_count: usize,
+    pub tier: SourceTier,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -131,13 +187,14 @@ impl ResearchCorpus {
 
         for (i, source) in self.sources.iter().enumerate() {
             ctx.push_str(&format!(
-                "## Source {} — {} ({})\nURL: {}\n{}\n\n",
+                "## Source {} — {} ({}, {})\nURL: {}\n{}\n\n",
                 i + 1,
                 source.title,
                 match source.fetch_method {
                     FetchMethod::Http => "HTTP",
                     FetchMethod::ChromePool => "Chrome",
                 },
+                source.tier.label(),
                 source.url,
                 if source.content.len() > 6000 {
                     format!("{}... [truncated]", safe_slice(&source.content, 6000))
@@ -268,6 +325,7 @@ impl<'a> ResearchEngine<'a> {
                  Output ONLY the queries, one per line:",
                 count, objective, task
             ),
+            "thinking": false,
         });
 
         match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
@@ -524,6 +582,7 @@ impl<'a> ResearchEngine<'a> {
                      Respond with ONLY numbers, one per line (e.g. 0.85):",
                     objective, items
                 ),
+                "thinking": false,
             });
 
             match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
@@ -594,12 +653,14 @@ impl<'a> ResearchEngine<'a> {
                         match fetch_url_http(&candidate.url, timeout_secs, max_content) {
                             Ok(content) if !content.is_empty() => {
                                 let char_count = content.len();
+                                let tier = SourceTier::from_url(&candidate.url);
                                 fetched.lock().unwrap().push(FetchedSource {
                                     url: candidate.url.clone(),
                                     title: candidate.title.clone(),
                                     content,
                                     fetch_method: FetchMethod::Http,
                                     char_count,
+                                    tier,
                                 });
                             }
                             Ok(_) => {
@@ -1317,6 +1378,7 @@ mod tests {
                 content: "same content".into(),
                 fetch_method: FetchMethod::Http,
                 char_count: 12,
+                tier: SourceTier::Reporting,
             },
             FetchedSource {
                 url: "https://b.com".into(),
@@ -1324,6 +1386,7 @@ mod tests {
                 content: "same content".into(),
                 fetch_method: FetchMethod::Http,
                 char_count: 12,
+                tier: SourceTier::Reporting,
             },
             FetchedSource {
                 url: "https://c.com".into(),
@@ -1331,6 +1394,7 @@ mod tests {
                 content: "different".into(),
                 fetch_method: FetchMethod::Http,
                 char_count: 9,
+                tier: SourceTier::Reporting,
             },
         ];
         let deduped = dedup_sources(sources);
@@ -1362,6 +1426,7 @@ mod tests {
                     content: "Example content here".into(),
                     fetch_method: FetchMethod::Http,
                     char_count: 20,
+                    tier: SourceTier::Reporting,
                 },
             ],
             failed_urls: vec![("https://fail.com".into(), "timeout".into())],
@@ -1399,5 +1464,29 @@ mod tests {
     fn test_blocked_domain_allowed() {
         assert!(!is_blocked_domain("https://www.reuters.com/world/article"));
         assert!(!is_blocked_domain("https://en.wikipedia.org/wiki/Test"));
+    }
+
+    #[test]
+    fn test_source_tier_primary() {
+        assert_eq!(SourceTier::from_url("https://www.state.gov/report"), SourceTier::Primary);
+        assert_eq!(SourceTier::from_url("https://www.un.org/docs"), SourceTier::Primary);
+    }
+
+    #[test]
+    fn test_source_tier_analytical() {
+        assert_eq!(SourceTier::from_url("https://arxiv.org/abs/2301.01"), SourceTier::Analytical);
+        assert_eq!(SourceTier::from_url("https://www.brookings.edu/article"), SourceTier::Analytical);
+    }
+
+    #[test]
+    fn test_source_tier_aggregator() {
+        assert_eq!(SourceTier::from_url("https://en.wikipedia.org/wiki/Test"), SourceTier::Aggregator);
+        assert_eq!(SourceTier::from_url("https://www.reddit.com/r/test"), SourceTier::Aggregator);
+    }
+
+    #[test]
+    fn test_source_tier_reporting_default() {
+        assert_eq!(SourceTier::from_url("https://www.reuters.com/article"), SourceTier::Reporting);
+        assert_eq!(SourceTier::from_url("https://www.bbc.com/news"), SourceTier::Reporting);
     }
 }

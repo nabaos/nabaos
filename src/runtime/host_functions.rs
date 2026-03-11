@@ -1152,10 +1152,14 @@ impl AbilityRegistry {
                     .and_then(|v| v.as_str())
                     .unwrap_or("You are a helpful assistant. Answer clearly and concisely.");
                 let max_tokens = input.get("max_tokens").and_then(|v| v.as_u64()).map(|v| v as u32);
+                let thinking = input.get("thinking").and_then(|v| v.as_bool()).unwrap_or(true);
                 let provider = self.llm_provider.as_ref()
                     .ok_or("No LLM provider configured for llm.chat")?;
-                let response = provider.complete(system_prompt, prompt, max_tokens)
-                    .map_err(|e| format!("LLM chat failed: {}", e))?;
+                let response = if thinking {
+                    provider.complete(system_prompt, prompt, max_tokens)
+                } else {
+                    provider.complete_no_think(system_prompt, prompt, max_tokens)
+                }.map_err(|e| format!("LLM chat failed: {}", e))?;
                 (response.text.into_bytes(), None, HashMap::new())
             }
 

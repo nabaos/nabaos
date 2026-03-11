@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::error::{NyayaError, Result};
 
+/// Check if a model is a thinking/reasoning model by name patterns.
+fn is_thinking_model(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.contains("thinking")
+        || m.contains("-r1")
+        || m.contains("deepseek-r")
+        || m.contains("qwq")
+        || m.contains("o1-")
+        || m.contains("o3-")
+        || m.contains("o4-")
+}
+
 /// LLM provider configuration.
 #[derive(Debug, Clone)]
 pub struct LlmProvider {
@@ -196,6 +208,17 @@ impl LlmProvider {
     /// This is a blocking call — use from a tokio::spawn context.
     /// Retries up to 2 times on transient failures (rate limits, empty responses).
     pub fn complete(&self, system_prompt: &str, user_message: &str, max_tokens: Option<u32>) -> Result<LlmResponse> {
+        self.complete_inner(system_prompt, user_message, max_tokens, true)
+    }
+
+    /// Complete without thinking/reasoning tokens. For thinking models (Qwen,
+    /// DeepSeek-R1), this appends `/no_think` and sets `enable_thinking: false`
+    /// so the model skips chain-of-thought, producing faster and cheaper output.
+    pub fn complete_no_think(&self, system_prompt: &str, user_message: &str, max_tokens: Option<u32>) -> Result<LlmResponse> {
+        self.complete_inner(system_prompt, user_message, max_tokens, false)
+    }
+
+    fn complete_inner(&self, system_prompt: &str, user_message: &str, max_tokens: Option<u32>, thinking: bool) -> Result<LlmResponse> {
         let mut last_err = None;
         for attempt in 0..3u32 {
             if attempt > 0 {
@@ -203,7 +226,7 @@ impl LlmProvider {
                 tracing::warn!(attempt, delay_ms = delay.as_millis() as u64, "Retrying LLM request");
                 std::thread::sleep(delay);
             }
-            match self.complete_once(system_prompt, user_message, max_tokens) {
+            match self.complete_once(system_prompt, user_message, max_tokens, thinking) {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
                     let msg = e.to_string();
@@ -226,7 +249,7 @@ impl LlmProvider {
         Err(last_err.unwrap_or_else(|| NyayaError::Config("LLM request failed after 3 attempts".into())))
     }
 
-    fn complete_once(&self, system_prompt: &str, user_message: &str, max_tokens: Option<u32>) -> Result<LlmResponse> {
+    fn complete_once(&self, system_prompt: &str, user_message: &str, max_tokens: Option<u32>, thinking: bool) -> Result<LlmResponse> {
         let start = std::time::Instant::now();
 
         let mut builder = reqwest::blocking::Client::builder();
@@ -300,15 +323,36 @@ impl LlmProvider {
                 }
             }
             ProviderType::OpenAI | ProviderType::DeepSeek | ProviderType::Ollama => {
-                let body = serde_json::json!({
+                // For thinking models, append /no_think to suppress reasoning
+                // when thinking=false. This works for Qwen thinking models and
+                // similar. Also set provider-specific flags.
+                let effective_user_msg = if !thinking && is_thinking_model(&self.model) {
+                    format!("{}\n/no_think", user_message)
+                } else {
+                    user_message.to_string()
+                };
+
+                let mut body = serde_json::json!({
                     "model": self.model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message}
+                        {"role": "user", "content": effective_user_msg}
                     ],
                     "max_tokens": max_tokens.unwrap_or(4096),
                     "temperature": 0.2
                 });
+
+                // Provider-specific thinking suppression
+                if !thinking && is_thinking_model(&self.model) {
+                    if let Some(obj) = body.as_object_mut() {
+                        // Qwen: enable_thinking flag
+                        obj.insert("enable_thinking".into(), serde_json::json!(false));
+                        // DeepSeek: reasoning_effort
+                        if self.model.contains("deepseek") {
+                            obj.insert("reasoning_effort".into(), serde_json::json!("none"));
+                        }
+                    }
+                }
 
                 let mut req = client
                     .post(&self.base_url)
