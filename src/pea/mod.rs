@@ -1,6 +1,7 @@
 pub mod bdi;
 pub mod bridge;
 pub mod budget;
+pub mod charts;
 pub mod composer;
 pub mod dialectic;
 pub mod document;

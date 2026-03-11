@@ -154,9 +154,9 @@ impl<'a> DocumentComposer<'a> {
         let fact_notes = self.verify_numerical_claims(&sections);
         all_notes.extend(fact_notes);
 
-        // Phase 4d: Auto-generate data charts from section content
+        // Phase 4d: Auto-generate data charts + PRISMA flow diagram
         eprintln!("[composer] generating data charts...");
-        let chart_images = self.generate_charts(&sections, output_dir);
+        let chart_images = self.generate_charts(&sections, corpus, output_dir);
         if !chart_images.is_empty() {
             eprintln!("[composer] generated {} charts", chart_images.len());
             all_notes.push(format!("Generated {} data visualization charts", chart_images.len()));
@@ -742,14 +742,331 @@ impl<'a> DocumentComposer<'a> {
         }
     }
 
-    // -- Phase 4d: Auto-generated Charts --------------------------------------
+    // -- Phase 4d: Auto-generated Charts + PRISMA Flow Diagram ----------------
 
-    /// Ask LLM to identify data suitable for charts, generate matplotlib code,
-    /// execute it, and return chart images as ImageEntry tuples.
+    /// Generate data visualization charts and PRISMA flow diagram.
+    /// Charts are produced by LLM-generated matplotlib scripts; the PRISMA
+    /// diagram is generated deterministically from the research corpus stats.
     fn generate_charts(
         &self,
         sections: &[GeneratedSection],
+        corpus: &ResearchCorpus,
         output_dir: &Path,
+    ) -> Vec<ImageEntry> {
+        let charts_dir = output_dir.join("charts");
+        let _ = std::fs::create_dir_all(&charts_dir);
+
+        let mut chart_images: Vec<ImageEntry> = Vec::new();
+        let matplotlib_available = crate::pea::charts::has_matplotlib();
+
+        // 1. PRISMA 2020 flow diagram (deterministic, no LLM needed)
+        if matplotlib_available {
+            if let Some(prisma) = self.generate_prisma_diagram(corpus, &charts_dir) {
+                chart_images.push(prisma);
+            }
+        } else {
+            // Fall back to plotters (Rust-native)
+            if let Some(prisma) = crate::pea::charts::generate_prisma_plotters(corpus, &charts_dir) {
+                chart_images.push(prisma);
+            }
+        }
+
+        // 2. Source distribution chart (deterministic)
+        if matplotlib_available {
+            if let Some(dist) = self.generate_source_distribution(corpus, &charts_dir) {
+                chart_images.push(dist);
+            }
+        } else {
+            if let Some(dist) = crate::pea::charts::generate_source_dist_plotters(corpus, &charts_dir) {
+                chart_images.push(dist);
+            }
+        }
+
+        // 3. LLM-driven data charts from section content (matplotlib only)
+        if matplotlib_available {
+            chart_images.extend(self.generate_data_charts(sections, &charts_dir));
+        } else {
+            eprintln!("[composer] matplotlib not available, skipping LLM-driven data charts");
+        }
+
+        chart_images
+    }
+
+    /// Generate PRISMA 2020 systematic review flow diagram from corpus statistics.
+    fn generate_prisma_diagram(
+        &self,
+        corpus: &ResearchCorpus,
+        charts_dir: &Path,
+    ) -> Option<ImageEntry> {
+        let total_identified = corpus.total_candidates;
+        let fetched = corpus.sources.len();
+        let failed = corpus.failed_urls.len();
+        let screened = total_identified; // all candidates go through scoring
+        let sought = fetched + failed;   // top-k attempted
+        let excluded_screening = total_identified.saturating_sub(sought);
+        let excluded_eligibility = failed;
+        let included = fetched;
+
+        // Count by tier for the inclusion box
+        let primary = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Primary).count();
+        let analytical = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Analytical).count();
+        let reporting = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Reporting).count();
+        let aggregator = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Aggregator).count();
+
+        let prisma_path = charts_dir.join("prisma_flow.png");
+        let code = format!(r#"
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+
+fig, ax = plt.subplots(figsize=(12, 14), dpi=200)
+ax.set_xlim(0, 100)
+ax.set_ylim(0, 100)
+ax.axis('off')
+
+# Colors
+box_color = '#f0f4f8'
+border_color = '#2c3e50'
+arrow_color = '#7f8c8d'
+header_color = '#34495e'
+exclude_color = '#fadbd8'
+
+def draw_box(x, y, w, h, text, color=box_color, fontsize=9, bold=False):
+    rect = mpatches.FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.3",
+                                     facecolor=color, edgecolor=border_color, linewidth=1.2)
+    ax.add_patch(rect)
+    weight = 'bold' if bold else 'normal'
+    ax.text(x + w/2, y + h/2, text, ha='center', va='center', fontsize=fontsize,
+            fontfamily='serif', fontweight=weight, wrap=True,
+            bbox=dict(boxstyle='round,pad=0', facecolor='none', edgecolor='none'))
+
+def draw_arrow(x1, y1, x2, y2):
+    ax.annotate('', xy=(x2, y2), xytext=(x1, y1),
+                arrowprops=dict(arrowstyle='->', color=arrow_color, lw=1.5))
+
+def draw_side_arrow(x1, y1, x2, y2):
+    ax.annotate('', xy=(x2, y2), xytext=(x1, y1),
+                arrowprops=dict(arrowstyle='->', color=arrow_color, lw=1.2))
+
+# Phase headers
+ax.text(5, 96, 'Identification', fontsize=12, fontweight='bold', fontfamily='serif',
+        color=header_color, rotation=90, va='top')
+ax.text(5, 72, 'Screening', fontsize=12, fontweight='bold', fontfamily='serif',
+        color=header_color, rotation=90, va='top')
+ax.text(5, 40, 'Included', fontsize=12, fontweight='bold', fontfamily='serif',
+        color=header_color, rotation=90, va='top')
+
+# Identification
+draw_box(15, 88, 35, 8,
+         'Records identified\nthrough database searching\n(n = {total_identified})',
+         fontsize=9, bold=True)
+
+draw_box(55, 88, 35, 8,
+         'Records identified\nthrough other sources\n(n = 0)',
+         fontsize=9)
+
+# Arrow down to screening
+draw_arrow(32, 88, 32, 82)
+
+# Duplicates removed
+draw_box(15, 74, 35, 7,
+         'Records after duplicates removed\n(n = {screened})',
+         fontsize=9)
+
+draw_arrow(32, 74, 32, 68)
+
+# Screening
+draw_box(15, 60, 35, 7,
+         'Records screened\n(n = {screened})',
+         fontsize=9, bold=True)
+
+draw_box(60, 60, 30, 7,
+         'Records excluded\n(below relevance threshold)\n(n = {excluded_screening})',
+         color=exclude_color, fontsize=8)
+
+draw_side_arrow(50, 63, 60, 63)
+draw_arrow(32, 60, 32, 54)
+
+# Full-text retrieval
+draw_box(15, 46, 35, 7,
+         'Full-text sources\nsought for retrieval\n(n = {sought})',
+         fontsize=9, bold=True)
+
+draw_box(60, 46, 30, 7,
+         'Sources not retrieved\n(HTTP 403/timeout/error)\n(n = {excluded_eligibility})',
+         color=exclude_color, fontsize=8)
+
+draw_side_arrow(50, 49, 60, 49)
+draw_arrow(32, 46, 32, 40)
+
+# Eligibility
+draw_box(15, 32, 35, 7,
+         'Sources assessed\nfor eligibility\n(n = {sought})',
+         fontsize=9)
+
+draw_arrow(32, 32, 32, 26)
+
+# Included
+draw_box(15, 12, 35, 13,
+         'Sources included in\nsynthesis (n = {included})\n\n'
+         'Primary: {primary}\n'
+         'Analytical: {analytical}\n'
+         'Reporting: {reporting}\n'
+         'Aggregator: {aggregator}',
+         color='#d5f5e3', fontsize=8, bold=True)
+
+# Title
+ax.text(50, 99, 'PRISMA 2020 Flow Diagram', ha='center', fontsize=14,
+        fontweight='bold', fontfamily='serif', color=header_color)
+
+plt.tight_layout(pad=1.0)
+plt.savefig('{path}', bbox_inches='tight', facecolor='white')
+plt.close()
+"#,
+            total_identified = total_identified,
+            screened = screened,
+            excluded_screening = excluded_screening,
+            sought = sought,
+            excluded_eligibility = excluded_eligibility,
+            included = included,
+            primary = primary,
+            analytical = analytical,
+            reporting = reporting,
+            aggregator = aggregator,
+            path = prisma_path.to_string_lossy(),
+        );
+
+        let script_input = serde_json::json!({
+            "lang": "python3",
+            "code": code,
+        });
+
+        match self.registry.execute_ability(self.manifest, "script.run", &script_input.to_string()) {
+            Ok(_) if prisma_path.exists() => {
+                eprintln!("[composer] PRISMA flow diagram generated");
+                Some((
+                    "PRISMA 2020 Systematic Review Flow Diagram".to_string(),
+                    prisma_path,
+                    Some("Auto-generated from research pipeline data".to_string()),
+                ))
+            }
+            Ok(_) => {
+                eprintln!("[composer] PRISMA diagram: file not created");
+                None
+            }
+            Err(e) => {
+                eprintln!("[composer] PRISMA diagram failed: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Generate source distribution chart (by tier and fetch method).
+    fn generate_source_distribution(
+        &self,
+        corpus: &ResearchCorpus,
+        charts_dir: &Path,
+    ) -> Option<ImageEntry> {
+        if corpus.sources.len() < 3 {
+            return None;
+        }
+
+        let primary = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Primary).count();
+        let analytical = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Analytical).count();
+        let reporting = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Reporting).count();
+        let aggregator = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Aggregator).count();
+
+        let dist_path = charts_dir.join("source_distribution.png");
+        let code = format!(r#"
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Publication-quality defaults
+plt.rcParams.update({{
+    'font.family': 'serif',
+    'font.size': 11,
+    'axes.linewidth': 0.8,
+    'axes.edgecolor': '#333333',
+    'axes.labelcolor': '#333333',
+    'xtick.color': '#333333',
+    'ytick.color': '#333333',
+    'text.color': '#333333',
+    'figure.facecolor': 'white',
+    'axes.facecolor': '#fafafa',
+    'axes.grid': True,
+    'grid.alpha': 0.3,
+    'grid.linestyle': '--',
+}})
+
+categories = ['Primary\n(Gov/UN/Official)', 'Analytical\n(Academic/Think Tank)',
+              'Reporting\n(News/Wire)', 'Aggregator\n(Wiki/Blog)']
+counts = [{primary}, {analytical}, {reporting}, {aggregator}]
+colors = ['#2ecc71', '#3498db', '#e67e22', '#95a5a6']
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), dpi=200,
+                                 gridspec_kw={{'width_ratios': [3, 2]}})
+
+# Bar chart
+bars = ax1.bar(categories, counts, color=colors, edgecolor='white', linewidth=1.5, width=0.65)
+ax1.set_ylabel('Number of Sources', fontweight='bold')
+ax1.set_title('Source Distribution by Type', fontweight='bold', fontsize=13, pad=15)
+for bar, count in zip(bars, counts):
+    if count > 0:
+        ax1.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.3,
+                str(count), ha='center', va='bottom', fontweight='bold', fontsize=11)
+ax1.set_ylim(0, max(counts) * 1.2 + 1)
+ax1.spines['top'].set_visible(False)
+ax1.spines['right'].set_visible(False)
+
+# Pie chart (only non-zero)
+nonzero = [(c, cnt, col) for c, cnt, col in zip(
+    ['Primary', 'Analytical', 'Reporting', 'Aggregator'], counts, colors) if cnt > 0]
+if nonzero:
+    labels, vals, cols = zip(*nonzero)
+    wedges, texts, autotexts = ax2.pie(vals, labels=labels, colors=cols, autopct='%1.0f%%',
+                                         startangle=90, pctdistance=0.75,
+                                         wedgeprops=dict(linewidth=1.5, edgecolor='white'))
+    for t in autotexts:
+        t.set_fontweight('bold')
+    ax2.set_title('Source Composition', fontweight='bold', fontsize=13, pad=15)
+
+plt.tight_layout(pad=2.0)
+plt.savefig('{path}', bbox_inches='tight', facecolor='white')
+plt.close()
+"#,
+            primary = primary,
+            analytical = analytical,
+            reporting = reporting,
+            aggregator = aggregator,
+            path = dist_path.to_string_lossy(),
+        );
+
+        let script_input = serde_json::json!({
+            "lang": "python3",
+            "code": code,
+        });
+
+        match self.registry.execute_ability(self.manifest, "script.run", &script_input.to_string()) {
+            Ok(_) if dist_path.exists() => {
+                eprintln!("[composer] source distribution chart generated");
+                Some((
+                    "Source Distribution by Type".to_string(),
+                    dist_path,
+                    Some("Auto-generated from research pipeline data".to_string()),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// LLM-driven data charts from section content with publication-quality styling.
+    fn generate_data_charts(
+        &self,
+        sections: &[GeneratedSection],
+        charts_dir: &Path,
     ) -> Vec<ImageEntry> {
         // Build a digest of all numerical data across sections
         let digest: String = sections
@@ -782,38 +1099,42 @@ impl<'a> DocumentComposer<'a> {
             .join("\n\n");
 
         if digest.is_empty() {
-            eprintln!("[composer] no numerical data found for charts");
+            eprintln!("[composer] no numerical data found for data charts");
             return vec![];
         }
 
-        // Ask LLM to generate chart specifications
         let prompt = format!(
-            "You are a data visualization expert. Read the numerical data below from a research \
-             document and generate 3-5 matplotlib Python scripts that create informative charts.\n\n\
+            "You are a data visualization expert creating charts for a peer-reviewed research \
+             report. Read the numerical data below and generate 3-5 matplotlib Python scripts.\n\n\
              DATA FROM DOCUMENT:\n{}\n\n\
-             For each chart, output a complete, self-contained Python script that:\n\
-             - Uses matplotlib only (import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt)\n\
-             - Sets figure size to (10, 6) with dpi=150\n\
-             - Uses a clean style (plt.style.use('seaborn-v0_8-whitegrid') or similar)\n\
-             - Has clear title, axis labels, and legend where needed\n\
-             - Saves to a specific filename using plt.savefig('chart_N.png', bbox_inches='tight')\n\
-             - Calls plt.close() at the end\n\
-             - Contains the actual data values extracted from the text above\n\
-             - Does NOT use plt.show()\n\n\
-             Chart types to consider:\n\
-             - Bar chart for comparing quantities across categories\n\
-             - Line chart for time series or trends\n\
-             - Horizontal bar for rankings\n\
-             - Pie chart for proportions (use sparingly)\n\n\
-             Respond as a JSON array of chart objects:\n\
+             Each script MUST:\n\
+             - Start with: import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt\n\
+             - Apply publication-quality styling:\n\
+               plt.rcParams.update({{'font.family': 'serif', 'font.size': 11, 'axes.linewidth': 0.8,\n\
+               'axes.edgecolor': '#333', 'axes.facecolor': '#fafafa', 'figure.facecolor': 'white',\n\
+               'axes.grid': True, 'grid.alpha': 0.3, 'grid.linestyle': '--'}})\n\
+             - Use fig, ax = plt.subplots(figsize=(10, 6), dpi=200)\n\
+             - Remove top and right spines: ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)\n\
+             - Use muted, professional colors (not bright primary colors)\n\
+             - Include bold title, axis labels, and value annotations on bars/points\n\
+             - Save with: plt.savefig('chart_N.png', bbox_inches='tight', facecolor='white')\n\
+             - End with plt.close()\n\
+             - Contain actual data values from the text, not placeholder data\n\
+             - Do NOT use plt.show()\n\n\
+             Preferred chart types:\n\
+             - Horizontal bar chart for comparing quantities (easiest to read)\n\
+             - Line chart with markers for time series\n\
+             - Grouped/stacked bar for multi-category comparisons\n\
+             - Avoid pie charts unless showing 3-4 proportions\n\n\
+             Respond as JSON array:\n\
              [{{\"caption\": \"descriptive caption\", \"filename\": \"chart_1.png\", \"code\": \"import matplotlib...\"}}]\n\n\
-             Output ONLY valid JSON, no explanation.",
+             Output ONLY valid JSON.",
             crate::pea::research::safe_slice(&digest, 4000),
         );
 
         let input = serde_json::json!({
-            "system": "You are a data visualization expert. Output ONLY a JSON array of chart specifications. \
-                       Each chart must be a complete, self-contained Python script using matplotlib.",
+            "system": "You are a data visualization expert for peer-reviewed publications. \
+                       Output ONLY a JSON array of chart specifications.",
             "prompt": prompt,
             "max_tokens": 8192,
             "thinking": false,
@@ -843,9 +1164,6 @@ impl<'a> DocumentComposer<'a> {
             }
         };
 
-        let charts_dir = output_dir.join("charts");
-        let _ = std::fs::create_dir_all(&charts_dir);
-
         let mut chart_images: Vec<ImageEntry> = Vec::new();
 
         for spec in &chart_specs {
@@ -857,7 +1175,6 @@ impl<'a> DocumentComposer<'a> {
                 continue;
             }
 
-            // Patch the savefig path to use our charts directory
             let chart_path = charts_dir.join(filename);
             let patched_code = code.replace(
                 &format!("'{}'", filename),
@@ -867,7 +1184,6 @@ impl<'a> DocumentComposer<'a> {
                 &format!("\"{}\"", chart_path.to_string_lossy()),
             );
 
-            // Execute via script.run
             let script_input = serde_json::json!({
                 "lang": "python3",
                 "code": patched_code,
@@ -884,7 +1200,6 @@ impl<'a> DocumentComposer<'a> {
                             .map(|m| m.len())
                             .unwrap_or(0);
                         if file_size > 1000 {
-                            // Valid image (>1KB)
                             eprintln!(
                                 "[composer] chart '{}' generated ({} bytes)",
                                 caption, file_size

@@ -884,7 +884,7 @@ where
 
 /// Search via headless Chrome (ChromePool) — avoids bot detection by using a real browser.
 pub(crate) fn search_chrome_pool(query: &str) -> Result<Vec<SearchResult>, String> {
-    use crate::browser::chrome_pool::{ChromePool, TabHandle};
+    use crate::browser::chrome_pool::ChromePool;
     use crate::modules::browser::{BrowserConfig, CdpTransport};
 
     let search_url = format!(

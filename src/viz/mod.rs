@@ -1,6 +1,7 @@
 #[cfg(feature = "tui")]
 pub mod tui;
 
+#[cfg(feature = "charts")]
 pub mod charts;
 pub mod dot;
 pub mod mermaid;

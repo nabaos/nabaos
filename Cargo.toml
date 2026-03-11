@@ -7,10 +7,11 @@ license = "MIT"
 rust-version = "1.85"
 
 [features]
-default = ["bert", "tui", "watcher"]
+default = ["bert", "tui", "watcher", "charts"]
 bert = ["dep:ort", "dep:tokenizers"]
 tui = ["dep:ratatui", "dep:crossterm"]
 watcher = []
+charts = ["dep:plotters"]
 
 [dependencies]
 # Async runtime
@@ -57,6 +58,9 @@ ort = { version = "2.0.0-rc.11", features = ["load-dynamic"], optional = true }
 # Tokenizer (HuggingFace tokenizers, optional, behind `bert` feature)
 tokenizers = { version = "0.20", default-features = false, features = ["onig"], optional = true }
 
+
+# Rust-native charting (optional, behind `charts` feature)
+plotters = { version = "0.3", optional = true, features = ["bitmap_backend", "svg_backend", "line_series", "area_series"] }
 
 # Docker API client
 bollard = "0.18"
@@ -143,8 +147,7 @@ argon2 = "0.5"
 # Image processing (screenshots, YOLO input)
 image = "0.25"
 
-# Chart rendering (SVG)
-plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "area_series", "candlestick"] }
+# Chart rendering (SVG) — now optional via "charts" feature
 
 # WebSocket (CDP transport)
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
