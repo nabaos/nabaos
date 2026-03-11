@@ -361,7 +361,7 @@ impl<'a> StatisticalAnalyzer<'a> {
 
         // Execute via script.run ability
         let script_input = serde_json::json!({
-            "language": "python",
+            "lang": "python",
             "code": code,
         });
 
