@@ -177,6 +177,15 @@ impl<'a> DocumentComposer<'a> {
         let taxonomy_notes = self.reconcile_taxonomies(&mut sections);
         all_notes.extend(taxonomy_notes);
 
+        // Phase 4c3: Citation washing detection — flag precise stats attributed to sources
+        eprintln!("[composer] checking for citation washing...");
+        let wash_notes = detect_citation_washing(&sections);
+        if !wash_notes.is_empty() {
+            eprintln!("[composer] {} citation washing warnings", wash_notes.len());
+            self.fix_citation_washing(&mut sections, &wash_notes);
+        }
+        all_notes.extend(wash_notes);
+
         // Phase 4e: Nyaya trimmer — deduplicate and merge sections using
         // Anadhigata (novelty), Pramana hierarchy (evidence priority), and
         // Padartha structure (categorical coherence).
@@ -937,6 +946,35 @@ impl<'a> DocumentComposer<'a> {
             Err(e) => {
                 eprintln!("[composer] taxonomy reconciliation skipped: {}", e);
                 vec![]
+            }
+        }
+    }
+
+    // -- Phase 4c3: Citation Washing Fix ----------------------------------------
+
+    /// Remove or soften precise statistics that are attributed to sources
+    /// but likely fabricated by the LLM (citation washing).
+    fn fix_citation_washing(&self, sections: &mut Vec<GeneratedSection>, warnings: &[String]) {
+        if warnings.is_empty() {
+            return;
+        }
+
+        let wash_re = regex::Regex::new(
+            r"(\d+(?:\.\d+)?)\s*(%|percent|probability)\s*\(([A-Z][A-Za-z\s]+)\)"
+        ).unwrap();
+
+        for section in sections.iter_mut() {
+            if section.id == "references" {
+                continue;
+            }
+            // Replace precise percentages with hedged language
+            let new_content = wash_re.replace_all(&section.content, |caps: &regex::Captures| {
+                let source = caps.get(3).unwrap().as_str().trim();
+                format!("({})", source) // keep citation, drop fabricated number
+            });
+            if new_content != section.content {
+                eprintln!("[composer] removed fabricated statistics from '{}'", section.title);
+                section.content = new_content.to_string();
             }
         }
     }
@@ -1833,6 +1871,37 @@ fn reorder_outline_sections(outline: &mut DocumentOutline) {
     outline.sections.extend(front);
     outline.sections.extend(body);
     outline.sections.extend(back);
+}
+
+/// Detect "citation washing" — precise statistics attributed to a source citation
+/// without evidence the source actually contains those numbers.
+/// Pattern: "X% probability (Reuters)" or "$2.3 billion (CSIS)" etc.
+fn detect_citation_washing(sections: &[GeneratedSection]) -> Vec<String> {
+    let wash_re = regex::Regex::new(
+        r"(\d+(?:\.\d+)?)\s*(%|percent|probability|billion|million|trillion|casualties|killed|wounded)[^(]{0,30}\(([A-Z][A-Za-z\s]+)\)"
+    ).unwrap();
+
+    let mut warnings = Vec::new();
+
+    for section in sections {
+        if section.id == "references" {
+            continue;
+        }
+        for cap in wash_re.captures_iter(&section.content) {
+            let number = cap.get(1).unwrap().as_str();
+            let unit = cap.get(2).unwrap().as_str();
+            let source = cap.get(3).unwrap().as_str().trim();
+
+            // Flag precise percentages attributed to think tanks/sources
+            // (legitimate citations rarely have round-trip precision like "40%")
+            warnings.push(format!(
+                "Citation wash warning: '{}{}' attributed to ({}) in '{}' — verify source contains this figure",
+                number, unit, source, section.title
+            ));
+        }
+    }
+
+    warnings
 }
 
 /// Dedup chart specs by caption similarity before execution.
@@ -3031,5 +3100,49 @@ mod tests {
             s.content.lines().filter(|l| l.trim().starts_with("1.") || l.trim().starts_with("2.")).count()
         }).sum();
         assert!(list_count >= 4, "should detect enumerated list items");
+    }
+
+    // --- Citation washing tests ---
+
+    #[test]
+    fn test_detect_citation_washing_finds_fabricated_stats() {
+        let sections = vec![
+            GeneratedSection {
+                id: "ch1".into(), title: "Scenarios".into(), level: 0,
+                content: "There is a 40% probability (CSIS) of regional war and 25% probability (Brookings) of containment.".into(),
+                summary: "".into(), hook: None,
+            },
+        ];
+        let warnings = detect_citation_washing(&sections);
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings[0].contains("40%"));
+        assert!(warnings[0].contains("CSIS"));
+        assert!(warnings[1].contains("25%"));
+    }
+
+    #[test]
+    fn test_detect_citation_washing_ignores_clean() {
+        let sections = vec![
+            GeneratedSection {
+                id: "ch1".into(), title: "Analysis".into(), level: 0,
+                content: "According to (Reuters) the situation has deteriorated significantly.".into(),
+                summary: "".into(), hook: None,
+            },
+        ];
+        let warnings = detect_citation_washing(&sections);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_detect_citation_washing_skips_references() {
+        let sections = vec![
+            GeneratedSection {
+                id: "references".into(), title: "References".into(), level: 0,
+                content: "1. 40% probability (CSIS) reference".into(),
+                summary: "".into(), hook: None,
+            },
+        ];
+        let warnings = detect_citation_washing(&sections);
+        assert!(warnings.is_empty());
     }
 }
