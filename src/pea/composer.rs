@@ -203,8 +203,13 @@ impl<'a> DocumentComposer<'a> {
             all_notes.push(format!("Generated {} data visualization charts", chart_images.len()));
         }
 
-        // Merge stock images + generated charts
-        let mut all_images: Vec<ImageEntry> = images.to_vec();
+        // Merge stock images + generated charts (skip stock for analytical themes)
+        let mut all_images: Vec<ImageEntry> = if style.should_skip_stock_images() {
+            eprintln!("[composer] skipping stock images (theme={})", style.theme);
+            Vec::new()
+        } else {
+            images.to_vec()
+        };
         all_images.extend(chart_images);
 
         // Phase 5: Assemble final output

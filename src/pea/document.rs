@@ -38,7 +38,11 @@ pub struct StyleConfig {
     pub use_drop_caps: bool,
     #[serde(default)]
     pub image_queries: Vec<ImageQuery>,
+    #[serde(default = "default_true")]
+    pub skip_stock_images: bool,
 }
+
+fn default_true() -> bool { true }
 
 impl Default for StyleConfig {
     fn default() -> Self {
@@ -53,7 +57,27 @@ impl Default for StyleConfig {
             chapter_style: "clean".into(),
             use_drop_caps: false,
             image_queries: vec![],
+            skip_stock_images: true,
         }
+    }
+}
+
+impl StyleConfig {
+    /// Returns true when stock images should be skipped (analytical/report themes).
+    /// Override with `NABA_PEA_SKIP_STOCKS=0` env var.
+    pub fn should_skip_stock_images(&self) -> bool {
+        if let Ok(v) = std::env::var("NABA_PEA_SKIP_STOCKS") {
+            if v == "0" || v.eq_ignore_ascii_case("false") {
+                return false;
+            }
+        }
+        if !self.skip_stock_images {
+            return false;
+        }
+        matches!(
+            self.theme.to_ascii_lowercase().as_str(),
+            "analytical" | "academic" | "corporate" | "technical" | "minimal" | "editorial" | "clean"
+        )
     }
 }
 
@@ -94,7 +118,8 @@ fn build_style_analysis_prompt(
            \"use_drop_caps\": true/false,\n\
            \"image_queries\": [\n\
              {{\"query\": \"search terms for stock photo\", \"placement\": \"chapter_header|section_illustration|title_page\", \"chapter\": \"chapter name or null\"}}\n\
-           ]\n\
+           ],\n\
+           \"skip_stock_images\": true\n\
          }}\n\n\
          Generate 3-6 image_queries that would enhance this document. RULES for queries:\n\
          - Be SPECIFIC to the actual content (e.g., \"UN Security Council emergency session 2026\" \
@@ -1241,5 +1266,29 @@ mod tests {
         let input = "No citations here.";
         let result = remove_unresolved_cites(input);
         assert_eq!(result, input);
+    }
+
+    // --- Skip stock images tests ---
+
+    #[test]
+    fn test_skip_stock_images_defaults_true() {
+        let config = StyleConfig::default();
+        assert!(config.skip_stock_images);
+    }
+
+    #[test]
+    fn test_analytical_theme_skips() {
+        for theme in &["analytical", "academic", "corporate", "technical", "minimal", "editorial", "clean"] {
+            let config = StyleConfig { theme: theme.to_string(), ..Default::default() };
+            assert!(config.should_skip_stock_images(), "theme '{}' should skip stock images", theme);
+        }
+    }
+
+    #[test]
+    fn test_creative_theme_keeps() {
+        let config = StyleConfig { theme: "creative".into(), ..Default::default() };
+        assert!(!config.should_skip_stock_images());
+        let config2 = StyleConfig { theme: "oriental".into(), ..Default::default() };
+        assert!(!config2.should_skip_stock_images());
     }
 }
