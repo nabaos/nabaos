@@ -35,7 +35,8 @@ pub struct PeaEngine {
     pramana: PramanaValidator,
     /// Cached research context per desire_id — avoids re-running the full
     /// research pipeline (search + fetch + score) on every tick.
-    research_cache: std::collections::HashMap<String, String>,
+    /// Stores (context_string, corpus) so composition can reuse the corpus.
+    research_cache: std::collections::HashMap<String, (String, crate::pea::research::ResearchCorpus)>,
 }
 
 fn uuid_simple() -> String {
@@ -467,7 +468,7 @@ impl PeaEngine {
                             })
                             .collect();
 
-                        // Compute research once per desire, cache the context string.
+                        // Compute research once per desire, cache context + corpus.
                         let desire_id = &next.desire_id;
                         if !self.research_cache.contains_key(desire_id) {
                             use crate::pea::research::{ResearchConfig, ResearchEngine};
@@ -478,9 +479,9 @@ impl PeaEngine {
                             } else {
                                 corpus.to_context_string()
                             };
-                            self.research_cache.insert(desire_id.clone(), ctx);
+                            self.research_cache.insert(desire_id.clone(), (ctx, corpus));
                         }
-                        let cached_context = self.research_cache.get(desire_id).cloned();
+                        let cached_context = self.research_cache.get(desire_id).map(|(ctx, _)| ctx.clone());
 
                         // Execute via bridge
                         let output_dir = data_dir.join("pea_output").join(&obj.id);
@@ -1013,24 +1014,36 @@ impl PeaEngine {
                         actions.push(format!("Fetched {} images", images.len()));
                     }
 
-                    // Use DocumentComposer for intelligent multi-level composition,
-                    // with ResearchEngine-powered corpus for grounding.
-                    // Falls back to legacy assemble_document if composer fails.
+                    // Use DocumentComposer for intelligent multi-level composition.
+                    // Reuse cached research corpus from task execution to avoid a
+                    // duplicate research pass (saves ~10 min). Only run fresh
+                    // research if no cached corpus is available.
                     let compose_result = {
                         use crate::pea::composer::{ComposerConfig, DocumentComposer};
-                        use crate::pea::research::{ResearchConfig, ResearchEngine};
+                        use crate::pea::research::{ResearchConfig, ResearchEngine, ResearchCorpus};
 
-                        let research = ResearchEngine::new(
-                            registry,
-                            manifest,
-                            ResearchConfig::default(),
-                        );
-                        let corpus = research.execute(&obj.description, "compile final document");
-                        actions.push(format!(
-                            "Research: {} sources from {} candidates",
-                            corpus.sources.len(),
-                            corpus.total_candidates,
-                        ));
+                        let corpus = if let Some((_, cached_corpus)) = self.research_cache.values().next() {
+                            eprintln!("[pea] reusing cached research corpus ({} sources) for composition", cached_corpus.sources.len());
+                            actions.push(format!(
+                                "Research: reused cached corpus ({} sources)",
+                                cached_corpus.sources.len(),
+                            ));
+                            cached_corpus.clone()
+                        } else {
+                            eprintln!("[pea] no cached corpus, running fresh research for composition");
+                            let research = ResearchEngine::new(
+                                registry,
+                                manifest,
+                                ResearchConfig::default(),
+                            );
+                            let c = research.execute(&obj.description, "compile final document");
+                            actions.push(format!(
+                                "Research: {} sources from {} candidates",
+                                c.sources.len(),
+                                c.total_candidates,
+                            ));
+                            c
+                        };
 
                         let composer = DocumentComposer::new(
                             registry,

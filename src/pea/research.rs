@@ -87,6 +87,7 @@ impl Default for ResearchConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct SearchCandidate {
     pub url: String,
     pub title: String,
@@ -95,6 +96,7 @@ pub struct SearchCandidate {
     pub relevance_score: Option<f32>,
 }
 
+#[derive(Clone)]
 pub struct FetchedSource {
     pub url: String,
     pub title: String,
@@ -109,6 +111,7 @@ pub enum FetchMethod {
     ChromePool,
 }
 
+#[derive(Clone)]
 pub struct ResearchCorpus {
     pub query: String,
     pub sources: Vec<FetchedSource>,
@@ -497,8 +500,8 @@ impl<'a> ResearchEngine<'a> {
             return;
         }
 
-        // Score in batches of 20
-        for batch in candidates.chunks_mut(20) {
+        // Score in batches of 50 to reduce LLM calls (especially with thinking models)
+        for batch in candidates.chunks_mut(50) {
             let items: String = batch
                 .iter()
                 .enumerate()
@@ -565,13 +568,23 @@ impl<'a> ResearchEngine<'a> {
         &self,
         candidates: &[SearchCandidate],
     ) -> (Vec<FetchedSource>, Vec<(String, String)>) {
+        // Filter out domains known to always 403/block bot requests
+        let blocked_count = candidates.iter().filter(|c| is_blocked_domain(&c.url)).count();
+        if blocked_count > 0 {
+            eprintln!("[research] skipped {} candidates from blocked domains", blocked_count);
+        }
+        let filtered: Vec<&SearchCandidate> = candidates
+            .iter()
+            .filter(|c| !is_blocked_domain(&c.url))
+            .collect();
+
         let fetched = std::sync::Mutex::new(Vec::new());
         let failed = std::sync::Mutex::new(Vec::new());
         let max_content = self.config.max_content_per_source;
         let timeout_secs = self.config.fetch_timeout_secs;
 
         // Parallel fetch, 8 concurrent threads
-        for batch in candidates.chunks(8) {
+        for batch in filtered.chunks(8) {
             std::thread::scope(|s| {
                 for candidate in batch {
                     let fetched = &fetched;
@@ -619,6 +632,30 @@ impl<'a> ResearchEngine<'a> {
             failed.into_inner().unwrap(),
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// 403 Domain Blocklist — sites that always reject bot/scraper requests
+// ---------------------------------------------------------------------------
+
+/// Domains known to return 403 Forbidden for automated requests.
+/// Skipping these saves fetch time and backfill cycles.
+const BLOCKED_DOMAINS: &[&str] = &[
+    "nytimes.com",
+    "washingtonpost.com",
+    "iiss.org",
+    "chathamhouse.org",
+    "britannica.com",
+    "researchgate.net",
+    "understandingwar.org",
+    "securitycouncilreport.org",
+    "crisisgroup.org",
+    "fdd.org",
+    "commonslibrary.parliament.uk",
+];
+
+fn is_blocked_domain(url: &str) -> bool {
+    BLOCKED_DOMAINS.iter().any(|d| url.contains(d))
 }
 
 // ---------------------------------------------------------------------------
@@ -1351,5 +1388,16 @@ mod tests {
         let html = format!("<html><body>{}</body></html>", long_content);
         let text = extract_readable_text(&html);
         assert!(text.len() <= 8000);
+    }
+
+    #[test]
+    fn test_blocked_domain_nytimes() {
+        assert!(is_blocked_domain("https://www.nytimes.com/2026/03/07/world.html"));
+    }
+
+    #[test]
+    fn test_blocked_domain_allowed() {
+        assert!(!is_blocked_domain("https://www.reuters.com/world/article"));
+        assert!(!is_blocked_domain("https://en.wikipedia.org/wiki/Test"));
     }
 }
