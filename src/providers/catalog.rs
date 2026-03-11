@@ -11,6 +11,7 @@ fn openai_compat(id: &str, name: &str, base_url: &str) -> ProviderDef {
         default_model: String::new(),
         supports_tools: true,
         supports_vision: false,
+        supports_structured_output: false, // conservative default
     }
 }
 
@@ -52,6 +53,7 @@ pub fn builtin_providers() -> Vec<ProviderDef> {
         default_model: "claude-sonnet-4-6".to_string(),
         supports_tools: true,
         supports_vision: true,
+        supports_structured_output: true,
     });
 
     providers.push(ProviderDef {
@@ -85,6 +87,7 @@ pub fn builtin_providers() -> Vec<ProviderDef> {
         default_model: "gpt-4o".to_string(),
         supports_tools: true,
         supports_vision: true,
+        supports_structured_output: true,
     });
 
     providers.push(ProviderDef {
@@ -111,6 +114,7 @@ pub fn builtin_providers() -> Vec<ProviderDef> {
         default_model: "gemini-2.0-flash".to_string(),
         supports_tools: true,
         supports_vision: true,
+        supports_structured_output: true,
     });
 
     providers.push(ProviderDef {
@@ -128,6 +132,7 @@ pub fn builtin_providers() -> Vec<ProviderDef> {
         default_model: "anthropic.claude-sonnet-4-6-v1".to_string(),
         supports_tools: true,
         supports_vision: true,
+        supports_structured_output: false,
     });
 
     providers.push(ProviderDef {
@@ -145,6 +150,7 @@ pub fn builtin_providers() -> Vec<ProviderDef> {
         default_model: "gpt-4o".to_string(),
         supports_tools: true,
         supports_vision: true,
+        supports_structured_output: false,
     });
 
     // ── 50 OpenAI-compatible aggregators ──────────────────────────────
@@ -164,17 +170,21 @@ pub fn builtin_providers() -> Vec<ProviderDef> {
         "Fireworks AI",
         "https://api.fireworks.ai/inference",
     ));
-    providers.push(openai_compat("groq", "Groq", "https://api.groq.com/openai"));
-    providers.push(openai_compat(
-        "deepseek",
-        "DeepSeek",
-        "https://api.deepseek.com",
-    ));
-    providers.push(openai_compat(
-        "mistral",
-        "Mistral AI",
-        "https://api.mistral.ai",
-    ));
+    providers.push({
+        let mut p = openai_compat("groq", "Groq", "https://api.groq.com/openai");
+        p.supports_structured_output = true;
+        p
+    });
+    providers.push({
+        let mut p = openai_compat("deepseek", "DeepSeek", "https://api.deepseek.com");
+        p.supports_structured_output = true;
+        p
+    });
+    providers.push({
+        let mut p = openai_compat("mistral", "Mistral AI", "https://api.mistral.ai");
+        p.supports_structured_output = true;
+        p
+    });
     providers.push(openai_compat(
         "cerebras",
         "Cerebras",
@@ -381,6 +391,20 @@ mod tests {
             61,
             "Expected exactly 61 built-in providers"
         );
+    }
+
+    #[test]
+    fn test_openai_supports_structured_output() {
+        let providers = builtin_providers();
+        let openai = providers.iter().find(|p| p.id == "openai").unwrap();
+        assert!(openai.supports_structured_output);
+    }
+
+    #[test]
+    fn test_generic_provider_no_structured_output() {
+        let providers = builtin_providers();
+        let together = providers.iter().find(|p| p.id == "together").unwrap();
+        assert!(!together.supports_structured_output);
     }
 
     #[test]

@@ -36,6 +36,7 @@ pub struct ProviderDef {
     pub default_model: String,
     pub supports_tools: bool,
     pub supports_vision: bool,
+    pub supports_structured_output: bool,
 }
 
 /// Registry of LLM providers and their API keys.
@@ -202,6 +203,7 @@ mod tests {
             default_model: "custom-model".to_string(),
             supports_tools: false,
             supports_vision: false,
+            supports_structured_output: false,
         });
         assert!(registry.get("custom").is_some());
         assert_eq!(
