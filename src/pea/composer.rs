@@ -154,6 +154,32 @@ impl<'a> DocumentComposer<'a> {
         let fact_notes = self.verify_numerical_claims(&sections);
         all_notes.extend(fact_notes);
 
+        // Phase 4e: Nyaya trimmer — deduplicate and merge sections using
+        // Anadhigata (novelty), Pramana hierarchy (evidence priority), and
+        // Padartha structure (categorical coherence).
+        // Controlled by NABA_PEA_NYAYA_TRIM env var (default: enabled).
+        let nyaya_trim_enabled = std::env::var("NABA_PEA_NYAYA_TRIM")
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(true);
+        if nyaya_trim_enabled {
+            let before_count = sections.len();
+            eprintln!("[composer] applying Nyaya trimmer ({} sections)...", before_count);
+            let trim_notes = self.nyaya_trim(&mut sections);
+            let after_count = sections.len();
+            if before_count != after_count {
+                eprintln!(
+                    "[composer] Nyaya trimmer: {} → {} sections (merged {})",
+                    before_count, after_count, before_count - after_count
+                );
+            } else {
+                eprintln!("[composer] Nyaya trimmer: no sections merged");
+            }
+            all_notes.extend(trim_notes);
+        } else {
+            eprintln!("[composer] Nyaya trimmer disabled (NABA_PEA_NYAYA_TRIM=0)");
+            all_notes.push("Nyaya trimmer disabled (ablation)".to_string());
+        }
+
         // Phase 4d: Auto-generate data charts + PRISMA flow diagram
         eprintln!("[composer] generating data charts...");
         let chart_images = self.generate_charts(&sections, corpus, output_dir);
@@ -740,6 +766,216 @@ impl<'a> DocumentComposer<'a> {
                 vec![format!("Fact verification skipped: {}", e)]
             }
         }
+    }
+
+    // -- Phase 4e: Nyaya Trimmer -----------------------------------------------
+    //
+    // Applies three Nyaya-inspired rules to merge redundant sections:
+    //   Rule 1 — Anadhigata (novelty): if >60% of claims restate previous sections, merge
+    //   Rule 2 — Pramana hierarchy (evidence priority): keep section with stronger sourcing
+    //   Rule 3 — Padartha (categorical coherence): merge sections in the same logical category
+
+    /// Run the Nyaya trimmer on generated sections.
+    ///
+    /// Uses LLM to analyze claim overlap and categorical mapping, then merges
+    /// redundant sections. Returns trim notes for the review log.
+    fn nyaya_trim(&self, sections: &mut Vec<GeneratedSection>) -> Vec<String> {
+        let mut notes = Vec::new();
+
+        if sections.len() < 4 {
+            notes.push("Nyaya trimmer: too few sections to trim".to_string());
+            return notes;
+        }
+
+        // Build section digest for LLM analysis
+        let section_digest: String = sections
+            .iter()
+            .map(|s| {
+                let preview = if s.content.len() > 600 {
+                    format!("{}...", crate::pea::research::safe_slice(&s.content, 600))
+                } else {
+                    s.content.clone()
+                };
+                format!(
+                    "SECTION [{}] \"{}\"\nSummary: {}\nContent preview:\n{}\n",
+                    s.id, s.title, s.summary, preview
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n---\n");
+
+        // Truncate if too large
+        let digest = if section_digest.len() > 16000 {
+            format!("{}...[truncated]", &section_digest[..16000])
+        } else {
+            section_digest
+        };
+
+        let prompt = format!(
+            "Analyze these document sections for redundancy using three tests.\n\n\
+             SECTIONS:\n{}\n\n\
+             For each section, determine:\n\
+             1. ANADHIGATA (novelty): What percentage of this section's claims are already \
+                established in earlier sections? A claim is 'established' if the same factual \
+                point (same event, same statistic, same conclusion) appears in an earlier section, \
+                even if worded differently.\n\
+             2. PADARTHA (category): Classify each section into exactly one logical category \
+                from: military, diplomatic, economic, humanitarian, technological, legal, \
+                scenario, methodology, overview\n\
+             3. PRAMANA (evidence strength): Rate sourcing quality 1-5 based on citation density \
+                and source authority.\n\n\
+             Then identify merge candidates:\n\
+             - If a section has >60% claim overlap with earlier sections, it should be ABSORBED \
+               into its closest thematic neighbor\n\
+             - If two sections share the same padartha category AND have >40% overlap, merge them\n\
+             - When merging, keep the one with higher pramana score as the base\n\n\
+             Respond with JSON:\n\
+             {{\n\
+               \"analysis\": [\n\
+                 {{\"id\": \"...\", \"title\": \"...\", \"anadhigata_overlap_pct\": 0-100, \
+                   \"padartha\": \"...\", \"pramana_score\": 1-5}}\n\
+               ],\n\
+               \"merges\": [\n\
+                 {{\"absorb_id\": \"section_to_remove\", \"into_id\": \"section_to_keep\", \
+                   \"reason\": \"...\", \"unique_claims_to_preserve\": \"...\"}}\n\
+               ]\n\
+             }}\n\n\
+             Rules:\n\
+             - NEVER merge the first section (executive summary/introduction)\n\
+             - NEVER merge the last section (conclusion/methodology)\n\
+             - Maximum 3 merges per pass\n\
+             - If no merges needed, return empty merges array\n\
+             - Be CONSERVATIVE: only merge when overlap is genuinely high",
+            digest,
+        );
+
+        let input = serde_json::json!({
+            "system": "You are a document structure analyst applying Nyaya epistemological \
+                       principles. Analyze section redundancy with precision. Output ONLY valid JSON.",
+            "prompt": prompt,
+            "max_tokens": 4096,
+        });
+
+        let raw = match self.registry.execute_ability(self.manifest, "llm.chat", &input.to_string()) {
+            Ok(result) => {
+                let output = String::from_utf8_lossy(&result.output).to_string();
+                strip_thinking_tokens(&output)
+            }
+            Err(e) => {
+                notes.push(format!("Nyaya trimmer skipped: {}", e));
+                return notes;
+            }
+        };
+
+        // Parse the response
+        let json_str = extract_json(&raw);
+        let parsed: serde_json::Value = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(_) => {
+                notes.push("Nyaya trimmer: could not parse LLM response".to_string());
+                return notes;
+            }
+        };
+
+        // Log analysis
+        if let Some(analysis) = parsed.get("analysis").and_then(|a| a.as_array()) {
+            for item in analysis {
+                let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                let overlap = item.get("anadhigata_overlap_pct").and_then(|v| v.as_u64()).unwrap_or(0);
+                let padartha = item.get("padartha").and_then(|v| v.as_str()).unwrap_or("?");
+                let pramana = item.get("pramana_score").and_then(|v| v.as_u64()).unwrap_or(0);
+                eprintln!(
+                    "[nyaya] {} — overlap: {}%, padartha: {}, pramana: {}",
+                    id, overlap, padartha, pramana
+                );
+            }
+        }
+
+        // Apply merges
+        let merges = match parsed.get("merges").and_then(|m| m.as_array()) {
+            Some(m) => m.clone(),
+            None => {
+                notes.push("Nyaya trimmer: no merges recommended".to_string());
+                return notes;
+            }
+        };
+
+        if merges.is_empty() {
+            notes.push("Nyaya trimmer: no merges recommended".to_string());
+            return notes;
+        }
+
+        // Cap at 3 merges
+        let merges = &merges[..merges.len().min(3)];
+
+        for merge in merges {
+            let absorb_id = match merge.get("absorb_id").and_then(|v| v.as_str()) {
+                Some(id) => id.to_string(),
+                None => continue,
+            };
+            let into_id = match merge.get("into_id").and_then(|v| v.as_str()) {
+                Some(id) => id.to_string(),
+                None => continue,
+            };
+            let reason = merge.get("reason").and_then(|v| v.as_str()).unwrap_or("redundancy");
+            let unique_claims = merge.get("unique_claims_to_preserve").and_then(|v| v.as_str()).unwrap_or("");
+
+            // Safety: never merge first or last section
+            let first_id = sections.first().map(|s| s.id.as_str()).unwrap_or("");
+            let last_id = sections.last().map(|s| s.id.as_str()).unwrap_or("");
+            if absorb_id == first_id || absorb_id == last_id {
+                eprintln!("[nyaya] skipping merge of protected section '{}'", absorb_id);
+                continue;
+            }
+
+            // Find both sections
+            let absorb_idx = sections.iter().position(|s| s.id == absorb_id);
+            let into_idx = sections.iter().position(|s| s.id == into_id);
+
+            match (absorb_idx, into_idx) {
+                (Some(a_idx), Some(i_idx)) => {
+                    let absorb_title = sections[a_idx].title.clone();
+                    let into_title = sections[i_idx].title.clone();
+
+                    // Append unique claims from absorbed section to target
+                    if !unique_claims.is_empty() {
+                        let addendum = format!(
+                            "\n\n**Additional findings** (from {}): {}",
+                            absorb_title, unique_claims
+                        );
+                        sections[i_idx].content.push_str(&addendum);
+                        // Update summary
+                        if !sections[i_idx].summary.contains("merged") {
+                            sections[i_idx].summary.push_str(
+                                &format!(" (merged with {})", absorb_title)
+                            );
+                        }
+                    }
+
+                    let note = format!(
+                        "Nyaya merge: '{}' absorbed into '{}' — {}",
+                        absorb_title, into_title, reason
+                    );
+                    eprintln!("[nyaya] {}", note);
+                    notes.push(note);
+
+                    // Remove the absorbed section
+                    sections.remove(a_idx);
+                }
+                _ => {
+                    eprintln!(
+                        "[nyaya] merge skipped: could not find '{}' or '{}'",
+                        absorb_id, into_id
+                    );
+                }
+            }
+        }
+
+        if notes.is_empty() {
+            notes.push("Nyaya trimmer: analyzed but no merges applied".to_string());
+        }
+
+        notes
     }
 
     // -- Phase 4d: Auto-generated Charts + PRISMA Flow Diagram ----------------
@@ -1823,5 +2059,93 @@ mod tests {
         assert!(!content.contains("</think>"));
         assert!(content.contains("actual content"));
         assert_eq!(summary, "A summary.");
+    }
+
+    #[test]
+    fn test_nyaya_trim_env_logic_default_enabled() {
+        // Simulate: no env var set → unwrap_or(true)
+        let result: std::result::Result<String, std::env::VarError> = Err(std::env::VarError::NotPresent);
+        let enabled = result
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(true);
+        assert!(enabled);
+    }
+
+    #[test]
+    fn test_nyaya_trim_env_logic_disabled_zero() {
+        // Simulate: NABA_PEA_NYAYA_TRIM=0
+        let result: std::result::Result<String, std::env::VarError> = Ok("0".to_string());
+        let enabled = result
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(true);
+        assert!(!enabled);
+    }
+
+    #[test]
+    fn test_nyaya_trim_env_logic_disabled_false() {
+        // Simulate: NABA_PEA_NYAYA_TRIM=false
+        let result: std::result::Result<String, std::env::VarError> = Ok("false".to_string());
+        let enabled = result
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(true);
+        assert!(!enabled);
+    }
+
+    #[test]
+    fn test_nyaya_trim_env_logic_enabled_explicit() {
+        // Simulate: NABA_PEA_NYAYA_TRIM=1
+        let result: std::result::Result<String, std::env::VarError> = Ok("1".to_string());
+        let enabled = result
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(true);
+        assert!(enabled);
+    }
+
+    #[test]
+    fn test_reorder_sections_exec_summary_first() {
+        let mut outline = DocumentOutline {
+            title: "Test".into(),
+            needs_toc: false,
+            sections: vec![
+                OutlineSection {
+                    id: "ch1".into(),
+                    title: "Military Analysis".into(),
+                    level: 0, description: "".into(), depends_on: vec![],
+                    generation_order: None, children: vec![],
+                },
+                OutlineSection {
+                    id: "ch2".into(),
+                    title: "Executive Summary".into(),
+                    level: 0, description: "".into(), depends_on: vec![],
+                    generation_order: None, children: vec![],
+                },
+                OutlineSection {
+                    id: "ch3".into(),
+                    title: "Methodology".into(),
+                    level: 0, description: "".into(), depends_on: vec![],
+                    generation_order: None, children: vec![],
+                },
+            ],
+        };
+        reorder_outline_sections(&mut outline);
+        assert_eq!(outline.sections[0].title, "Executive Summary");
+        assert_eq!(outline.sections[1].title, "Military Analysis");
+        assert_eq!(outline.sections[2].title, "Methodology");
+    }
+
+    #[test]
+    fn test_cap_section_count_truncates() {
+        let mut outline = DocumentOutline {
+            title: "Test".into(),
+            needs_toc: false,
+            sections: (0..20).map(|i| OutlineSection {
+                id: format!("ch{}", i),
+                title: format!("Section {}", i),
+                level: 0, description: "".into(), depends_on: vec![],
+                generation_order: None, children: vec![],
+            }).collect(),
+        };
+        cap_section_count(&mut outline, 10);
+        assert!(outline.sections.len() <= 10);
     }
 }
