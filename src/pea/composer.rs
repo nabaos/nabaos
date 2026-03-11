@@ -1818,9 +1818,11 @@ plt.close()
         style: &StyleConfig,
         output_dir: &Path,
     ) -> Result<PathBuf> {
+        // Enforce final chapter ordering: front-matter first, appendix/methodology last
+        let sections = reorder_final_sections(&doc.sections);
+
         // Build task_results-compatible format for existing document.rs functions
-        let task_results: Vec<(String, String)> = doc
-            .sections
+        let task_results: Vec<(String, String)> = sections
             .iter()
             .map(|s| (s.title.clone(), s.content.clone()))
             .collect();
@@ -1902,6 +1904,55 @@ fn detect_citation_washing(sections: &[GeneratedSection]) -> Vec<String> {
     }
 
     warnings
+}
+
+/// Enforce final chapter ordering on generated sections before assembly.
+/// Executive Summary/Introduction → body → Methodology/Appendix/References.
+fn reorder_final_sections(sections: &[GeneratedSection]) -> Vec<&GeneratedSection> {
+    let front_keywords = ["executive summary", "introduction", "overview", "abstract"];
+    let back_keywords = ["methodology", "prisma", "appendix", "references", "bibliography",
+                         "photo credits", "data sources", "limitations"];
+
+    let lower = |s: &GeneratedSection| s.title.to_ascii_lowercase();
+
+    let mut front: Vec<&GeneratedSection> = Vec::new();
+    let mut body: Vec<&GeneratedSection> = Vec::new();
+    let mut back: Vec<&GeneratedSection> = Vec::new();
+
+    for section in sections {
+        let t = lower(section);
+        if front_keywords.iter().any(|kw| t.contains(kw)) {
+            front.push(section);
+        } else if back_keywords.iter().any(|kw| t.contains(kw)) {
+            back.push(section);
+        } else {
+            body.push(section);
+        }
+    }
+
+    let front_len = front.len();
+    let body_len = body.len();
+    let back_len = back.len();
+    let reordered_len = front_len + body_len + back_len;
+    if reordered_len != sections.len() {
+        return sections.iter().collect();
+    }
+
+    let mut result = Vec::with_capacity(sections.len());
+    result.extend(front);
+    result.extend(body);
+    result.extend(back);
+
+    if result.iter().map(|s| &s.title).collect::<Vec<_>>()
+        != sections.iter().map(|s| &s.title).collect::<Vec<_>>()
+    {
+        eprintln!(
+            "[composer] reordered final sections: {} → {} first, {} body, {} back",
+            sections.len(), front_len, body_len, back_len
+        );
+    }
+
+    result
 }
 
 /// Dedup chart specs by caption similarity before execution.
@@ -3144,5 +3195,37 @@ mod tests {
         ];
         let warnings = detect_citation_washing(&sections);
         assert!(warnings.is_empty());
+    }
+
+    // --- Chapter ordering tests ---
+
+    #[test]
+    fn test_reorder_final_sections_exec_summary_first() {
+        let sections = vec![
+            GeneratedSection { id: "ch1".into(), title: "Geopolitical Analysis".into(), level: 0, content: "".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "ch2".into(), title: "Economic Impact".into(), level: 0, content: "".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "exec".into(), title: "Executive Summary".into(), level: 0, content: "".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "meth".into(), title: "Methodology".into(), level: 0, content: "".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "refs".into(), title: "References".into(), level: 0, content: "".into(), summary: "".into(), hook: None },
+        ];
+        let ordered = reorder_final_sections(&sections);
+        assert_eq!(ordered[0].title, "Executive Summary");
+        assert_eq!(ordered[1].title, "Geopolitical Analysis");
+        assert_eq!(ordered[2].title, "Economic Impact");
+        assert_eq!(ordered[3].title, "Methodology");
+        assert_eq!(ordered[4].title, "References");
+    }
+
+    #[test]
+    fn test_reorder_final_sections_already_correct() {
+        let sections = vec![
+            GeneratedSection { id: "intro".into(), title: "Introduction".into(), level: 0, content: "".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "ch1".into(), title: "Analysis".into(), level: 0, content: "".into(), summary: "".into(), hook: None },
+            GeneratedSection { id: "refs".into(), title: "References".into(), level: 0, content: "".into(), summary: "".into(), hook: None },
+        ];
+        let ordered = reorder_final_sections(&sections);
+        assert_eq!(ordered[0].title, "Introduction");
+        assert_eq!(ordered[1].title, "Analysis");
+        assert_eq!(ordered[2].title, "References");
     }
 }
