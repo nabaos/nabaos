@@ -3540,6 +3540,32 @@ fn cmd_setup(
                         }
                     }
 
+                    // Ensure LaTeX fonts are installed for PDF generation
+                    if nabaos::modules::hardware::detect_tool(&["pdflatex", "xelatex", "lualatex"]).is_some() {
+                        // pdflatex exists — check if cm-super fonts are present
+                        let has_cm_super = std::process::Command::new("kpsewhich")
+                            .arg("sfrm1000.pfb")
+                            .output()
+                            .map(|o| o.status.success() && !o.stdout.is_empty())
+                            .unwrap_or(false);
+                        if !has_cm_super {
+                            println!();
+                            println!("  {}●{} Installing LaTeX fonts for PDF generation...", cy, r);
+                            let install_result = std::process::Command::new("apt-get")
+                                .args(["install", "-y", "cm-super", "texlive-fonts-recommended"])
+                                .status();
+                            match install_result {
+                                Ok(s) if s.success() => {
+                                    println!("    LaTeX fonts installed (cm-super, texlive-fonts-recommended)");
+                                }
+                                _ => {
+                                    eprintln!("    Could not install LaTeX fonts automatically.");
+                                    eprintln!("    For PDF output, run: sudo apt-get install -y cm-super texlive-fonts-recommended");
+                                }
+                            }
+                        }
+                    }
+
                     // Hardware scan + profile
                     println!();
                     println!("  {}●{} Scanning hardware...", cy, r);
