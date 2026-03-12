@@ -410,7 +410,7 @@ impl<'a> DocumentComposer<'a> {
 
         // Phase 4d2: Evidence gate — analytical sections must contain data
         eprintln!("[composer] enforcing evidence gate...");
-        self.enforce_evidence_gate(&mut sections);
+        self.enforce_evidence_gate(&mut sections, corpus);
 
         // Phase 4e: Nyaya trimmer — deduplicate and merge sections using
         // Anadhigata (novelty), Pramana hierarchy (evidence priority), and
@@ -541,7 +541,7 @@ impl<'a> DocumentComposer<'a> {
                ]\n\
              }}\n\n\
              RULES:\n\
-             - Use 3-8 top-level chapters, 12-15 sections MAXIMUM (including subsections)\n\
+             - Use 3-6 top-level chapters, 8-10 sections MAXIMUM (including subsections). Fewer deeper sections are better than many shallow ones.\n\
              - Merge related topics into single chapters with subsections instead of separate chapters\n\
              - REQUIRED ORDER: Executive Summary/Introduction FIRST, Methodology/PRISMA LAST (as appendix)\n\
              - Introduction and Conclusion should depend on body chapters\n\
@@ -596,12 +596,19 @@ impl<'a> DocumentComposer<'a> {
         let mut used_phrases: Vec<String> = Vec::new();
 
         for section in &ordered {
-            // Build context from previously generated sections
+            // Build context from previously generated sections (include content tail to prevent repetition)
             let prev_context: String = generated
                 .iter()
                 .map(|g| {
-                    let hook = g.hook.as_deref().unwrap_or("");
-                    format!("### {} (summary)\n{}\n{}\n", g.title, g.summary, hook)
+                    let content_preview = if g.content.len() > 500 {
+                        &g.content[g.content.len() - 500..]
+                    } else {
+                        &g.content
+                    };
+                    format!(
+                        "### {} (already written)\nSummary: {}\nKey points covered: {}\n",
+                        g.title, g.summary, content_preview
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -656,7 +663,8 @@ impl<'a> DocumentComposer<'a> {
                  - Cite sources with [Author/Site](URL) format\n\
                  - Reference statistical findings where relevant to strengthen claims\n\
                  - End with a hook/transition that leads into the next section: \"{}\"\n\
-                 - Do NOT include \\section{{}} or chapter headers — just the body content\n\n\
+                 - Do NOT include \\section{{}} or chapter headers — just the body content\n\
+                 - IMPORTANT: Do NOT repeat information already covered in previous sections. Each section must provide unique analysis and insights.\n\n\
                  After the content, on a NEW line write:\n\
                  SUMMARY: {{2-3 sentence summary}}\n\
                  HOOK: {{transition sentence for next section}}",
@@ -679,7 +687,7 @@ impl<'a> DocumentComposer<'a> {
                 "thinking": false,
             });
 
-            let (content, summary, hook) = match self.exec_ability("llm.chat", &input.to_string()) {
+            let (mut content, summary, hook) = match self.exec_ability("llm.chat", &input.to_string()) {
                 Ok(result) => {
                     let output = String::from_utf8_lossy(&result.output).to_string();
                     parse_section_output(&output)
@@ -699,6 +707,43 @@ impl<'a> DocumentComposer<'a> {
                 section.title,
                 content.len()
             );
+
+            // Expand thin sections (< 400 words) unless summary/conclusion
+            let word_count = content.split_whitespace().count();
+            if word_count < 400
+                && !section.title.to_lowercase().contains("summary")
+                && !section.title.to_lowercase().contains("conclusion")
+                && !section.title.to_lowercase().contains("references")
+                && !section.title.to_lowercase().contains("appendix")
+            {
+                eprintln!(
+                    "[composer] section '{}' too thin ({} words), requesting expansion",
+                    section.title, word_count
+                );
+                let expand_prompt = format!(
+                    "The following section is too brief at {} words. Expand it to at least 500 words \
+                     with deeper analysis, specific examples, data points, and critical evaluation. \
+                     Keep all existing content but add depth. Do NOT add a section title header.\n\n\
+                     # {}\n\n{}",
+                    word_count, section.title, content
+                );
+                let expand_input = serde_json::json!({
+                    "system": "You are an academic writer. Expand the section with substantive \
+                               analysis, not filler. Output ONLY the expanded content.",
+                    "prompt": expand_prompt,
+                    "max_tokens": 3000,
+                    "thinking": false,
+                });
+                if let Ok(result) = self.exec_ability("llm.chat", &expand_input.to_string()) {
+                    let expanded = String::from_utf8_lossy(&result.output).to_string();
+                    let expanded = strip_thinking_tokens(&expanded);
+                    let new_wc = expanded.split_whitespace().count();
+                    if new_wc > word_count {
+                        content = expanded;
+                        eprintln!("[composer] expanded to {} words", new_wc);
+                    }
+                }
+            }
 
             // Extract notable phrases (8+ words) for repetition tracking
             extract_notable_phrases(&content, &mut used_phrases);
@@ -1220,8 +1265,8 @@ impl<'a> DocumentComposer<'a> {
 
     /// Enforce evidence gate: analytical sections must contain data tables, statistical
     /// coefficients, or similar empirical evidence. Sections that lack evidence are
-    /// sent back to the LLM for revision.
-    fn enforce_evidence_gate(&self, sections: &mut Vec<GeneratedSection>) {
+    /// sent back to the LLM for revision with source data injected.
+    fn enforce_evidence_gate(&self, sections: &mut Vec<GeneratedSection>, corpus: &ResearchCorpus) {
         // Collect indices and titles as owned data to avoid borrow conflict
         let analytical: Vec<(usize, String)> = detect_analytical_sections(sections)
             .into_iter()
@@ -1240,19 +1285,25 @@ impl<'a> DocumentComposer<'a> {
 
             eprintln!("[composer] evidence gate: '{}' lacks empirical data — requesting revision", title);
 
+            // Gather relevant sources to provide data for the rewrite
+            let relevant_sources = select_relevant_sources(corpus, title, title);
+
             let prompt = format!(
                 "This section is titled '{}' but contains no data tables, regression coefficients, \
-                 or statistical results. Rewrite it to either: (a) include a concrete data table with \
-                 at least 3 rows of numerical data, OR (b) change the title to accurately reflect \
-                 narrative content (e.g., 'Discussion of Economic Patterns' instead of 'Empirical \
-                 Analysis'). Output ONLY the revised section title on the first line, then a blank \
-                 line, then the revised content.\n\n{}",
-                title, &sections[*idx].content
+                 or statistical results. Rewrite it to include specific data points, statistics, \
+                 and quantitative findings from the sources below. Keep the section title '{}' \
+                 UNCHANGED. Add data tables or comparisons where appropriate.\n\n\
+                 CURRENT CONTENT:\n{}\n\n\
+                 AVAILABLE SOURCE DATA:\n{}\n\n\
+                 Output ONLY the revised section title on the first line, then a blank \
+                 line, then the revised content with embedded data.",
+                title, title, &sections[*idx].content, relevant_sources
             );
 
             let input = serde_json::json!({
                 "system": "You are a peer-review quality gate for research documents. \
-                           Ensure analytical sections contain real data or rename them honestly.",
+                           Enrich sections with real quantitative data from the provided sources. \
+                           Do NOT simply rename sections — add actual data tables and statistics.",
                 "prompt": prompt,
                 "max_tokens": self.config.max_tokens_per_section,
                 "thinking": false,
@@ -1494,8 +1545,8 @@ impl<'a> DocumentComposer<'a> {
             return notes;
         }
 
-        // Cap at 3 merges
-        let merges = &merges[..merges.len().min(3)];
+        // Cap at 8 merges (raised from 3 to handle documents with many duplicates)
+        let merges = &merges[..merges.len().min(8)];
 
         for merge in merges {
             let absorb_id = match merge.get("absorb_id").and_then(|v| v.as_str()) {
@@ -2099,7 +2150,7 @@ plt.close()
                 continue;
             }
             let word_count = section.content.split_whitespace().count();
-            if word_count < 300 {
+            if word_count < 600 {
                 continue;
             }
 
@@ -2148,6 +2199,32 @@ plt.close()
                 Err(e) => {
                     eprintln!("[composer] compression failed for '{}': {}", section.title, e);
                 }
+            }
+        }
+
+        // Phrase-level dedup: remove sentences that appear verbatim in earlier sections
+        let mut seen_sentences: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for section in sections.iter_mut() {
+            if section.id == "references" {
+                continue;
+            }
+            let mut deduped_lines: Vec<&str> = Vec::new();
+            let mut removed = 0;
+            for sentence in section.content.split(". ") {
+                let trimmed = sentence.trim();
+                if trimmed.len() > 50 {
+                    let normalized = trimmed.to_lowercase();
+                    if seen_sentences.contains(&normalized) {
+                        removed += 1;
+                        continue;
+                    }
+                    seen_sentences.insert(normalized);
+                }
+                deduped_lines.push(sentence);
+            }
+            if removed > 0 {
+                section.content = deduped_lines.join(". ");
+                eprintln!("[composer] removed {} duplicate sentences from '{}'", removed, section.title);
             }
         }
 
@@ -2407,7 +2484,7 @@ fn dedup_chart_images(images: Vec<ImageEntry>) -> Vec<ImageEntry> {
 }
 
 /// Deduplicate near-identical top-level section titles.
-/// Keeps first occurrence when word-overlap similarity > 0.85.
+/// Keeps first occurrence when word-overlap similarity > 0.60.
 fn dedup_outline_sections(outline: &mut DocumentOutline) {
     fn normalize(title: &str) -> Vec<String> {
         title
@@ -2440,7 +2517,7 @@ fn dedup_outline_sections(outline: &mut DocumentOutline) {
             if !keep[j] {
                 continue;
             }
-            if word_overlap(&normalized[i], &normalized[j]) > 0.85 {
+            if word_overlap(&normalized[i], &normalized[j]) > 0.60 {
                 eprintln!(
                     "[composer] dedup: dropping '{}' (near-duplicate of '{}')",
                     outline.sections[j].title, outline.sections[i].title
@@ -2886,8 +2963,8 @@ fn select_relevant_sources(corpus: &ResearchCorpus, description: &str, title: &s
         .take(8)
         .filter(|(_, score)| *score > 0)
         .map(|(s, _)| {
-            let preview = if s.content.len() > 800 {
-                format!("{}...", crate::pea::research::safe_slice(&s.content, 800))
+            let preview = if s.content.len() > 2000 {
+                format!("{}...", crate::pea::research::safe_slice(&s.content, 2000))
             } else {
                 s.content.clone()
             };
@@ -3008,38 +3085,75 @@ fn domain_fallback(domain: &str) -> String {
     }
 }
 
-/// Build a mapping from source URL → short display name.
+/// Build a mapping from source URL → author-year citation key.
+/// Produces keys like "Smith2024" instead of domain-based "Doi2".
 fn build_source_registry(corpus: &ResearchCorpus) -> HashMap<String, String> {
     let mut registry = HashMap::new();
-    let mut name_counts: HashMap<String, usize> = HashMap::new();
+    let mut key_counts: HashMap<String, usize> = HashMap::new();
 
     for source in &corpus.sources {
         let url = &source.url;
-        // Extract domain from URL
-        let domain = url
-            .split("://")
-            .nth(1)
-            .unwrap_or(url)
-            .split('/')
-            .next()
-            .unwrap_or("");
+        let base_key = extract_citation_key(&source.title, url);
 
-        let base_name = lookup_short_name(domain)
-            .map(String::from)
-            .unwrap_or_else(|| domain_fallback(domain));
-
-        let count = name_counts.entry(base_name.clone()).or_insert(0);
+        let count = key_counts.entry(base_key.clone()).or_insert(0);
         *count += 1;
         let display_name = if *count > 1 {
-            format!("{}{}", base_name, count)
+            format!("{}{}", base_key, count)
         } else {
-            base_name
+            base_key
         };
 
         registry.insert(url.clone(), display_name);
     }
 
     registry
+}
+
+/// Extract author-year citation key from title/URL.
+/// Falls back to first significant title word + year from URL.
+fn extract_citation_key(title: &str, url: &str) -> String {
+    // Extract year from URL (look for 4-digit year starting with "20")
+    let year: String = url
+        .split(|c: char| !c.is_ascii_digit())
+        .find(|s| s.len() == 4 && s.starts_with("20"))
+        .unwrap_or("")
+        .to_string();
+
+    // Try well-known domain short names first (Reuters, BBC, etc.)
+    let domain = url
+        .split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or("");
+    if let Some(short) = lookup_short_name(domain) {
+        return format!("{}{}", short, year);
+    }
+
+    // Get first significant word from title (skip articles, prepositions)
+    let skip_words = [
+        "a", "an", "the", "of", "in", "on", "for", "to", "and", "with", "by",
+        "from", "how", "what", "why", "when", "where", "is", "are", "was",
+    ];
+    let author_word = title
+        .split_whitespace()
+        .find(|w| {
+            let lower = w.to_lowercase();
+            w.len() > 2 && !skip_words.contains(&lower.as_str())
+        })
+        .unwrap_or("Source");
+
+    // Capitalize first letter, keep only alphanumeric
+    let mut key = String::new();
+    for (i, c) in author_word.chars().enumerate() {
+        if i == 0 {
+            key.push(c.to_uppercase().next().unwrap_or(c));
+        } else if c.is_alphanumeric() {
+            key.push(c);
+        }
+    }
+    format!("{}{}", key, year)
 }
 
 /// Replace `[text](url)` markdown links in section content with `(ShortName)` inline citations.

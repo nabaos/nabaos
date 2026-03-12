@@ -376,6 +376,56 @@ fn generate_latex_source(
         let sanitized = sanitize_latex(&section_tex);
         section_bodies.push(sanitized);
     }
+
+    // 3b. Force-embed any generated charts that keyword matching missed
+    if !images.is_empty() {
+        let placed: std::collections::HashSet<String> = images.iter()
+            .filter(|(_, path, _)| {
+                let fname = path.file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                section_bodies.iter().any(|body| body.contains(&fname))
+            })
+            .filter_map(|(_, path, _)| path.file_name().map(|f| f.to_string_lossy().to_string()))
+            .collect();
+
+        let unplaced: Vec<&ImageEntry> = images.iter()
+            .filter(|(_, path, _)| {
+                let fname = path.file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                !placed.contains(&fname)
+            })
+            .collect();
+
+        if !unplaced.is_empty() {
+            // Distribute unplaced charts to content sections (skip first = exec summary)
+            let content_indices: Vec<usize> = (1..section_bodies.len())
+                .filter(|i| section_bodies[*i].len() > 500)
+                .collect();
+
+            for (i, (caption, path, _)) in unplaced.iter().enumerate() {
+                let target_idx = if content_indices.is_empty() {
+                    i % section_bodies.len().max(1)
+                } else {
+                    content_indices[i % content_indices.len()]
+                };
+                if target_idx < section_bodies.len() {
+                    let fname = path.file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let safe_caption = latex_escape(caption);
+                    let inject = format!(
+                        "\n\n\\begin{{figure}}[htbp]\n\\centering\n\\includegraphics[width=0.85\\textwidth]{{{}}}\n\\caption{{{}}}\n\\end{{figure}}\n",
+                        fname, safe_caption
+                    );
+                    section_bodies[target_idx].push_str(&inject);
+                    eprintln!("[document] force-embedding chart '{}' into section {}", fname, target_idx);
+                }
+            }
+        }
+    }
+
     let content = section_bodies.join("\n\n");
 
     // 4. Build photo credits
