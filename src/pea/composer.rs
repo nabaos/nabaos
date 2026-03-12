@@ -438,11 +438,11 @@ impl<'a> DocumentComposer<'a> {
             all_notes.push("Nyaya trimmer disabled (ablation)".to_string());
         }
 
-        // Phase 4f: Source key mapping — replace raw URLs with clean citations
-        eprintln!("[composer] applying source key mapping...");
-        let source_registry = build_source_registry(corpus);
-        if let Some(refs) = apply_source_keys(&mut sections, &source_registry) {
-            eprintln!("[composer] added References section ({} sources)", source_registry.len());
+        // Phase 4f: APA bibliography — replace markdown links with (Author, Year) citations
+        eprintln!("[composer] building APA bibliography...");
+        let apa_registry = self.build_apa_registry(corpus);
+        if let Some(refs) = apply_apa_citations(&mut sections, &apa_registry) {
+            eprintln!("[composer] added APA References section ({} sources)", apa_registry.len());
             sections.push(refs);
         }
 
@@ -2156,7 +2156,7 @@ plt.close()
 
             let prompt = format!(
                 "Rewrite the following text for brevity, targeting ~70% of the current word count ({} words → ~{} words). \
-                 Preserve ALL facts, citations in parentheses like (Reuters), statistics, and numerical data. \
+                 Preserve ALL facts, citations in parentheses like (Author, Year), statistics, and numerical data. \
                  Remove filler words, redundant phrases, and unnecessary qualifiers. \
                  Output ONLY the rewritten content, no explanation.\n\n{}",
                 word_count,
@@ -3236,11 +3236,10 @@ fn domain_fallback(domain: &str) -> String {
 // APA 7th Edition bibliography helpers
 // ---------------------------------------------------------------------------
 
-use crate::pea::research::SourceMeta;
-
 struct ApaEntry {
     inline_key: String,
     full_ref: String,
+    #[allow(dead_code)]
     url: String,
 }
 
@@ -3361,87 +3360,16 @@ fn disambiguate_inline_keys(entries: &mut HashMap<String, ApaEntry>) {
     }
 }
 
-/// Build a mapping from source URL → author-year citation key.
-/// Produces keys like "Smith2024" instead of domain-based "Doi2".
-fn build_source_registry(corpus: &ResearchCorpus) -> HashMap<String, String> {
-    let mut registry = HashMap::new();
-    let mut key_counts: HashMap<String, usize> = HashMap::new();
-
-    for source in &corpus.sources {
-        let url = &source.url;
-        let base_key = extract_citation_key(&source.title, url);
-
-        let count = key_counts.entry(base_key.clone()).or_insert(0);
-        *count += 1;
-        let display_name = if *count > 1 {
-            format!("{}{}", base_key, count)
-        } else {
-            base_key
-        };
-
-        registry.insert(url.clone(), display_name);
-    }
-
-    registry
-}
-
-/// Extract author-year citation key from title/URL.
-/// Falls back to first significant title word + year from URL.
-fn extract_citation_key(title: &str, url: &str) -> String {
-    // Extract year from URL (look for 4-digit year starting with "20")
-    let year: String = url
-        .split(|c: char| !c.is_ascii_digit())
-        .find(|s| s.len() == 4 && s.starts_with("20"))
-        .unwrap_or("")
-        .to_string();
-
-    // Try well-known domain short names first (Reuters, BBC, etc.)
-    let domain = url
-        .split("://")
-        .nth(1)
-        .unwrap_or(url)
-        .split('/')
-        .next()
-        .unwrap_or("");
-    if let Some(short) = lookup_short_name(domain) {
-        return format!("{}{}", short, year);
-    }
-
-    // Get first significant word from title (skip articles, prepositions)
-    let skip_words = [
-        "a", "an", "the", "of", "in", "on", "for", "to", "and", "with", "by",
-        "from", "how", "what", "why", "when", "where", "is", "are", "was",
-    ];
-    let author_word = title
-        .split_whitespace()
-        .find(|w| {
-            let lower = w.to_lowercase();
-            w.len() > 2 && !skip_words.contains(&lower.as_str())
-        })
-        .unwrap_or("Source");
-
-    // Capitalize first letter, keep only alphanumeric
-    let mut key = String::new();
-    for (i, c) in author_word.chars().enumerate() {
-        if i == 0 {
-            key.push(c.to_uppercase().next().unwrap_or(c));
-        } else if c.is_alphanumeric() {
-            key.push(c);
-        }
-    }
-    format!("{}{}", key, year)
-}
-
-/// Replace `[text](url)` markdown links in section content with `(ShortName)` inline citations.
-/// Returns a References section if any links were replaced.
-fn apply_source_keys(
+/// Replace `[text](url)` markdown links with APA inline citations and build
+/// an alphabetically sorted APA bibliography section.
+fn apply_apa_citations(
     sections: &mut Vec<GeneratedSection>,
-    registry: &HashMap<String, String>,
+    registry: &HashMap<String, ApaEntry>,
 ) -> Option<GeneratedSection> {
     let link_re = regex::Regex::new(r"\[([^\]]*)\]\((https?://[^\)]+)\)").ok()?;
 
-    let mut ref_list: Vec<(String, String)> = Vec::new(); // (short_name, url)
-    let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut cited_urls: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for section in sections.iter_mut() {
         if section.id == "references" {
@@ -3454,29 +3382,24 @@ fn apply_source_keys(
             let full_match = cap.get(0).unwrap();
             let url = cap.get(2).unwrap().as_str();
 
-            // Look up short name from registry, or derive from URL
-            let domain = url
-                .split("://")
-                .nth(1)
-                .unwrap_or(url)
-                .split('/')
-                .next()
-                .unwrap_or("");
-            let short_name = registry
+            let inline = registry
                 .get(url)
-                .cloned()
+                .map(|e| e.inline_key.clone())
                 .unwrap_or_else(|| {
-                    lookup_short_name(domain)
+                    // Fallback for URLs not in registry
+                    let domain = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or("");
+                    let name = lookup_short_name(domain)
                         .map(String::from)
-                        .unwrap_or_else(|| domain_fallback(domain))
+                        .unwrap_or_else(|| domain_fallback(domain));
+                    format!("({}, n.d.)", name)
                 });
 
             new_content.push_str(&section.content[last_end..full_match.start()]);
-            new_content.push_str(&format!("({})", short_name));
+            new_content.push_str(&inline);
             last_end = full_match.end();
 
-            if seen_urls.insert(url.to_string()) {
-                ref_list.push((short_name, url.to_string()));
+            if seen.insert(url.to_string()) {
+                cited_urls.push(url.to_string());
             }
         }
 
@@ -3486,22 +3409,44 @@ fn apply_source_keys(
         }
     }
 
-    if ref_list.is_empty() {
+    if cited_urls.is_empty() {
         return None;
     }
 
-    // Build a numbered references section
+    // Build alphabetically sorted APA bibliography
+    let mut ref_entries: Vec<(String, &str)> = cited_urls
+        .iter()
+        .filter_map(|url| {
+            registry.get(url).map(|e| (e.full_ref.clone(), url.as_str()))
+        })
+        .collect();
+
+    // Sort by reference text (APA alphabetical order)
+    ref_entries.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+
     let mut refs_content = String::new();
-    for (i, (name, url)) in ref_list.iter().enumerate() {
-        refs_content.push_str(&format!("{}. {} — {}\n", i + 1, name, url));
+    for (full_ref, _url) in &ref_entries {
+        refs_content.push_str(full_ref);
+        refs_content.push_str("\n\n");
+    }
+
+    // Also add any cited URLs not in the registry
+    for url in &cited_urls {
+        if !registry.contains_key(url) {
+            let domain = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or("");
+            let name = lookup_short_name(domain)
+                .map(String::from)
+                .unwrap_or_else(|| domain_fallback(domain));
+            refs_content.push_str(&format!("{}. (n.d.). {}\n\n", name, url));
+        }
     }
 
     Some(GeneratedSection {
         id: "references".into(),
         title: "References".into(),
         level: 0,
-        content: refs_content,
-        summary: format!("{} sources cited", ref_list.len()),
+        content: refs_content.trim_end().to_string(),
+        summary: format!("{} sources cited", cited_urls.len()),
         hook: None,
     })
 }
@@ -3924,7 +3869,7 @@ mod tests {
     }
 
     #[test]
-    fn test_source_keys_replaces_links() {
+    fn test_apa_citations_replaces_links() {
         let mut sections = vec![
             GeneratedSection {
                 id: "ch1".into(),
@@ -3935,35 +3880,49 @@ mod tests {
                 hook: None,
             },
         ];
-        let registry: HashMap<String, String> = [
-            ("https://reuters.com/article/123".into(), "Reuters".into()),
-        ].into_iter().collect();
+        let mut registry = HashMap::new();
+        registry.insert("https://reuters.com/article/123".into(), ApaEntry {
+            inline_key: "(Reuters, 2024)".into(),
+            full_ref: "Reuters. (2024). A report. https://reuters.com/article/123".into(),
+            url: "https://reuters.com/article/123".into(),
+        });
 
-        let refs = apply_source_keys(&mut sections, &registry);
-        assert!(sections[0].content.contains("(Reuters)"));
+        let refs = apply_apa_citations(&mut sections, &registry);
+        assert!(sections[0].content.contains("(Reuters, 2024)"));
         assert!(!sections[0].content.contains("https://reuters.com"));
         assert!(refs.is_some());
     }
 
     #[test]
-    fn test_source_keys_creates_references() {
+    fn test_apa_citations_creates_sorted_bibliography() {
         let mut sections = vec![
             GeneratedSection {
                 id: "ch1".into(),
                 title: "Test".into(),
                 level: 0,
-                content: "See [report](https://bbc.com/news/1) and [analysis](https://cgtn.com/a/2).".into(),
+                content: "See [report](https://bbc.com/news/1) and [analysis](https://example.com/2).".into(),
                 summary: "".into(),
                 hook: None,
             },
         ];
-        let registry = HashMap::new();
+        let mut registry = HashMap::new();
+        registry.insert("https://bbc.com/news/1".into(), ApaEntry {
+            inline_key: "(BBC, 2025)".into(),
+            full_ref: "BBC. (2025). News report. https://bbc.com/news/1".into(),
+            url: "https://bbc.com/news/1".into(),
+        });
+        registry.insert("https://example.com/2".into(), ApaEntry {
+            inline_key: "(Adams, 2024)".into(),
+            full_ref: "Adams, J. (2024). Analysis paper. https://example.com/2".into(),
+            url: "https://example.com/2".into(),
+        });
 
-        let refs = apply_source_keys(&mut sections, &registry).unwrap();
+        let refs = apply_apa_citations(&mut sections, &registry).unwrap();
         assert_eq!(refs.id, "references");
-        assert!(refs.content.contains("BBC"));
-        assert!(refs.content.contains("CGTN"));
-        assert!(refs.content.contains("https://bbc.com/news/1"));
+        // Adams should come before BBC alphabetically
+        let adams_pos = refs.content.find("Adams").unwrap();
+        let bbc_pos = refs.content.find("BBC").unwrap();
+        assert!(adams_pos < bbc_pos, "References should be alphabetically sorted");
     }
 
     // --- Compression pass tests (logic only, no LLM) ---
