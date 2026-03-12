@@ -249,6 +249,28 @@ pub struct ResearchCorpus {
     pub total_chars: usize,
 }
 
+/// Convert "First Last" or "First Middle Last" to APA "Last, F. M." format.
+fn display_name_to_apa(name: &str) -> String {
+    let parts: Vec<&str> = name.split_whitespace().collect();
+    match parts.len() {
+        0 => "Unknown".to_string(),
+        1 => parts[0].to_string(),
+        2 => {
+            let first_initial = parts[0].chars().next().map(|c| format!("{}.", c.to_uppercase())).unwrap_or_default();
+            format!("{}, {}", parts[1], first_initial)
+        }
+        _ => {
+            let last = parts.last().unwrap();
+            let initials: String = parts[..parts.len() - 1]
+                .iter()
+                .map(|p| format!("{}.", p.chars().next().unwrap_or('?').to_uppercase()))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("{}, {}", last, initials)
+        }
+    }
+}
+
 impl ResearchCorpus {
     /// Format corpus as context string for LLM grounding.
     pub fn to_context_string(&self) -> String {
@@ -588,13 +610,20 @@ impl<'a> ResearchEngine<'a> {
                             .unwrap_or_else(|| work.id.clone());
                         let snippet = work.abstract_text.clone()
                             .unwrap_or_else(|| OpenAlexClient::format_citation(&work));
+                        let meta = SourceMeta {
+                            authors: work.authors.iter().map(|a| display_name_to_apa(a)).collect(),
+                            year: work.publication_year.and_then(|y| if y > 0 { Some(y as u32) } else { None }),
+                            doi: work.doi.as_ref().map(|d| d.strip_prefix("https://doi.org/").unwrap_or(d).to_string()),
+                            from_openalex: true,
+                            ..SourceMeta::default()
+                        };
                         candidates.push(SearchCandidate {
                             url,
                             title: work.title,
                             snippet,
                             source_engine: "openalex".to_string(),
                             relevance_score: None,
-                            openalex_meta: None,
+                            openalex_meta: Some(meta),
                         });
                     }
                 }
