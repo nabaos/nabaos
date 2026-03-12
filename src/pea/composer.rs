@@ -2259,6 +2259,153 @@ plt.close()
             output_dir,
         )
     }
+
+    // -----------------------------------------------------------------------
+    // APA bibliography pipeline
+    // -----------------------------------------------------------------------
+
+    /// Build APA registry from corpus: OpenAlex sources use metadata directly,
+    /// web sources use LLM extraction. Returns URL → ApaEntry mapping.
+    fn build_apa_registry(&self, corpus: &ResearchCorpus) -> HashMap<String, ApaEntry> {
+        let mut entries = HashMap::new();
+
+        // Split sources into those with OpenAlex metadata and those needing LLM
+        let mut need_llm: Vec<&crate::pea::research::FetchedSource> = Vec::new();
+
+        for source in &corpus.sources {
+            if source.meta.from_openalex && !source.meta.authors.is_empty() {
+                let inline = format_apa_inline(
+                    &source.meta.authors, source.meta.year, &source.url, &source.title,
+                );
+                let full = format_apa_reference(
+                    &source.meta.authors, source.meta.year, &source.title,
+                    source.meta.journal.as_deref(), source.meta.volume.as_deref(),
+                    source.meta.issue.as_deref(), source.meta.pages.as_deref(),
+                    source.meta.doi.as_deref(), &source.url,
+                );
+                entries.insert(source.url.clone(), ApaEntry {
+                    inline_key: inline,
+                    full_ref: full,
+                    url: source.url.clone(),
+                });
+            } else {
+                need_llm.push(source);
+            }
+        }
+
+        eprintln!(
+            "[composer] APA registry: {} from OpenAlex, {} need LLM extraction",
+            entries.len(), need_llm.len()
+        );
+
+        // LLM extraction for web sources (batched)
+        if !need_llm.is_empty() {
+            let llm_entries = self.extract_meta_via_llm(&need_llm);
+            entries.extend(llm_entries);
+        }
+
+        disambiguate_inline_keys(&mut entries);
+        entries
+    }
+
+    /// Extract bibliographic metadata from web sources via LLM, in batches of 10.
+    fn extract_meta_via_llm(
+        &self,
+        sources: &[&crate::pea::research::FetchedSource],
+    ) -> HashMap<String, ApaEntry> {
+        let mut result = HashMap::new();
+
+        for batch in sources.chunks(10) {
+            let mut prompt = String::from(
+                "Extract bibliographic metadata from each source below. \
+                 Return a JSON array with one object per source, in the same order.\n\
+                 Each object must have: {\"url\": \"...\", \"authors\": [\"Last, F. M.\", ...], \
+                 \"year\": 2024, \"title\": \"...\", \"journal\": null, \"volume\": null, \
+                 \"issue\": null, \"pages\": null, \"doi\": null}\n\
+                 Rules:\n\
+                 - Authors in APA format: \"Last, F. M.\" (family name, comma, initials with periods)\n\
+                 - If no author found, use empty array []\n\
+                 - If no year found, use null\n\
+                 - journal/volume/issue/pages/doi: use null if not applicable\n\n"
+            );
+
+            for (i, source) in batch.iter().enumerate() {
+                let preview: String = source.content.chars().take(1500).collect();
+                prompt.push_str(&format!(
+                    "--- Source {} ---\nURL: {}\nTitle: {}\nContent preview:\n{}\n\n",
+                    i + 1, source.url, source.title, preview,
+                ));
+            }
+
+            let input = serde_json::json!({
+                "system": "You are a bibliographic metadata extractor. Return ONLY valid JSON.",
+                "prompt": prompt,
+                "max_tokens": 4096,
+                "thinking": false,
+            });
+
+            match self.exec_ability("llm.chat", &input.to_string()) {
+                Ok(res) => {
+                    let raw = String::from_utf8_lossy(&res.output);
+                    let json_str = extract_json(&raw);
+                    if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
+                        for (i, val) in arr.iter().enumerate() {
+                            if i >= batch.len() { break; }
+                            let source = batch[i];
+                            let entry = self.parse_llm_meta(val, source);
+                            result.insert(source.url.clone(), entry);
+                        }
+                        // Fill any sources not covered by LLM response
+                        for source in batch.iter().skip(arr.len()) {
+                            result.insert(source.url.clone(), self.fallback_apa_entry(source));
+                        }
+                    } else {
+                        eprintln!("[composer] APA LLM parse failed, using fallback");
+                        for source in batch.iter() {
+                            result.insert(source.url.clone(), self.fallback_apa_entry(source));
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[composer] APA LLM extraction failed: {}", e);
+                    for source in batch.iter() {
+                        result.insert(source.url.clone(), self.fallback_apa_entry(source));
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Parse a single LLM JSON result into an ApaEntry.
+    fn parse_llm_meta(&self, val: &serde_json::Value, source: &crate::pea::research::FetchedSource) -> ApaEntry {
+        let authors: Vec<String> = val.get("authors")
+            .and_then(|a| a.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let year = val.get("year").and_then(|y| y.as_u64()).map(|y| y as u32);
+        let title = val.get("title").and_then(|t| t.as_str()).unwrap_or(&source.title);
+        let journal = val.get("journal").and_then(|j| j.as_str());
+        let volume = val.get("volume").and_then(|v| v.as_str());
+        let issue = val.get("issue").and_then(|i| i.as_str());
+        let pages = val.get("pages").and_then(|p| p.as_str());
+        let doi = val.get("doi").and_then(|d| d.as_str());
+
+        let inline = format_apa_inline(&authors, year, &source.url, title);
+        let full = format_apa_reference(
+            &authors, year, title, journal, volume, issue, pages, doi, &source.url,
+        );
+
+        ApaEntry { inline_key: inline, full_ref: full, url: source.url.clone() }
+    }
+
+    /// Minimal APA entry when LLM extraction fails.
+    fn fallback_apa_entry(&self, source: &crate::pea::research::FetchedSource) -> ApaEntry {
+        let inline = format_apa_inline(&[], None, &source.url, &source.title);
+        let full = format_apa_reference(&[], None, &source.title, None, None, None, None, None, &source.url);
+        ApaEntry { inline_key: inline, full_ref: full, url: source.url.clone() }
+    }
 }
 
 // ---------------------------------------------------------------------------
