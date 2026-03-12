@@ -372,9 +372,16 @@ fn generate_latex_source(
     // 3. Generate each section's LaTeX body via LLM
     let mut section_bodies = Vec::new();
     for (i, (desc, text)) in task_results.iter().enumerate() {
-        let section_tex = generate_section_latex(registry, manifest, desc, text, i, images);
-        let sanitized = sanitize_latex(&section_tex);
-        section_bodies.push(sanitized);
+        let desc_lower = desc.to_lowercase();
+        if desc_lower.contains("reference") || desc_lower.contains("bibliograph") {
+            // Render APA bibliography directly — no LLM typesetter
+            let section_tex = render_references_section_latex(desc, text);
+            section_bodies.push(section_tex);
+        } else {
+            let section_tex = generate_section_latex(registry, manifest, desc, text, i, images);
+            let sanitized = sanitize_latex(&section_tex);
+            section_bodies.push(sanitized);
+        }
     }
 
     // 3b. Force-embed any generated charts that keyword matching missed
@@ -451,6 +458,48 @@ fn generate_latex_source(
         .replace("%%PHOTO_CREDITS%%", &photo_credits);
 
     Ok(tex)
+}
+
+/// Render APA bibliography directly in LaTeX — no LLM typesetter needed.
+/// Uses description list with hanging indent for proper APA formatting.
+fn render_references_section_latex(title: &str, content: &str) -> String {
+    let safe_title = latex_escape(title);
+    let mut tex = format!(
+        "\\chapter*{{{}}}\n\\addcontentsline{{toc}}{{chapter}}{{{}}}\n\n\
+         \\begin{{description}}[leftmargin=2em,labelindent=0em,itemsep=0.5em,parsep=0em,font=\\normalfont]\n",
+        safe_title, safe_title
+    );
+
+    // Each reference entry is separated by blank lines
+    for entry in content.split("\n\n") {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        // Escape LaTeX special chars in the entry
+        let safe_entry = latex_escape(entry);
+        // Convert *Journal* markdown italics to \textit{Journal}
+        let formatted = convert_markdown_italics(&safe_entry);
+        // Wrap DOI/URLs in \url{}
+        let formatted = wrap_urls_in_latex(&formatted);
+        tex.push_str(&format!("\\item[] {}\n", formatted));
+    }
+
+    tex.push_str("\\end{description}\n");
+    tex
+}
+
+/// Convert *text* markdown italics to \textit{text} for LaTeX.
+fn convert_markdown_italics(s: &str) -> String {
+    let re = regex::Regex::new(r"\*([^*]+)\*").unwrap();
+    re.replace_all(s, "\\textit{$1}").to_string()
+}
+
+/// Wrap bare URLs in \url{} for LaTeX.
+fn wrap_urls_in_latex(s: &str) -> String {
+    // Match URLs not already inside \url{}
+    let re = regex::Regex::new(r"(?<!\\url\{)(https?://[^\s,}]+)").unwrap();
+    re.replace_all(s, "\\url{$1}").to_string()
 }
 
 /// Generate LaTeX body content for a single section via LLM.
