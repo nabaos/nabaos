@@ -3085,6 +3085,135 @@ fn domain_fallback(domain: &str) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// APA 7th Edition bibliography helpers
+// ---------------------------------------------------------------------------
+
+use crate::pea::research::SourceMeta;
+
+struct ApaEntry {
+    inline_key: String,
+    full_ref: String,
+    url: String,
+}
+
+/// Format an APA inline citation: (Smith, 2024), (Smith & Jones, 2024), (Smith et al., 2024)
+fn format_apa_inline(authors: &[String], year: Option<u32>, url: &str, title: &str) -> String {
+    let year_str = year.map(|y| y.to_string()).unwrap_or_else(|| "n.d.".to_string());
+
+    if !authors.is_empty() {
+        // Extract last name from APA-formatted "Last, F. M."
+        let last_name = |a: &str| a.split(',').next().unwrap_or(a).trim().to_string();
+        match authors.len() {
+            1 => format!("({}, {})", last_name(&authors[0]), year_str),
+            2 => format!("({} & {}, {})", last_name(&authors[0]), last_name(&authors[1]), year_str),
+            _ => format!("({} et al., {})", last_name(&authors[0]), year_str),
+        }
+    } else {
+        // Fallback: domain short name or first title word
+        let domain = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or("");
+        let name = lookup_short_name(domain)
+            .map(String::from)
+            .unwrap_or_else(|| {
+                let skip = ["a","an","the","of","in","on","for","to","and","with","by"];
+                title.split_whitespace()
+                    .find(|w| w.len() > 2 && !skip.contains(&w.to_lowercase().as_str()))
+                    .unwrap_or("Source")
+                    .to_string()
+            });
+        format!("({}, {})", name, year_str)
+    }
+}
+
+/// Format a full APA reference entry.
+fn format_apa_reference(
+    authors: &[String], year: Option<u32>, title: &str,
+    journal: Option<&str>, volume: Option<&str>, issue: Option<&str>,
+    pages: Option<&str>, doi: Option<&str>, url: &str,
+) -> String {
+    let year_str = year.map(|y| y.to_string()).unwrap_or_else(|| "n.d.".to_string());
+
+    let author_str = if authors.is_empty() {
+        let domain = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or("");
+        lookup_short_name(domain)
+            .map(String::from)
+            .unwrap_or_else(|| domain_fallback(domain))
+    } else {
+        format_apa_author_list(authors)
+    };
+
+    let mut entry = format!("{}. ({}). {}.", author_str, year_str, title);
+
+    if let Some(j) = journal {
+        entry.push_str(&format!(" *{}*", j));
+        if let Some(v) = volume {
+            entry.push_str(&format!(", *{}*", v));
+            if let Some(iss) = issue {
+                entry.push_str(&format!("({})", iss));
+            }
+        }
+        if let Some(p) = pages {
+            entry.push_str(&format!(", {}", p));
+        }
+        entry.push('.');
+    }
+
+    if let Some(d) = doi {
+        entry.push_str(&format!(" https://doi.org/{}", d));
+    } else {
+        entry.push_str(&format!(" {}", url));
+    }
+
+    entry
+}
+
+/// Format author list for APA reference (up to 20 authors).
+fn format_apa_author_list(authors: &[String]) -> String {
+    match authors.len() {
+        0 => String::new(),
+        1 => authors[0].clone(),
+        2 => format!("{}, & {}", authors[0], authors[1]),
+        n if n <= 20 => {
+            let mut s = authors[..n-1].join(", ");
+            s.push_str(&format!(", & {}", authors[n-1]));
+            s
+        }
+        _ => {
+            let mut s = authors[..19].join(", ");
+            s.push_str(&format!(", ... {}", authors.last().unwrap()));
+            s
+        }
+    }
+}
+
+/// Disambiguate inline keys by appending a/b/c suffixes when duplicates exist.
+fn disambiguate_inline_keys(entries: &mut HashMap<String, ApaEntry>) {
+    // Group by inline_key
+    let mut key_urls: HashMap<String, Vec<String>> = HashMap::new();
+    for (url, entry) in entries.iter() {
+        key_urls.entry(entry.inline_key.clone()).or_default().push(url.clone());
+    }
+
+    for (key, urls) in &key_urls {
+        if urls.len() > 1 {
+            let mut sorted_urls = urls.clone();
+            sorted_urls.sort();
+            for (i, url) in sorted_urls.iter().enumerate() {
+                let suffix = (b'a' + i as u8) as char;
+                if let Some(entry) = entries.get_mut(url) {
+                    // Insert suffix before closing paren: "(Smith, 2024)" → "(Smith, 2024a)"
+                    let new_key = if key.ends_with(')') {
+                        format!("{}{})", &key[..key.len()-1], suffix)
+                    } else {
+                        format!("{}{}", key, suffix)
+                    };
+                    entry.inline_key = new_key;
+                }
+            }
+        }
+    }
+}
+
 /// Build a mapping from source URL → author-year citation key.
 /// Produces keys like "Smith2024" instead of domain-based "Doi2".
 fn build_source_registry(corpus: &ResearchCorpus) -> HashMap<String, String> {
@@ -4082,5 +4211,110 @@ plt.savefig('chart.png')
         assert_eq!(first_id, "ch1");
         assert!(classify_section_role("Detailed Analysis").is_none()); // not structural
         // The protection in nyaya_trim checks: absorb_id == first_id, so ch1 would be skipped
+    }
+
+    // --- APA formatting tests ---
+
+    #[test]
+    fn test_apa_inline_single_author() {
+        let result = format_apa_inline(&["Smith, J. A.".into()], Some(2024), "", "");
+        assert_eq!(result, "(Smith, 2024)");
+    }
+
+    #[test]
+    fn test_apa_inline_two_authors() {
+        let result = format_apa_inline(
+            &["Smith, J.".into(), "Jones, B.".into()],
+            Some(2024), "", "",
+        );
+        assert_eq!(result, "(Smith & Jones, 2024)");
+    }
+
+    #[test]
+    fn test_apa_inline_three_plus_authors() {
+        let result = format_apa_inline(
+            &["Smith, J.".into(), "Jones, B.".into(), "Lee, C.".into()],
+            Some(2024), "", "",
+        );
+        assert_eq!(result, "(Smith et al., 2024)");
+    }
+
+    #[test]
+    fn test_apa_inline_no_author_known_domain() {
+        let result = format_apa_inline(&[], None, "https://reuters.com/article/123", "Some title");
+        assert_eq!(result, "(Reuters, n.d.)");
+    }
+
+    #[test]
+    fn test_apa_inline_no_author_title_fallback() {
+        let result = format_apa_inline(&[], Some(2025), "https://example.com/page", "Behavioral Finance Survey");
+        assert_eq!(result, "(Behavioral, 2025)");
+    }
+
+    #[test]
+    fn test_apa_reference_journal() {
+        let result = format_apa_reference(
+            &["Smith, J. A.".into(), "Jones, B.".into()],
+            Some(2024), "Efficient transformers",
+            Some("Nature"), Some("42"), Some("3"), Some("100-115"),
+            Some("10.1234/test"), "https://doi.org/10.1234/test",
+        );
+        assert!(result.contains("Smith, J. A., & Jones, B."));
+        assert!(result.contains("(2024)"));
+        assert!(result.contains("Efficient transformers"));
+        assert!(result.contains("*Nature*"));
+        assert!(result.contains("*42*"));
+        assert!(result.contains("(3)"));
+        assert!(result.contains("100-115"));
+        assert!(result.contains("https://doi.org/10.1234/test"));
+    }
+
+    #[test]
+    fn test_apa_reference_web() {
+        let result = format_apa_reference(
+            &["Smith, J.".into()], Some(2025), "A web article",
+            None, None, None, None, None,
+            "https://reuters.com/article/123",
+        );
+        assert!(result.contains("Smith, J."));
+        assert!(result.contains("(2025)"));
+        assert!(result.contains("A web article"));
+        assert!(result.contains("https://reuters.com/article/123"));
+    }
+
+    #[test]
+    fn test_apa_reference_no_author() {
+        let result = format_apa_reference(
+            &[], Some(2024), "Report title",
+            None, None, None, None, None,
+            "https://reuters.com/report",
+        );
+        assert!(result.starts_with("Reuters."));
+    }
+
+    #[test]
+    fn test_disambiguate_inline_keys() {
+        let mut entries = HashMap::new();
+        entries.insert("https://a.com".to_string(), ApaEntry {
+            inline_key: "(Smith, 2024)".into(),
+            full_ref: "Smith, J. (2024). Paper A. https://a.com".into(),
+            url: "https://a.com".into(),
+        });
+        entries.insert("https://b.com".to_string(), ApaEntry {
+            inline_key: "(Smith, 2024)".into(),
+            full_ref: "Smith, J. (2024). Paper B. https://b.com".into(),
+            url: "https://b.com".into(),
+        });
+        disambiguate_inline_keys(&mut entries);
+        let keys: Vec<String> = entries.values().map(|e| e.inline_key.clone()).collect();
+        assert!(keys.contains(&"(Smith, 2024a)".to_string()));
+        assert!(keys.contains(&"(Smith, 2024b)".to_string()));
+    }
+
+    #[test]
+    fn test_apa_author_list_formatting() {
+        assert_eq!(format_apa_author_list(&["A".into()]), "A");
+        assert_eq!(format_apa_author_list(&["A".into(), "B".into()]), "A, & B");
+        assert_eq!(format_apa_author_list(&["A".into(), "B".into(), "C".into()]), "A, B, & C");
     }
 }
