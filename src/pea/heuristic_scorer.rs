@@ -118,6 +118,7 @@ mod tests {
             snippet: "A 2026 survey of efficient transformer techniques".into(),
             source_engine: "brave".into(),
             relevance_score: None,
+            openalex_meta: None,
         };
         let keywords = extract_keywords("survey of transformer efficiency techniques");
         let score = heuristic_score(&candidate, &keywords);
@@ -133,6 +134,7 @@ mod tests {
             snippet: "How to make carbonara at home".into(),
             source_engine: "ddg".into(),
             relevance_score: None,
+            openalex_meta: None,
         };
         let keywords = extract_keywords("survey of transformer efficiency techniques");
         let score = heuristic_score(&candidate, &keywords);

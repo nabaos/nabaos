@@ -152,6 +152,7 @@ pub struct SearchCandidate {
     pub snippet: String,
     pub source_engine: String,
     pub relevance_score: Option<f32>,
+    pub openalex_meta: Option<SourceMeta>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -209,6 +210,18 @@ impl SourceTier {
     }
 }
 
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct SourceMeta {
+    pub authors: Vec<String>,
+    pub year: Option<u32>,
+    pub journal: Option<String>,
+    pub volume: Option<String>,
+    pub issue: Option<String>,
+    pub pages: Option<String>,
+    pub doi: Option<String>,
+    pub from_openalex: bool,
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct FetchedSource {
     pub url: String,
@@ -217,6 +230,8 @@ pub struct FetchedSource {
     pub fetch_method: FetchMethod,
     pub char_count: usize,
     pub tier: SourceTier,
+    #[serde(default)]
+    pub meta: SourceMeta,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -579,6 +594,7 @@ impl<'a> ResearchEngine<'a> {
                             snippet,
                             source_engine: "openalex".to_string(),
                             relevance_score: None,
+                            openalex_meta: None,
                         });
                     }
                 }
@@ -764,6 +780,7 @@ impl<'a> ResearchEngine<'a> {
                     snippet: result.snippet,
                     source_engine: engine_name.to_string(),
                     relevance_score: None,
+                    openalex_meta: None,
                 });
             }
         }
@@ -1000,6 +1017,7 @@ impl<'a> ResearchEngine<'a> {
                                     fetch_method: FetchMethod::Http,
                                     char_count,
                                     tier,
+                                    meta: candidate.openalex_meta.clone().unwrap_or_default(),
                                 });
                             }
                             Ok(_) => {
@@ -1718,6 +1736,7 @@ mod tests {
                 fetch_method: FetchMethod::Http,
                 char_count: 12,
                 tier: SourceTier::Reporting,
+                meta: SourceMeta::default(),
             },
             FetchedSource {
                 url: "https://b.com".into(),
@@ -1726,6 +1745,7 @@ mod tests {
                 fetch_method: FetchMethod::Http,
                 char_count: 12,
                 tier: SourceTier::Reporting,
+                meta: SourceMeta::default(),
             },
             FetchedSource {
                 url: "https://c.com".into(),
@@ -1734,6 +1754,7 @@ mod tests {
                 fetch_method: FetchMethod::Http,
                 char_count: 9,
                 tier: SourceTier::Reporting,
+                meta: SourceMeta::default(),
             },
         ];
         let deduped = dedup_sources(sources);
@@ -1766,6 +1787,7 @@ mod tests {
                     fetch_method: FetchMethod::Http,
                     char_count: 20,
                     tier: SourceTier::Reporting,
+                    meta: SourceMeta::default(),
                 },
             ],
             failed_urls: vec![("https://fail.com".into(), "timeout".into())],
