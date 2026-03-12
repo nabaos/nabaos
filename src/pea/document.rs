@@ -497,9 +497,21 @@ fn convert_markdown_italics(s: &str) -> String {
 
 /// Wrap bare URLs in \url{} for LaTeX.
 fn wrap_urls_in_latex(s: &str) -> String {
-    // Match URLs not already inside \url{}
-    let re = regex::Regex::new(r"(?<!\\url\{)(https?://[^\s,}]+)").unwrap();
-    re.replace_all(s, "\\url{$1}").to_string()
+    let re = regex::Regex::new(r"(https?://[^\s,}]+)").unwrap();
+    let mut result = String::new();
+    let mut last_end = 0;
+    for m in re.find_iter(s) {
+        let prefix = &s[..m.start()];
+        // Skip if already wrapped in \url{}
+        if prefix.ends_with("\\url{") {
+            continue;
+        }
+        result.push_str(&s[last_end..m.start()]);
+        result.push_str(&format!("\\url{{{}}}", m.as_str()));
+        last_end = m.end();
+    }
+    result.push_str(&s[last_end..]);
+    result
 }
 
 /// Generate LaTeX body content for a single section via LLM.
