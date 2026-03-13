@@ -372,6 +372,7 @@ fn generate_latex_source(
 
     // 3. Generate each section's LaTeX body via LLM
     let mut section_bodies = Vec::new();
+    let mut claimed_charts: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (i, (desc, text)) in task_results.iter().enumerate() {
         let desc_lower = desc.to_lowercase();
         if desc_lower.contains("reference") || desc_lower.contains("bibliograph") {
@@ -379,7 +380,7 @@ fn generate_latex_source(
             let section_tex = render_references_section_latex(desc, text);
             section_bodies.push(section_tex);
         } else {
-            let section_tex = generate_section_latex(registry, manifest, desc, text, i, images);
+            let section_tex = generate_section_latex(registry, manifest, desc, text, i, images, &mut claimed_charts);
             let sanitized = sanitize_latex(&section_tex);
             section_bodies.push(sanitized);
         }
@@ -387,22 +388,22 @@ fn generate_latex_source(
 
     // 3b. Force-embed any generated charts that keyword matching missed
     if !images.is_empty() {
-        let placed: std::collections::HashSet<String> = images.iter()
-            .filter(|(_, path, _)| {
-                let fname = path.file_name()
-                    .map(|f| f.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                section_bodies.iter().any(|body| body.contains(&fname))
-            })
-            .filter_map(|(_, path, _)| path.file_name().map(|f| f.to_string_lossy().to_string()))
-            .collect();
+        // Merge claimed charts with those found in section bodies
+        for (_, path, _) in images.iter() {
+            let fname = path.file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if section_bodies.iter().any(|body| body.contains(&fname)) {
+                claimed_charts.insert(fname);
+            }
+        }
 
         let unplaced: Vec<&ImageEntry> = images.iter()
             .filter(|(_, path, _)| {
                 let fname = path.file_name()
                     .map(|f| f.to_string_lossy().to_string())
                     .unwrap_or_default();
-                !placed.contains(&fname)
+                !claimed_charts.contains(&fname)
             })
             .collect();
 
@@ -446,6 +447,7 @@ fn generate_latex_source(
                         fname, safe_caption
                     );
                     section_bodies[target_idx].push_str(&inject);
+                    claimed_charts.insert(fname.clone());
                     eprintln!("[document] force-embedding chart '{}' into section {}", fname, target_idx);
                 }
             }
@@ -550,22 +552,23 @@ fn generate_section_latex(
     content: &str,
     section_idx: usize,
     images: &[ImageEntry],
+    claimed_charts: &mut std::collections::HashSet<String>,
 ) -> String {
-    // Find images relevant to this section
-    let image_hints: String = images
-        .iter()
-        .filter(|(caption, _, _)| {
-            let t_lower = title.to_lowercase();
-            let c_lower = caption.to_lowercase();
-            // Simple relevance: if any word in caption appears in title
-            c_lower.split_whitespace().any(|w| w.len() > 3 && t_lower.contains(w))
-        })
-        .map(|(caption, path, _)| {
-            let fname = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-            format!("- {}: \\includegraphics[width=0.8\\textwidth]{{{}}}", caption, fname)
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    // Find images relevant to this section — only unclaimed charts
+    let mut hints_for_section = Vec::new();
+    for (caption, path, _) in images.iter() {
+        let fname = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+        if claimed_charts.contains(&fname) {
+            continue; // Already assigned to an earlier section
+        }
+        let t_lower = title.to_lowercase();
+        let c_lower = caption.to_lowercase();
+        if c_lower.split_whitespace().any(|w| w.len() > 3 && t_lower.contains(w)) {
+            claimed_charts.insert(fname.clone());
+            hints_for_section.push(format!("- {}: \\includegraphics[width=0.8\\textwidth]{{{}}}", caption, fname));
+        }
+    }
+    let image_hints: String = hints_for_section.join("\n");
 
     let image_instruction = if image_hints.is_empty() {
         String::new()
