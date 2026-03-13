@@ -1703,11 +1703,12 @@ impl<'a> DocumentComposer<'a> {
         charts_dir: &Path,
     ) -> Option<ImageEntry> {
         let total_identified = corpus.total_candidates;
+        let after_dedup = total_identified.saturating_sub(corpus.duplicates_removed);
         let fetched = corpus.sources.len();
         let failed = corpus.failed_urls.len();
-        let screened = total_identified; // all candidates go through scoring
+        let screened = after_dedup; // post-dedup candidates go through scoring
         let sought = fetched + failed;   // top-k attempted
-        let excluded_screening = total_identified.saturating_sub(sought);
+        let excluded_screening = screened.saturating_sub(sought);
         let excluded_eligibility = failed;
         let included = fetched;
 
@@ -1806,7 +1807,7 @@ draw_arrow(32, 46, 32, 40)
 
 # Eligibility
 draw_box(15, 32, 35, 7,
-         'Sources assessed\nfor eligibility\n(n = {sought})',
+         'Sources assessed\nfor eligibility\n(n = {fetched})',
          fontsize=9)
 
 draw_arrow(32, 32, 32, 26)
@@ -1832,6 +1833,7 @@ plt.close()
             screened = screened,
             excluded_screening = excluded_screening,
             sought = sought,
+            fetched = fetched,
             excluded_eligibility = excluded_eligibility,
             included = included,
             primary = primary,

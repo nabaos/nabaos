@@ -33,10 +33,11 @@ pub fn generate_prisma_plotters(
     let _ = std::fs::create_dir_all(charts_dir);
 
     let total = corpus.total_candidates;
+    let after_dedup = total.saturating_sub(corpus.duplicates_removed);
     let fetched = corpus.sources.len();
     let failed = corpus.failed_urls.len();
     let sought = fetched + failed;
-    let excluded = total.saturating_sub(sought);
+    let excluded = after_dedup.saturating_sub(sought);
 
     let primary = corpus.sources.iter().filter(|s| s.tier == SourceTier::Primary).count();
     let analytical = corpus.sources.iter().filter(|s| s.tier == SourceTier::Analytical).count();
@@ -107,7 +108,7 @@ pub fn generate_prisma_plotters(
             ))?;
 
             draw_box(&root, cx, 200, box_w, box_h,
-                     &format!("After deduplication\n(n = {})", total),
+                     &format!("After deduplication\n(n = {})", after_dedup),
                      &light_blue)?;
 
             root.draw(&PathElement::new(
@@ -116,7 +117,7 @@ pub fn generate_prisma_plotters(
             ))?;
 
             draw_box(&root, cx, 320, box_w, box_h,
-                     &format!("Records screened\n(n = {})", total),
+                     &format!("Records screened\n(n = {})", after_dedup),
                      &light_blue)?;
 
             draw_box(&root, rx, 320, 250, box_h,
@@ -152,7 +153,7 @@ pub fn generate_prisma_plotters(
             ))?;
 
             draw_box(&root, cx, 560, box_w, box_h,
-                     &format!("Sources assessed\nfor eligibility\n(n = {})", sought),
+                     &format!("Sources assessed\nfor eligibility\n(n = {})", fetched),
                      &light_blue)?;
 
             root.draw(&PathElement::new(

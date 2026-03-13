@@ -247,6 +247,8 @@ pub struct ResearchCorpus {
     pub failed_urls: Vec<(String, String)>,
     pub total_candidates: usize,
     pub total_chars: usize,
+    /// Number of duplicate sources removed during content deduplication.
+    pub duplicates_removed: usize,
 }
 
 /// Convert "First Last" or "First Middle Last" to APA "Last, F. M." format.
@@ -414,13 +416,16 @@ impl<'a> ResearchEngine<'a> {
         }
 
         // Deduplicate fetched content by SipHash
+        let pre_dedup_count = fetched.len();
         let fetched = dedup_sources(fetched);
+        let duplicates_removed = pre_dedup_count - fetched.len();
 
         let total_chars = fetched.iter().map(|s| s.char_count).sum();
         eprintln!(
-            "[research] corpus: {} sources, {} chars",
+            "[research] corpus: {} sources, {} chars ({} duplicates removed)",
             fetched.len(),
-            total_chars
+            total_chars,
+            duplicates_removed
         );
 
         ResearchCorpus {
@@ -429,6 +434,7 @@ impl<'a> ResearchEngine<'a> {
             failed_urls: failed,
             total_candidates,
             total_chars,
+            duplicates_removed,
         }
     }
 
@@ -1822,6 +1828,7 @@ mod tests {
             failed_urls: vec![("https://fail.com".into(), "timeout".into())],
             total_candidates: 100,
             total_chars: 20,
+            duplicates_removed: 0,
         };
         let ctx = corpus.to_context_string();
         assert!(ctx.contains("1 sources"));
