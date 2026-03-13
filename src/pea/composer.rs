@@ -656,11 +656,42 @@ impl<'a> DocumentComposer<'a> {
                 .map(|r| format!("\n\n{}", r.as_context()))
                 .unwrap_or_default();
 
+            // Inject real pipeline stats for methodology sections
+            let methodology_context = if classify_section_role(&section.title) == Some("methodology") {
+                let primary = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Primary).count();
+                let analytical = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Analytical).count();
+                let reporting = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Reporting).count();
+                let aggregator = corpus.sources.iter().filter(|s| s.tier == crate::pea::research::SourceTier::Aggregator).count();
+                format!(
+                    "\n\nCRITICAL — ACTUAL PIPELINE METRICS (use ONLY these numbers, do NOT invent others):\n\
+                     - Records identified through searching: {}\n\
+                     - Duplicates removed: {}\n\
+                     - Records after deduplication: {}\n\
+                     - Sources sought for retrieval: {}\n\
+                     - Sources not retrieved (HTTP errors): {}\n\
+                     - Sources assessed and included: {}\n\
+                     - Source breakdown: Primary={}, Analytical={}, Reporting={}, Aggregator={}\n\
+                     - Search engine: SearXNG (web search)\n\
+                     - DO NOT mention Scopus, Web of Science, PubMed, or SSRN unless these sources actually appear in the research data above\n\
+                     - DO NOT fabricate record counts — use ONLY the numbers provided here\n",
+                    corpus.total_candidates,
+                    corpus.duplicates_removed,
+                    corpus.total_candidates.saturating_sub(corpus.duplicates_removed),
+                    corpus.sources.len() + corpus.failed_urls.len(),
+                    corpus.failed_urls.len(),
+                    corpus.sources.len(),
+                    primary, analytical, reporting, aggregator,
+                )
+            } else {
+                String::new()
+            };
+
             let prompt = format!(
                 "You are writing section \"{}\" of \"{}\".\n\n\
                  CONTEXT FROM PREVIOUS SECTIONS:\n{}\n\n\
                  RESEARCH SOURCES for this section:\n{}\n\n\
                  TASK RESULTS:\n{}\
+                 {}\
                  {}\n\n\
                  SECTION REQUIREMENTS:\n{}\
                  {}\n\n\
@@ -683,6 +714,7 @@ impl<'a> DocumentComposer<'a> {
                 relevant_sources,
                 task_context,
                 stat_context,
+                methodology_context,
                 section.description,
                 phrase_warning,
                 next_title,
@@ -2310,7 +2342,7 @@ ax.axvline(x=pooled, color='#e74c3c', linewidth=0.8, linestyle='--', alpha=0.5)
 ax.set_yticks(list(y_pos) + [-1.2])
 ax.set_yticklabels(names + [f'Pooled (g = {{pooled:.2f}})'], fontfamily='serif')
 ax.set_xlabel("Hedges' g (standardized effect size)", fontsize=12, fontfamily='serif')
-ax.set_title('Forest Plot: Behavioral Bias Effect Sizes',
+ax.set_title('Forest Plot: Illustrative Effect Sizes\n(Conceptual — values represent typical magnitudes from literature)',
              fontsize=14, fontweight='bold', fontfamily='serif', pad=15)
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
@@ -2333,7 +2365,7 @@ plt.close()
                 if path.exists() {
                     eprintln!("[composer] domain chart: forest plot generated");
                     images.push((
-                        "Forest Plot: Meta-Analytic Effect Sizes of Behavioral Biases".to_string(),
+                        "Forest Plot: Illustrative Behavioral Bias Effect Sizes (Conceptual)".to_string(),
                         path,
                         Some("Auto-generated from research pipeline data".to_string()),
                     ));
@@ -2379,7 +2411,7 @@ ax.fill_betweenx(se_range, true_effect - 1.96 * se_range, true_effect + 1.96 * s
 ax.invert_yaxis()
 ax.set_xlabel("Effect Size (Hedges' g)", fontsize=12, fontfamily='serif')
 ax.set_ylabel('Standard Error', fontsize=12, fontfamily='serif')
-ax.set_title('Funnel Plot: Publication Bias Assessment',
+ax.set_title('Funnel Plot: Publication Bias Assessment\n(Illustrative — simulated data based on typical meta-analytic patterns)',
              fontsize=14, fontweight='bold', fontfamily='serif', pad=15)
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
@@ -2395,7 +2427,7 @@ plt.close()
                 if path.exists() {
                     eprintln!("[composer] domain chart: funnel plot generated");
                     images.push((
-                        "Funnel Plot: Publication Bias Assessment for Behavioral Finance Meta-Analysis".to_string(),
+                        "Funnel Plot: Illustrative Publication Bias Assessment (Conceptual)".to_string(),
                         path,
                         Some("Auto-generated from research pipeline data".to_string()),
                     ));
@@ -3680,6 +3712,10 @@ fn domain_fallback(domain: &str) -> String {
     } else {
         parts.first().copied().unwrap_or(d)
     };
+    let bad_domains = ["market","stock","behavioral","blog","news","article","post","page"];
+    if bad_domains.contains(&name.to_lowercase().as_str()) {
+        return format!("{} [Web]", d);
+    }
     let mut c = name.chars();
     match c.next() {
         None => String::new(),
@@ -3717,10 +3753,27 @@ fn format_apa_inline(authors: &[String], year: Option<u32>, url: &str, title: &s
             .map(String::from)
             .unwrap_or_else(|| {
                 let skip = ["a","an","the","of","in","on","for","to","and","with","by"];
-                title.split_whitespace()
+                let bad_author = ["market","stock","behavioral","financial","how","why","what",
+                                   "role","impact","analysis","review","study","research","guide",
+                                   "understanding","exploring","introduction","overview","effects",
+                                   "top","best","new","key","major","types","list"];
+                let candidate = title.split_whitespace()
                     .find(|w| w.len() > 2 && !skip.contains(&w.to_lowercase().as_str()))
-                    .unwrap_or("Source")
-                    .to_string()
+                    .unwrap_or("Source");
+                if bad_author.contains(&candidate.to_lowercase().as_str()) {
+                    // Use multi-word title fragment instead: first 3 significant words
+                    let words: Vec<&str> = title.split_whitespace()
+                        .filter(|w| w.len() > 2 && !skip.contains(&w.to_lowercase().as_str()))
+                        .take(3)
+                        .collect();
+                    if words.len() >= 2 {
+                        words.join(" ")
+                    } else {
+                        "Source".to_string()
+                    }
+                } else {
+                    candidate.to_string()
+                }
             });
         format!("({}, {})", name, year_str)
     }
@@ -4857,7 +4910,8 @@ plt.savefig('chart.png')
     #[test]
     fn test_apa_inline_no_author_title_fallback() {
         let result = format_apa_inline(&[], Some(2025), "https://example.com/page", "Behavioral Finance Survey");
-        assert_eq!(result, "(Behavioral, 2025)");
+        // "Behavioral" is blocklisted as a bad author name; fallback uses multi-word title fragment
+        assert_eq!(result, "(Behavioral Finance Survey, 2025)");
     }
 
     #[test]
