@@ -662,6 +662,8 @@ impl<'a> DocumentComposer<'a> {
                  - Make it engaging and well-structured\n\
                  - Cite sources with [Author/Site](URL) format\n\
                  - Reference statistical findings where relevant to strengthen claims\n\
+                 - When presenting comparative data, rankings, or numerical findings, format as a markdown table with headers\n\
+                 - Include at least one summary table if the section discusses empirical data or multiple studies\n\
                  - End with a hook/transition that leads into the next section: \"{}\"\n\
                  - Do NOT include \\section{{}} or chapter headers — just the body content\n\
                  - IMPORTANT: Do NOT repeat information already covered in previous sections. Each section must provide unique analysis and insights.\n\n\
