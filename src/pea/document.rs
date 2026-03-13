@@ -320,6 +320,7 @@ pub(crate) const LATEX_SKELETON: &str = r#"\documentclass[12pt,a4paper]{report}
 \usepackage{xcolor}
 \usepackage{hyperref}
 \usepackage{booktabs}
+\usepackage{tabularx}
 \usepackage{fancyhdr}
 \usepackage{tcolorbox}
 \usepackage{tikz}
@@ -743,11 +744,11 @@ fn remove_unresolved_cites(tex: &str) -> String {
     out
 }
 
-/// Convert markdown pipe tables to LaTeX tabular environments.
+/// Convert markdown pipe tables to LaTeX tabularx environments.
 ///
 /// Detects consecutive lines with `|` delimiters, skips the separator line
 /// (containing `---`), and emits a `\begin{table}...\end{table}` with
-/// auto-sized `p{}` columns to prevent truncation.
+/// tabularx `X` columns that auto-distribute width across `\textwidth`.
 fn convert_markdown_tables(tex: &str) -> String {
     let lines: Vec<&str> = tex.lines().collect();
     let mut out = String::with_capacity(tex.len());
@@ -776,15 +777,14 @@ fn convert_markdown_tables(tex: &str) -> String {
                 continue;
             }
 
-            // Calculate column width: distribute evenly across \textwidth
-            let col_width = format!("{:.2}", 0.90 / ncols as f64);
+            // Use tabularx with X columns to auto-distribute width
             let col_spec: String = (0..ncols)
-                .map(|_| format!("p{{{}\\textwidth}}", col_width))
+                .map(|_| "X")
                 .collect::<Vec<_>>()
                 .join(" ");
 
             out.push_str("\\begin{table}[htbp]\n\\centering\n\\small\n");
-            out.push_str(&format!("\\begin{{tabular}}{{{}}}\n\\hline\n", col_spec));
+            out.push_str(&format!("\\begin{{tabularx}}{{\\textwidth}}{{{}}}\n\\hline\n", col_spec));
 
             // Header row (bold)
             let header_tex: Vec<String> = header_cells.iter()
@@ -814,7 +814,7 @@ fn convert_markdown_tables(tex: &str) -> String {
                 i += 1;
             }
 
-            out.push_str("\\hline\n\\end{tabular}\n\\end{table}\n");
+            out.push_str("\\hline\n\\end{tabularx}\n\\end{table}\n");
         } else {
             out.push_str(lines[i]);
             out.push('\n');
@@ -1417,9 +1417,21 @@ pub(crate) fn lint_latex(tex: &str) -> Vec<LintError> {
         }
 
         // Check for overly wide tabulars (>6 columns)
-        if line.contains("\\begin{tabular}") {
-            if let Some(start) = line.find("\\begin{tabular}{") {
-                let rest = &line[start + 16..];
+        if line.contains("\\begin{tabular}") || line.contains("\\begin{tabularx}") {
+            let tag = if line.contains("\\begin{tabularx}") { "\\begin{tabularx}" } else { "\\begin{tabular}{" };
+            if let Some(start) = line.find(tag) {
+                // For tabularx, skip the width argument: \begin{tabularx}{\textwidth}{...}
+                let after_tag = &line[start + tag.len()..];
+                let rest = if line.contains("\\begin{tabularx}") {
+                    // Skip to second { for the column spec
+                    if let Some(brace) = after_tag.find("}{") {
+                        &after_tag[brace + 2..]
+                    } else {
+                        after_tag
+                    }
+                } else {
+                    after_tag
+                };
                 if let Some(end) = rest.find('}') {
                     let col_spec = &rest[..end];
                     let col_count = col_spec
