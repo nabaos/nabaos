@@ -3432,15 +3432,6 @@ fn apply_apa_citations(
         })
         .collect();
 
-    // Sort by reference text (APA alphabetical order)
-    ref_entries.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
-
-    let mut refs_content = String::new();
-    for (full_ref, _url) in &ref_entries {
-        refs_content.push_str(full_ref);
-        refs_content.push_str("\n\n");
-    }
-
     // Also add any cited URLs not in the registry
     for url in &cited_urls {
         if !registry.contains_key(url) {
@@ -3448,8 +3439,65 @@ fn apply_apa_citations(
             let name = lookup_short_name(domain)
                 .map(String::from)
                 .unwrap_or_else(|| domain_fallback(domain));
-            refs_content.push_str(&format!("{}. (n.d.). {}\n\n", name, url));
+            ref_entries.push((format!("{}. (n.d.). {}", name, url), url));
         }
+    }
+
+    // Deduplicate by author key: same author(s) from different URLs → keep the
+    // entry with an actual year over "(n.d.)" and prefer longer references.
+    {
+        let mut seen_authors: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut keep = vec![true; ref_entries.len()];
+        for (i, (full_ref, _)) in ref_entries.iter().enumerate() {
+            // Extract author key: everything before the first '(' in the reference
+            let author_key = full_ref
+                .split('(')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_end_matches(['.', ','])
+                .to_lowercase();
+            if author_key.is_empty() {
+                continue;
+            }
+            if let Some(&prev_idx) = seen_authors.get(&author_key) {
+                let prev_ref = &ref_entries[prev_idx].0;
+                let prev_has_year = !prev_ref.contains("(n.d.)");
+                let curr_has_year = !full_ref.contains("(n.d.)");
+                if curr_has_year && !prev_has_year {
+                    // Current is better (has year), drop previous
+                    keep[prev_idx] = false;
+                    seen_authors.insert(author_key, i);
+                } else if !curr_has_year && prev_has_year {
+                    // Previous is better, drop current
+                    keep[i] = false;
+                } else if full_ref.len() > prev_ref.len() {
+                    // Same year status, keep longer (more complete) reference
+                    keep[prev_idx] = false;
+                    seen_authors.insert(author_key, i);
+                } else {
+                    keep[i] = false;
+                }
+            } else {
+                seen_authors.insert(author_key, i);
+            }
+        }
+        let mut deduped = Vec::new();
+        for (i, entry) in ref_entries.into_iter().enumerate() {
+            if keep[i] {
+                deduped.push(entry);
+            }
+        }
+        ref_entries = deduped;
+    }
+
+    // Sort by reference text (APA alphabetical order)
+    ref_entries.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+
+    let mut refs_content = String::new();
+    for (full_ref, _url) in &ref_entries {
+        refs_content.push_str(full_ref);
+        refs_content.push_str("\n\n");
     }
 
     Some(GeneratedSection {
