@@ -421,6 +421,12 @@ fn generate_latex_source(
                             d.contains("method") || d.contains("prisma") || d.contains("search")
                         } else if cap_lower.contains("source") || cap_lower.contains("distribution") {
                             d.contains("method") || d.contains("data") || d.contains("source")
+                        } else if cap_lower.contains("prospect theory") || cap_lower.contains("value function") {
+                            d.contains("theor") || d.contains("framework") || d.contains("prospect")
+                        } else if cap_lower.contains("forest plot") || cap_lower.contains("effect size") {
+                            d.contains("method") || d.contains("finding") || d.contains("result") || d.contains("empiric")
+                        } else if cap_lower.contains("funnel plot") || cap_lower.contains("publication bias") {
+                            d.contains("method") || d.contains("finding") || d.contains("result") || d.contains("bias")
                         } else {
                             false
                         }
