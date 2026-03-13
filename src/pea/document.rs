@@ -697,6 +697,9 @@ pub(crate) fn sanitize_latex(tex: &str) -> String {
     // so \cite refs always render as [?]. Replace with footnote-style refs.
     fixed = remove_unresolved_cites(&fixed);
 
+    // Convert markdown pipe tables to LaTeX tabular environments
+    fixed = convert_markdown_tables(&fixed);
+
     // Balance LaTeX environments: close any unclosed \begin{X} with \end{X}
     fixed = balance_environments(&fixed);
 
@@ -728,6 +731,88 @@ fn remove_unresolved_cites(tex: &str) -> String {
             break;
         }
     }
+    out
+}
+
+/// Convert markdown pipe tables to LaTeX tabular environments.
+///
+/// Detects consecutive lines with `|` delimiters, skips the separator line
+/// (containing `---`), and emits a `\begin{table}...\end{table}` with
+/// auto-sized `p{}` columns to prevent truncation.
+fn convert_markdown_tables(tex: &str) -> String {
+    let lines: Vec<&str> = tex.lines().collect();
+    let mut out = String::with_capacity(tex.len());
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = lines[i].trim();
+        // Detect start of a markdown table: line with 3+ pipes, followed by separator
+        if line.matches('|').count() >= 3
+            && i + 1 < lines.len()
+            && lines[i + 1].trim().contains("---")
+            && lines[i + 1].trim().contains('|')
+            // Don't convert if this is already inside a LaTeX table
+            && !line.contains("\\begin{")
+        {
+            // Parse header
+            let header_cells: Vec<&str> = line.split('|')
+                .map(|c| c.trim())
+                .filter(|c| !c.is_empty())
+                .collect();
+            let ncols = header_cells.len();
+            if ncols == 0 {
+                out.push_str(lines[i]);
+                out.push('\n');
+                i += 1;
+                continue;
+            }
+
+            // Calculate column width: distribute evenly across \textwidth
+            let col_width = format!("{:.2}", 0.90 / ncols as f64);
+            let col_spec: String = (0..ncols)
+                .map(|_| format!("p{{{}\\textwidth}}", col_width))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            out.push_str("\\begin{table}[htbp]\n\\centering\n\\small\n");
+            out.push_str(&format!("\\begin{{tabular}}{{{}}}\n\\hline\n", col_spec));
+
+            // Header row (bold)
+            let header_tex: Vec<String> = header_cells.iter()
+                .map(|c| format!("\\textbf{{{}}}", latex_escape(c)))
+                .collect();
+            out.push_str(&header_tex.join(" & "));
+            out.push_str(" \\\\\n\\hline\n");
+
+            // Skip separator line
+            i += 2;
+
+            // Data rows
+            while i < lines.len() {
+                let row = lines[i].trim();
+                if row.matches('|').count() < 3 || row.is_empty() {
+                    break;
+                }
+                let cells: Vec<&str> = row.split('|')
+                    .map(|c| c.trim())
+                    .filter(|c| !c.is_empty())
+                    .collect();
+                let row_tex: Vec<String> = cells.iter()
+                    .map(|c| latex_escape(c))
+                    .collect();
+                out.push_str(&row_tex.join(" & "));
+                out.push_str(" \\\\\n");
+                i += 1;
+            }
+
+            out.push_str("\\hline\n\\end{tabular}\n\\end{table}\n");
+        } else {
+            out.push_str(lines[i]);
+            out.push('\n');
+            i += 1;
+        }
+    }
+
     out
 }
 
