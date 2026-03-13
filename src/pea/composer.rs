@@ -2058,11 +2058,17 @@ plt.close()
             }
         };
 
-        let chart_specs: Vec<serde_json::Value> = match serde_json::from_str(&charts_json) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("[composer] chart JSON parse failed: {}", e);
-                return vec![];
+        let chart_specs: Vec<serde_json::Value> = match serde_json::from_str::<serde_json::Value>(&charts_json) {
+            Ok(serde_json::Value::Array(arr)) => arr,
+            Ok(serde_json::Value::Object(obj)) => {
+                obj.get("charts")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default()
+            }
+            Ok(_) | Err(_) => {
+                eprintln!("[composer] chart JSON parse failed for: {}", &charts_json[..charts_json.len().min(200)]);
+                vec![]
             }
         };
 
@@ -2074,7 +2080,10 @@ plt.close()
         for spec in &chart_specs {
             let caption = spec.get("caption").and_then(|v| v.as_str()).unwrap_or("Data Chart");
             let filename = spec.get("filename").and_then(|v| v.as_str()).unwrap_or("chart.png");
-            let code = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
+            let code = spec.get("code")
+                .or_else(|| spec.get("python_script"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
             if code.is_empty() {
                 continue;
