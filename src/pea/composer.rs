@@ -666,7 +666,8 @@ impl<'a> DocumentComposer<'a> {
                  - Include at least one summary table if the section discusses empirical data or multiple studies\n\
                  - End with a hook/transition that leads into the next section: \"{}\"\n\
                  - Do NOT include \\section{{}} or chapter headers — just the body content\n\
-                 - IMPORTANT: Do NOT repeat information already covered in previous sections. Each section must provide unique analysis and insights.\n\n\
+                 - IMPORTANT: Do NOT repeat information already covered in previous sections. Each section must provide unique analysis and insights.\n\
+                 - When a key statistic (effect size, correlation, p-value) has been introduced in a previous section, reference it briefly (e.g. 'the previously noted effect size') rather than restating the exact number. Introduce each quantitative finding only once across the document.\n\n\
                  After the content, on a NEW line write:\n\
                  SUMMARY: {{2-3 sentence summary}}\n\
                  HOOK: {{transition sentence for next section}}",
