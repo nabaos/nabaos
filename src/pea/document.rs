@@ -435,12 +435,20 @@ fn generate_latex_source(
 
     let content = section_bodies.join("\n\n");
 
-    // 4. Build photo credits
-    let photo_credits = if images.is_empty() {
+    // 4. Build photo credits (stock images only, not auto-generated charts)
+    let stock_images: Vec<_> = images.iter()
+        .filter(|(_, _, attribution)| {
+            match attribution.as_deref() {
+                Some(a) if a.contains("Auto-generated") => false,
+                _ => true,
+            }
+        })
+        .collect();
+    let photo_credits = if stock_images.is_empty() {
         String::new()
     } else {
         let mut credits = String::from("\\chapter*{Photo Credits}\n\\addcontentsline{toc}{chapter}{Photo Credits}\n\\begin{itemize}\n");
-        for (caption, _, attribution) in images {
+        for (caption, _, attribution) in &stock_images {
             let attr = attribution.as_deref().unwrap_or("Unknown source");
             let safe_caption = latex_escape(caption);
             let safe_attr = latex_escape(attr);
