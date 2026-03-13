@@ -3766,7 +3766,9 @@ fn format_apa_inline(authors: &[String], year: Option<u32>, url: &str, title: &s
                                    "understanding","exploring","introduction","overview","effects",
                                    "top","best","new","key","major","types","list",
                                    "systematic","empirical","comprehensive","critical","comparative",
-                                   "preliminary","quantitative","qualitative","experimental"];
+                                   "preliminary","quantitative","qualitative","experimental",
+                                   "evaluating","examining","assessing","measuring","testing",
+                                   "investigating","comparing","modeling","predicting","applying"];
                 let candidate = title.split_whitespace()
                     .find(|w| w.len() > 2 && !skip.contains(&w.to_lowercase().as_str()))
                     .unwrap_or("Source");

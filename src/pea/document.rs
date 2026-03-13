@@ -712,6 +712,9 @@ pub(crate) fn sanitize_latex(tex: &str) -> String {
     // Balance braces and math mode
     fixed = balance_braces_and_math(&fixed);
 
+    // Fix stray \item commands outside list environments
+    fixed = fix_stray_items(&fixed);
+
     fixed
 }
 
@@ -826,6 +829,41 @@ fn convert_markdown_tables(tex: &str) -> String {
 ///
 /// Scans for `\begin{X}` / `\end{X}` pairs and appends missing `\end{X}`
 /// at the end to prevent "ended by \end{document}" fatal errors.
+/// Fix stray `\item` commands that appear outside any list environment.
+/// Wraps consecutive orphan `\item` lines in `\begin{itemize}...\end{itemize}`.
+fn fix_stray_items(tex: &str) -> String {
+    let list_envs = ["itemize", "enumerate", "description"];
+    let lines: Vec<&str> = tex.lines().collect();
+    let mut out = String::with_capacity(tex.len());
+    let mut depth = 0i32; // nesting depth of list environments
+
+    for line in &lines {
+        let trimmed = line.trim();
+        for env in &list_envs {
+            if trimmed.contains(&format!("\\begin{{{}}}", env)) {
+                depth += 1;
+            }
+            if trimmed.contains(&format!("\\end{{{}}}", env)) {
+                depth -= 1;
+            }
+        }
+        if depth < 0 {
+            depth = 0;
+        }
+        if depth == 0 && trimmed.starts_with("\\item") {
+            // Stray \item — wrap in itemize
+            out.push_str("\\begin{itemize}\n");
+            out.push_str(line);
+            out.push('\n');
+            out.push_str("\\end{itemize}\n");
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 fn balance_environments(tex: &str) -> String {
     let mut stack: Vec<String> = Vec::new();
     // Environments that are part of the skeleton, not LLM-generated
