@@ -171,7 +171,7 @@ impl SourceTier {
     /// Classify a source by its URL domain.
     pub fn from_url(url: &str) -> Self {
         let u = url.to_ascii_lowercase();
-        // Primary: government, UN, official
+        // Primary: government, UN, official bodies
         if u.contains(".gov") || u.contains("un.org") || u.contains("who.int")
             || u.contains("worldbank.org") || u.contains("imf.org")
             || u.contains("nato.int") || u.contains("europa.eu")
@@ -179,10 +179,24 @@ impl SourceTier {
         {
             return Self::Primary;
         }
-        // Analytical: think tanks, academic
+        // Primary: DOI links and academic publishers
+        if u.contains("doi.org/")
+            || u.contains("springer.com") || u.contains("link.springer.com")
+            || u.contains("wiley.com") || u.contains("onlinelibrary.wiley.com")
+            || u.contains("tandfonline.com")
+            || u.contains("sagepub.com") || u.contains("journals.sagepub.com")
+            || u.contains("sciencedirect.com")
+            || u.contains("nature.com")
+            || u.contains("academic.oup.com")
+            || u.contains("jstor.org")
+            || u.contains("ssrn.com") || u.contains("papers.ssrn.com")
+        {
+            return Self::Primary;
+        }
+        // Analytical: think tanks, preprints, academic search
         if u.contains("arxiv.org") || u.contains("scholar.google")
-            || u.contains("jstor.org") || u.contains("nature.com")
-            || u.contains("sciencedirect") || u.contains("brookings.edu")
+            || u.contains("researchgate.net")
+            || u.contains("brookings.edu")
             || u.contains("rand.org") || u.contains("cfr.org")
             || u.contains("sipri.org") || u.contains("csis.org")
             || u.contains(".edu/") || u.contains("openalex.org")
@@ -1867,6 +1881,17 @@ mod tests {
     fn test_source_tier_primary() {
         assert_eq!(SourceTier::from_url("https://www.state.gov/report"), SourceTier::Primary);
         assert_eq!(SourceTier::from_url("https://www.un.org/docs"), SourceTier::Primary);
+        // DOI and academic publishers
+        assert_eq!(SourceTier::from_url("https://doi.org/10.1234/test"), SourceTier::Primary);
+        assert_eq!(SourceTier::from_url("https://link.springer.com/article/10.1007"), SourceTier::Primary);
+        assert_eq!(SourceTier::from_url("https://onlinelibrary.wiley.com/doi/abs"), SourceTier::Primary);
+        assert_eq!(SourceTier::from_url("https://www.tandfonline.com/doi/full"), SourceTier::Primary);
+        assert_eq!(SourceTier::from_url("https://journals.sagepub.com/doi/10"), SourceTier::Primary);
+        assert_eq!(SourceTier::from_url("https://www.sciencedirect.com/article"), SourceTier::Primary);
+        assert_eq!(SourceTier::from_url("https://www.nature.com/articles"), SourceTier::Primary);
+        assert_eq!(SourceTier::from_url("https://academic.oup.com/restud"), SourceTier::Primary);
+        assert_eq!(SourceTier::from_url("https://www.jstor.org/stable/123"), SourceTier::Primary);
+        assert_eq!(SourceTier::from_url("https://papers.ssrn.com/sol3/papers"), SourceTier::Primary);
     }
 
     #[test]
