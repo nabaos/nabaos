@@ -412,6 +412,12 @@ impl<'a> DocumentComposer<'a> {
         eprintln!("[composer] enforcing evidence gate...");
         self.enforce_evidence_gate(&mut sections, corpus);
 
+        // Phase 4d3: Citation density enforcement — sections with too few
+        // citations get a retry with uncited sources injected.
+        eprintln!("[composer] enforcing citation density...");
+        let cite_notes = self.enforce_citation_density(&mut sections, corpus);
+        all_notes.extend(cite_notes);
+
         // Phase 4e: Nyaya trimmer — deduplicate and merge sections using
         // Anadhigata (novelty), Pramana hierarchy (evidence priority), and
         // Padartha structure (categorical coherence).
@@ -1357,6 +1363,190 @@ impl<'a> DocumentComposer<'a> {
                 }
             }
         }
+    }
+
+    // -- Phase 4d3: Citation Density Enforcement --------------------------------
+    //
+    // Ensures each content section cites a minimum number of sources.
+    // If a section has < MIN_CITES citations but was given sources, the LLM
+    // is asked to enrich it with citations from uncited corpus sources.
+    // Also ensures total unique citations across the document meet a minimum
+    // threshold relative to the corpus size.
+
+    fn enforce_citation_density(
+        &self,
+        sections: &mut Vec<GeneratedSection>,
+        corpus: &ResearchCorpus,
+    ) -> Vec<String> {
+        const MIN_CITES_PER_SECTION: usize = 3;
+        const MIN_CORPUS_CITE_RATIO: f32 = 0.40; // cite at least 40% of fetched sources
+
+        let link_re = regex::Regex::new(r"\[([^\]]*)\]\((https?://[^\)]+)\)").unwrap();
+        let mut notes = Vec::new();
+
+        // Skip sections: references, exec summary, conclusion, appendix
+        let skip_titles = ["reference", "bibliograph", "executive summary", "conclusion", "appendix"];
+
+        // Collect all currently cited URLs across the document
+        let mut all_cited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut section_cites: Vec<(usize, usize, String)> = Vec::new(); // (index, cite_count, title)
+
+        for (idx, section) in sections.iter().enumerate() {
+            let title_lower = section.title.to_lowercase();
+            if skip_titles.iter().any(|s| title_lower.contains(s)) {
+                continue;
+            }
+            let mut cite_count = 0;
+            for cap in link_re.captures_iter(&section.content) {
+                if let Some(url) = cap.get(2) {
+                    all_cited.insert(url.as_str().to_string());
+                    cite_count += 1;
+                }
+            }
+            section_cites.push((idx, cite_count, section.title.clone()));
+        }
+
+        let corpus_size = corpus.sources.len();
+        let target_total = (corpus_size as f32 * MIN_CORPUS_CITE_RATIO).ceil() as usize;
+        let deficit = target_total.saturating_sub(all_cited.len());
+
+        eprintln!(
+            "[composer] citation density: {}/{} corpus sources cited ({:.0}%), target {}",
+            all_cited.len(),
+            corpus_size,
+            if corpus_size > 0 { all_cited.len() as f32 / corpus_size as f32 * 100.0 } else { 0.0 },
+            target_total,
+        );
+
+        // Find under-citing sections, sorted by fewest citations first
+        let mut under_citing: Vec<(usize, usize, String)> = section_cites
+            .into_iter()
+            .filter(|(_, count, _)| *count < MIN_CITES_PER_SECTION)
+            .collect();
+        under_citing.sort_by_key(|(_, count, _)| *count);
+
+        if under_citing.is_empty() && deficit == 0 {
+            return notes;
+        }
+
+        // Build list of uncited source URLs for injection
+        let uncited_sources: Vec<&crate::pea::research::FetchedSource> = corpus.sources.iter()
+            .filter(|s| !all_cited.contains(&s.url))
+            .collect();
+
+        if uncited_sources.is_empty() {
+            return notes;
+        }
+
+        // Retry under-citing sections with uncited sources injected
+        let max_retries = under_citing.len().min(4); // cap at 4 retries
+        for (idx, cite_count, title) in under_citing.into_iter().take(max_retries) {
+            // Select uncited sources relevant to this section
+            let section_desc = &sections[idx].content;
+            let keywords: Vec<&str> = sections[idx].title.split_whitespace()
+                .filter(|w| w.len() > 3)
+                .collect();
+
+            let mut scored_uncited: Vec<(&crate::pea::research::FetchedSource, usize)> = uncited_sources
+                .iter()
+                .map(|s| {
+                    let score = keywords.iter()
+                        .filter(|kw| {
+                            s.title.to_lowercase().contains(&kw.to_lowercase())
+                                || crate::pea::research::safe_slice(&s.content, 1000)
+                                    .to_lowercase()
+                                    .contains(&kw.to_lowercase())
+                        })
+                        .count();
+                    (*s, score)
+                })
+                .collect();
+            scored_uncited.sort_by(|a, b| b.1.cmp(&a.1));
+
+            let inject_sources: String = scored_uncited.iter()
+                .take(6)
+                .map(|(s, _)| {
+                    format!(
+                        "Source: {} ({})\n{}\n",
+                        s.title,
+                        s.url,
+                        crate::pea::research::safe_slice(&s.content, 1500)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n---\n");
+
+            if inject_sources.is_empty() {
+                continue;
+            }
+
+            let enrich_prompt = format!(
+                "The following section only cites {} sources. Enrich it by integrating findings \
+                 from the additional sources below. For each source you use, cite it as \
+                 [Author/Title](URL). Add at least {} new citations naturally woven into the \
+                 existing analysis. Keep all existing content and citations.\n\n\
+                 CURRENT SECTION \"{}\":\n{}\n\n\
+                 ADDITIONAL UNCITED SOURCES:\n{}\n\n\
+                 Output the complete enriched section. Do NOT include section headers.",
+                cite_count,
+                MIN_CITES_PER_SECTION.saturating_sub(cite_count).max(2),
+                title,
+                crate::pea::research::safe_slice(section_desc, 4000),
+                inject_sources,
+            );
+
+            let input = serde_json::json!({
+                "system": "You are an academic writer. Integrate the provided sources into the \
+                           existing section with proper [Author](URL) citations. Keep existing \
+                           content intact while adding new citations and supporting analysis.",
+                "prompt": enrich_prompt,
+                "max_tokens": 4000,
+                "thinking": false,
+            });
+
+            match self.exec_ability("llm.chat", &input.to_string()) {
+                Ok(result) => {
+                    let enriched = String::from_utf8_lossy(&result.output).to_string();
+                    let enriched = strip_thinking_tokens(&enriched);
+                    let new_cite_count = link_re.captures_iter(&enriched).count();
+                    if new_cite_count > cite_count {
+                        // Track newly cited URLs
+                        for cap in link_re.captures_iter(&enriched) {
+                            if let Some(url) = cap.get(2) {
+                                all_cited.insert(url.as_str().to_string());
+                            }
+                        }
+                        sections[idx].content = enriched;
+                        eprintln!(
+                            "[composer] citation density: '{}' enriched {} → {} citations",
+                            title, cite_count, new_cite_count
+                        );
+                        notes.push(format!(
+                            "Citation density: '{}' enriched from {} to {} citations",
+                            title, cite_count, new_cite_count
+                        ));
+                    } else {
+                        eprintln!(
+                            "[composer] citation density: '{}' enrichment didn't add citations, keeping original",
+                            title
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[composer] citation density: enrichment failed for '{}': {}", title, e);
+                }
+            }
+        }
+
+        let final_cited = all_cited.len();
+        eprintln!(
+            "[composer] citation density final: {}/{} corpus sources cited ({:.0}%)",
+            final_cited,
+            corpus_size,
+            if corpus_size > 0 { final_cited as f32 / corpus_size as f32 * 100.0 } else { 0.0 },
+        );
+
+        notes
     }
 
     // -- Phase 4e: Nyaya Trimmer -----------------------------------------------
