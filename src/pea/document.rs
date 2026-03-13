@@ -411,12 +411,24 @@ fn generate_latex_source(
                 .filter(|i| section_bodies[*i].len() > 500)
                 .collect();
 
-            for (i, (caption, path, _)) in unplaced.iter().enumerate() {
-                let target_idx = if content_indices.is_empty() {
-                    i % section_bodies.len().max(1)
-                } else {
-                    content_indices[i % content_indices.len()]
-                };
+            for (_i, (caption, path, _)) in unplaced.iter().enumerate() {
+                let cap_lower = caption.to_lowercase();
+                // Try keyword match: chart caption → section title
+                let target_idx = task_results.iter().enumerate()
+                    .find(|(_idx, (desc, _))| {
+                        let d = desc.to_lowercase();
+                        if cap_lower.contains("prisma") || cap_lower.contains("flow") {
+                            d.contains("method") || d.contains("prisma") || d.contains("search")
+                        } else if cap_lower.contains("source") || cap_lower.contains("distribution") {
+                            d.contains("method") || d.contains("data") || d.contains("source")
+                        } else {
+                            false
+                        }
+                    })
+                    .map(|(idx, _)| idx)
+                    // Fallback: first content section
+                    .or_else(|| content_indices.first().copied())
+                    .unwrap_or(0);
                 if target_idx < section_bodies.len() {
                     let fname = path.file_name()
                         .map(|f| f.to_string_lossy().to_string())
