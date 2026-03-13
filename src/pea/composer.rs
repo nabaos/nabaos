@@ -553,6 +553,10 @@ impl<'a> DocumentComposer<'a> {
              - Introduction and Conclusion should depend on body chapters\n\
              - Each section needs a clear description of what it covers\n\
              - Do NOT create duplicate sections (e.g. avoid separate 'Key Findings' + 'Synthesis' + 'Conclusion')\n\
+             - Each chapter MUST cover a distinct aspect. Create a topic allocation: assign specific subtopics to EXACTLY ONE chapter. A subtopic mentioned in one chapter's description MUST NOT appear in another's.\n\
+             - FORBIDDEN pattern: separate chapters for 'Implications and Conclusion' vs 'Implications for X and Y' — merge these into ONE chapter.\n\
+             - FORBIDDEN pattern: separate chapters for 'Case Studies' and 'Real-World Applications' — merge these into ONE chapter.\n\
+             - After drafting the outline, verify: if you removed any chapter, would ALL its content be missing? If not, that chapter overlaps with another and must be merged.\n\
              - Output ONLY valid JSON, no explanation",
             objective, corpus_summary, task_summaries,
         );
@@ -704,7 +708,9 @@ impl<'a> DocumentComposer<'a> {
                  - End with a hook/transition that leads into the next section: \"{}\"\n\
                  - Do NOT include \\section{{}} or chapter headers — just the body content\n\
                  - IMPORTANT: Do NOT repeat information already covered in previous sections. Each section must provide unique analysis and insights.\n\
-                 - When a key statistic (effect size, correlation, p-value) has been introduced in a previous section, reference it briefly (e.g. 'the previously noted effect size') rather than restating the exact number. Introduce each quantitative finding only once across the document.\n\n\
+                 - When a key statistic (effect size, correlation, p-value) has been introduced in a previous section, reference it briefly (e.g. 'the previously noted effect size') rather than restating the exact number. Introduce each quantitative finding only once across the document.\n\
+                 - Go beyond definition: for each concept, discuss magnitude (how large is the effect?), boundary conditions (when does it NOT apply?), and evolution (how has understanding changed over time?)\n\
+                 - Engage with counter-arguments: for each major claim, present the strongest opposing view and explain why the evidence favors one side\n\n\
                  After the content, on a NEW line write:\n\
                  SUMMARY: {{2-3 sentence summary}}\n\
                  HOOK: {{transition sentence for next section}}",
@@ -1682,15 +1688,17 @@ impl<'a> DocumentComposer<'a> {
                 established in earlier sections? A claim is 'established' if the same factual \
                 point (same event, same statistic, same conclusion) appears in an earlier section, \
                 even if worded differently.\n\
-             2. PADARTHA (category): Classify each section into exactly one logical category \
-                from: military, diplomatic, economic, humanitarian, technological, legal, \
-                scenario, methodology, overview\n\
+             2. PADARTHA (category): Classify each section into exactly one logical category. \
+                Choose from these universal academic categories: \
+                introduction, literature_review, theoretical_framework, methodology, \
+                empirical_findings, case_studies, comparative_analysis, implications, \
+                conclusion, appendix. If none fit, create a descriptive one-word category.\n\
              3. PRAMANA (evidence strength): Rate sourcing quality 1-5 based on citation density \
                 and source authority.\n\n\
              Then identify merge candidates:\n\
              - If a section has >60% claim overlap with earlier sections, it should be ABSORBED \
                into its closest thematic neighbor\n\
-             - If two sections share the same padartha category AND have >40% overlap, merge them\n\
+             - If two sections share the same padartha category AND have >30% overlap, merge them\n\
              - When merging, keep the one with higher pramana score as the base\n\n\
              Respond with JSON:\n\
              {{\n\
