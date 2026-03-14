@@ -476,7 +476,9 @@ impl<'a> DocumentComposer<'a> {
         }
 
         // Merge stock images + generated charts (skip stock for analytical themes)
-        let mut all_images: Vec<ImageEntry> = if style.should_skip_stock_images() {
+        let mut all_images: Vec<ImageEntry> = if style.should_skip_stock_images()
+            && *output_mode != crate::pea::objective::OutputMode::Video
+        {
             eprintln!("[composer] skipping stock images (theme={})", style.theme);
             Vec::new()
         } else {
@@ -617,7 +619,12 @@ impl<'a> DocumentComposer<'a> {
                 .iter()
                 .map(|g| {
                     let content_preview = if g.content.len() > 500 {
-                        &g.content[g.content.len() - 500..]
+                        let mut start = g.content.len() - 500;
+                        // Advance to a valid UTF-8 char boundary
+                        while !g.content.is_char_boundary(start) && start < g.content.len() {
+                            start += 1;
+                        }
+                        &g.content[start..]
                     } else {
                         &g.content
                     };

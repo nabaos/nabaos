@@ -2043,6 +2043,225 @@ fn measure_audio_duration_ffprobe(path: &Path) -> Option<f32> {
 }
 
 /// Check if a section title looks like a references/bibliography section.
+// ---------------------------------------------------------------------------
+// Documentary-style slide content model
+// ---------------------------------------------------------------------------
+
+/// Rich slide content for documentary-style video output.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SlideContent {
+    Title {
+        title: String,
+        subtitle: String,
+        #[serde(rename = "durationFrames")]
+        duration_frames: u32,
+    },
+    Content {
+        title: String,
+        bullets: Vec<String>,
+        footnotes: Vec<String>,
+        #[serde(rename = "durationFrames")]
+        duration_frames: u32,
+    },
+    Timeline {
+        title: String,
+        events: Vec<TimelineEvent>,
+        #[serde(rename = "durationFrames")]
+        duration_frames: u32,
+    },
+    Stats {
+        title: String,
+        stats: Vec<StatEntry>,
+        #[serde(rename = "durationFrames")]
+        duration_frames: u32,
+    },
+    Quote {
+        text: String,
+        attribution: String,
+        #[serde(rename = "durationFrames")]
+        duration_frames: u32,
+    },
+    Image {
+        caption: String,
+        filename: String,
+        attribution: String,
+        #[serde(rename = "durationFrames")]
+        duration_frames: u32,
+    },
+    Closing {
+        title: String,
+        subtitle: String,
+        #[serde(rename = "durationFrames")]
+        duration_frames: u32,
+    },
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TimelineEvent {
+    pub date: String,
+    pub desc: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StatEntry {
+    pub label: String,
+    pub value: String,
+}
+
+impl SlideContent {
+    #[allow(dead_code)]
+    fn duration_frames(&self) -> u32 {
+        match self {
+            SlideContent::Title { duration_frames, .. }
+            | SlideContent::Content { duration_frames, .. }
+            | SlideContent::Timeline { duration_frames, .. }
+            | SlideContent::Stats { duration_frames, .. }
+            | SlideContent::Quote { duration_frames, .. }
+            | SlideContent::Image { duration_frames, .. }
+            | SlideContent::Closing { duration_frames, .. } => *duration_frames,
+        }
+    }
+
+    #[cfg(test)]
+    fn kind_str(&self) -> &'static str {
+        match self {
+            SlideContent::Title { .. } => "title",
+            SlideContent::Content { .. } => "content",
+            SlideContent::Timeline { .. } => "timeline",
+            SlideContent::Stats { .. } => "stats",
+            SlideContent::Quote { .. } => "quote",
+            SlideContent::Image { .. } => "image",
+            SlideContent::Closing { .. } => "closing",
+        }
+    }
+}
+
+/// Extract timeline events: scan for year patterns followed by descriptions.
+fn extract_timeline_events(text: &str) -> Vec<(String, String)> {
+    let mut events: Vec<(String, String)> = Vec::new();
+    // Match patterns like "1979:", "In 2024,", "March 2026", "1979 -", "1979–"
+    let year_re = regex::Regex::new(
+        r"(?:(?:in\s+|since\s+)?(?:(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+)?(\d{4}))\s*[-–:,.]?\s*(.{10,})"
+    ).unwrap();
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() { continue; }
+        if let Some(caps) = year_re.captures(line) {
+            let year = caps.get(1).unwrap().as_str().to_string();
+            let year_num: u32 = year.parse().unwrap_or(0);
+            if !(1800..=2100).contains(&year_num) { continue; }
+            let desc = caps.get(2).unwrap().as_str().trim().to_string();
+            // Clean up description — trim to first sentence or 120 chars
+            let desc = if let Some(dot_pos) = desc.find(". ") {
+                if dot_pos > 20 {
+                    format!("{}.", &desc[..dot_pos])
+                } else {
+                    desc[..desc.len().min(120)].to_string()
+                }
+            } else {
+                desc[..desc.len().min(120)].to_string()
+            };
+            if !desc.is_empty() && !looks_like_slide_noise(&desc) {
+                events.push((year, desc));
+            }
+        }
+    }
+    // Deduplicate by year (keep first occurrence)
+    let mut seen = std::collections::HashSet::new();
+    events.retain(|(year, _)| seen.insert(year.clone()));
+    events.truncate(8);
+    events
+}
+
+/// Extract key statistics: scan for number patterns with context.
+fn extract_key_stats(text: &str) -> Vec<(String, String)> {
+    let mut stats: Vec<(String, String)> = Vec::new();
+    // Match: $X billion, X%, X,XXX casualties, X million, etc.
+    let stat_re = regex::Regex::new(
+        r"(\$[\d,.]+\s*(?:billion|million|trillion|B|M|T)|\d[\d,.]*\s*%|\d[\d,.]+\s+(?:casualties|people|deaths|refugees|troops|soldiers|civilians|hectares|tons|kilometers|miles|units|workers|jobs|users|patients|students|billion|million|thousand))"
+    ).unwrap();
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || looks_like_slide_noise(line) { continue; }
+        for mat in stat_re.find_iter(line) {
+            let value = mat.as_str().trim().to_string();
+            // Try to extract a short label from surrounding context
+            let before = &line[..mat.start()];
+            let label = before
+                .rsplit(|c: char| c == '.' || c == ',' || c == ';')
+                .next()
+                .unwrap_or(before)
+                .trim()
+                .to_string();
+            let label = if label.len() > 40 {
+                label[label.len() - 40..].trim_start_matches(|c: char| !c.is_uppercase()).to_string()
+            } else if label.is_empty() {
+                "Stat".to_string()
+            } else {
+                label
+            };
+            stats.push((label, value));
+        }
+    }
+    // Deduplicate by value
+    let mut seen = std::collections::HashSet::new();
+    stats.retain(|(_, v)| seen.insert(v.clone()));
+    stats.truncate(6);
+    stats
+}
+
+/// Extract the first meaningful quote from text.
+fn extract_key_quote(text: &str) -> Option<(String, String)> {
+    // Look for quoted text with attribution
+    let quote_re = regex::Regex::new(
+        r#"[""\u{201C}]([^""\u{201D}]{20,200})[""\u{201D}]\s*[-–—]?\s*(.{3,60})"#
+    ).unwrap();
+
+    for line in text.lines() {
+        if let Some(caps) = quote_re.captures(line) {
+            let quote_text = caps.get(1).unwrap().as_str().trim().to_string();
+            let attribution = caps.get(2).unwrap().as_str().trim().to_string();
+            // Clean attribution: strip trailing punctuation
+            let attribution = attribution.trim_end_matches(|c: char| c == '.' || c == ',').to_string();
+            if !quote_text.is_empty() && !attribution.is_empty() {
+                return Some((quote_text, attribution));
+            }
+        }
+    }
+    None
+}
+
+/// Extract inline citations like (Author, YYYY) or Author (YYYY) or Author et al. (YYYY).
+fn extract_inline_citations(text: &str) -> Vec<String> {
+    let mut citations: Vec<String> = Vec::new();
+    // Pattern 1: (Author, YYYY) or (Author et al., YYYY)
+    let paren_re = regex::Regex::new(
+        r"\(([A-Z][a-z]+(?:\s+(?:et\s+al\.?|&\s+[A-Z][a-z]+))?),?\s*((?:19|20)\d{2})\)"
+    ).unwrap();
+    // Pattern 2: Author (YYYY)
+    let inline_re = regex::Regex::new(
+        r"([A-Z][a-z]+(?:\s+(?:et\s+al\.?|&\s+[A-Z][a-z]+))?)\s+\(((?:19|20)\d{2})\)"
+    ).unwrap();
+
+    for caps in paren_re.captures_iter(text) {
+        let cite = format!("{} ({})", caps.get(1).unwrap().as_str(), caps.get(2).unwrap().as_str());
+        if !citations.contains(&cite) {
+            citations.push(cite);
+        }
+    }
+    for caps in inline_re.captures_iter(text) {
+        let cite = format!("{} ({})", caps.get(1).unwrap().as_str(), caps.get(2).unwrap().as_str());
+        if !citations.contains(&cite) {
+            citations.push(cite);
+        }
+    }
+    citations.truncate(3);
+    citations
+}
+
 fn is_reference_section(title: &str) -> bool {
     let lower = title.to_lowercase();
     lower.contains("reference") || lower.contains("bibliograph")
@@ -2079,11 +2298,129 @@ fn looks_like_slide_noise(s: &str) -> bool {
     false
 }
 
+/// Strip markdown formatting from text, returning plain content.
+///
+/// Handles: headers, bold, italic, code, links, images, strikethrough.
+fn strip_markdown(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for line in s.lines() {
+        let trimmed = line.trim();
+        // Strip header markers: "### Title" → "Title"
+        let line_clean = if trimmed.starts_with('#') {
+            trimmed.trim_start_matches('#').trim_start()
+        } else {
+            trimmed
+        };
+        // Process inline formatting character by character
+        let chars: Vec<char> = line_clean.chars().collect();
+        let len = chars.len();
+        let mut i = 0;
+        while i < len {
+            // Image: ![alt](url) → remove entirely
+            if chars[i] == '!' && i + 1 < len && chars[i + 1] == '[' {
+                // Skip past ![alt](url)
+                if let Some(close_bracket) = chars[i + 2..].iter().position(|&c| c == ']') {
+                    let after_bracket = i + 2 + close_bracket + 1;
+                    if after_bracket < len && chars[after_bracket] == '(' {
+                        if let Some(close_paren) = chars[after_bracket + 1..].iter().position(|&c| c == ')') {
+                            i = after_bracket + 1 + close_paren + 1;
+                            continue;
+                        }
+                    }
+                }
+                out.push(chars[i]);
+                i += 1;
+            }
+            // Link: [text](url) → text
+            else if chars[i] == '[' {
+                if let Some(close_bracket) = chars[i + 1..].iter().position(|&c| c == ']') {
+                    let text_end = i + 1 + close_bracket;
+                    let after_bracket = text_end + 1;
+                    if after_bracket < len && chars[after_bracket] == '(' {
+                        if let Some(close_paren) = chars[after_bracket + 1..].iter().position(|&c| c == ')') {
+                            // Emit link text only
+                            for &c in &chars[i + 1..text_end] {
+                                out.push(c);
+                            }
+                            i = after_bracket + 1 + close_paren + 1;
+                            continue;
+                        }
+                    }
+                }
+                out.push(chars[i]);
+                i += 1;
+            }
+            // Bold: **text** or __text__
+            else if i + 1 < len && ((chars[i] == '*' && chars[i + 1] == '*') || (chars[i] == '_' && chars[i + 1] == '_')) {
+                let marker = chars[i];
+                // Find closing **
+                if let Some(close_pos) = chars[i + 2..].windows(2).position(|w| w[0] == marker && w[1] == marker) {
+                    for &c in &chars[i + 2..i + 2 + close_pos] {
+                        out.push(c);
+                    }
+                    i = i + 2 + close_pos + 2;
+                    continue;
+                }
+                out.push(chars[i]);
+                i += 1;
+            }
+            // Strikethrough: ~~text~~
+            else if i + 1 < len && chars[i] == '~' && chars[i + 1] == '~' {
+                if let Some(close_pos) = chars[i + 2..].windows(2).position(|w| w[0] == '~' && w[1] == '~') {
+                    for &c in &chars[i + 2..i + 2 + close_pos] {
+                        out.push(c);
+                    }
+                    i = i + 2 + close_pos + 2;
+                    continue;
+                }
+                out.push(chars[i]);
+                i += 1;
+            }
+            // Italic: *text* or _text_ (single, not double)
+            else if (chars[i] == '*' || chars[i] == '_') && (i + 1 >= len || chars[i + 1] != chars[i]) {
+                let marker = chars[i];
+                if let Some(close_pos) = chars[i + 1..].iter().position(|&c| c == marker) {
+                    for &c in &chars[i + 1..i + 1 + close_pos] {
+                        out.push(c);
+                    }
+                    i = i + 1 + close_pos + 1;
+                    continue;
+                }
+                out.push(chars[i]);
+                i += 1;
+            }
+            // Inline code: `code`
+            else if chars[i] == '`' {
+                if let Some(close_pos) = chars[i + 1..].iter().position(|&c| c == '`') {
+                    for &c in &chars[i + 1..i + 1 + close_pos] {
+                        out.push(c);
+                    }
+                    i = i + 1 + close_pos + 1;
+                    continue;
+                }
+                out.push(chars[i]);
+                i += 1;
+            }
+            else {
+                out.push(chars[i]);
+                i += 1;
+            }
+        }
+        out.push('\n');
+    }
+    // Trim trailing newline
+    while out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
 /// Extract clean bullet points from a block of text.
 ///
 /// Split on newlines first, then sentence boundaries (`. [A-Z]`), filter for
 /// reasonable length (15-140 chars), reject noise, strip numbered-list markers.
 fn extract_slide_bullets(text: &str) -> Vec<String> {
+    let text = &strip_markdown(text);
     let mut candidates: Vec<String> = Vec::new();
 
     // First split on newlines to get natural paragraphs/lines
@@ -2173,6 +2510,7 @@ fn extract_slide_bullets(text: &str) -> Vec<String> {
 }
 
 /// Extract short APA-style source entries from reference text for a "Key Sources" slide.
+#[allow(dead_code)]
 fn extract_key_sources(ref_text: &str) -> Vec<String> {
     ref_text
         .lines()
@@ -2188,42 +2526,110 @@ fn extract_key_sources(ref_text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Build slide data from task results: title slide + content slides + key sources + closing.
+/// Build documentary-style slide data from task results.
+///
+/// Produces a varied sequence: Title → Content/Timeline/Stats slides → Quote → Closing.
+/// Reference sections are folded into per-slide footnotes instead of a standalone slide.
 fn build_slides(
     objective_desc: &str,
     task_results: &[(String, String)],
-) -> Vec<(String, Vec<String>)> {
-    let mut slides: Vec<(String, Vec<String>)> = Vec::new();
+) -> Vec<SlideContent> {
+    let mut slides: Vec<SlideContent> = Vec::new();
+
+    // Extract first sentence of objective for subtitle
+    let subtitle = objective_desc
+        .find(". ")
+        .map(|pos| objective_desc[..pos + 1].to_string())
+        .unwrap_or_else(|| "A comprehensive exploration".to_string());
 
     // Title slide
-    slides.push((objective_desc.to_string(), vec!["A comprehensive exploration".into()]));
+    slides.push(SlideContent::Title {
+        title: objective_desc.to_string(),
+        subtitle,
+        duration_frames: 210,
+    });
 
-    // Collect reference text for Key Sources slide
-    let mut ref_texts: Vec<String> = Vec::new();
+    // Collect all reference text for citation extraction
+    let mut all_ref_text = String::new();
+    for (desc, text) in task_results.iter() {
+        if is_reference_section(desc) {
+            all_ref_text.push_str(text);
+            all_ref_text.push('\n');
+        }
+    }
+
+    // Track best quote across all sections
+    let mut best_quote: Option<(String, String)> = None;
 
     // Content slides (one per section, skip references)
     for (desc, text) in task_results.iter().take(12) {
         if is_reference_section(desc) {
-            ref_texts.push(text.clone());
             continue;
         }
+
+        // Extract bullets for content slide
         let bullets = extract_slide_bullets(text);
-        if !bullets.is_empty() {
-            slides.push((desc.clone(), bullets));
+        if bullets.is_empty() {
+            continue;
+        }
+
+        // Extract inline citations as footnotes
+        let footnotes = extract_inline_citations(text);
+
+        slides.push(SlideContent::Content {
+            title: desc.clone(),
+            bullets,
+            footnotes,
+            duration_frames: 180,
+        });
+
+        // After this content slide, try to add a timeline or stats slide
+        let timeline_events = extract_timeline_events(text);
+        if timeline_events.len() >= 3 {
+            slides.push(SlideContent::Timeline {
+                title: format!("{} — Timeline", desc),
+                events: timeline_events
+                    .into_iter()
+                    .map(|(date, desc)| TimelineEvent { date, desc })
+                    .collect(),
+                duration_frames: 240,
+            });
+        }
+
+        let stats = extract_key_stats(text);
+        if stats.len() >= 2 {
+            slides.push(SlideContent::Stats {
+                title: format!("{} — Key Numbers", desc),
+                stats: stats
+                    .into_iter()
+                    .map(|(label, value)| StatEntry { label, value })
+                    .collect(),
+                duration_frames: 180,
+            });
+        }
+
+        // Capture best quote
+        if best_quote.is_none() {
+            best_quote = extract_key_quote(text);
         }
     }
 
-    // Key Sources slide (from reference sections)
-    if !ref_texts.is_empty() {
-        let combined_refs = ref_texts.join("\n");
-        let sources = extract_key_sources(&combined_refs);
-        if !sources.is_empty() {
-            slides.push(("Key Sources".into(), sources));
-        }
+    // Add quote slide before closing if found
+    if let Some((text, attribution)) = best_quote {
+        slides.push(SlideContent::Quote {
+            text,
+            attribution,
+            duration_frames: 150,
+        });
     }
 
     // Closing slide
-    slides.push(("Thank You".into(), vec!["Generated by NabaOS PEA".into()]));
+    slides.push(SlideContent::Closing {
+        title: "Thank You".into(),
+        subtitle: "Generated by NabaOS PEA".into(),
+        duration_frames: 180,
+    });
+
     slides
 }
 
@@ -2271,8 +2677,9 @@ fn generate_video(
     std::fs::create_dir_all(&slides_dir)
         .map_err(|e| NyayaError::Config(format!("Failed to create slides dir: {}", e)))?;
 
-    // Write slide HTMLs
-    for (i, (slide_title, bullets)) in slides.iter().enumerate() {
+    // Write slide HTMLs — flatten SlideContent to title+bullets for static render
+    for (i, slide) in slides.iter().enumerate() {
+        let (slide_title, bullets) = slide_to_title_bullets(slide);
         let bullet_html: String = bullets
             .iter()
             .map(|b| format!("<li>{}</li>", html_escape(b)))
@@ -2294,7 +2701,7 @@ ul li::before {{ content: "→ "; color: rgba(255,255,255,0.7); }}
 <ul>{bullets}</ul>
 </body></html>"##,
             primary = primary, accent = accent,
-            title = html_escape(slide_title), bullets = bullet_html,
+            title = html_escape(&slide_title), bullets = bullet_html,
         );
         std::fs::write(slides_dir.join(format!("slide_{:03}.html", i)), &slide_html)
             .map_err(|e| NyayaError::Config(format!("Failed to write slide HTML: {}", e)))?;
@@ -2343,9 +2750,32 @@ ul li::before {{ content: "→ "; color: rgba(255,255,255,0.7); }}
     generate_slideshow_html_fallback(objective_desc, &slides, primary, accent, output_dir)
 }
 
+/// Flatten a SlideContent into (title, bullets) for fallback renderers.
+fn slide_to_title_bullets(slide: &SlideContent) -> (String, Vec<String>) {
+    match slide {
+        SlideContent::Title { title, subtitle, .. } => (title.clone(), vec![subtitle.clone()]),
+        SlideContent::Content { title, bullets, .. } => (title.clone(), bullets.clone()),
+        SlideContent::Timeline { title, events, .. } => {
+            let bullets: Vec<String> = events.iter().map(|e| format!("{}: {}", e.date, e.desc)).collect();
+            (title.clone(), bullets)
+        }
+        SlideContent::Stats { title, stats, .. } => {
+            let bullets: Vec<String> = stats.iter().map(|s| format!("{}: {}", s.label, s.value)).collect();
+            (title.clone(), bullets)
+        }
+        SlideContent::Quote { text, attribution, .. } => {
+            (format!("\"{}\"", text), vec![format!("— {}", attribution)])
+        }
+        SlideContent::Image { caption, attribution, .. } => {
+            (caption.clone(), vec![attribution.clone()])
+        }
+        SlideContent::Closing { title, subtitle, .. } => (title.clone(), vec![subtitle.clone()]),
+    }
+}
+
 /// Write a full Remotion project, run `npx remotion render`, return MP4 path.
 fn generate_remotion_video(
-    slides: &[(String, Vec<String>)],
+    slides: &[SlideContent],
     images: &[ImageEntry],
     primary: &str,
     accent: &str,
@@ -2376,12 +2806,9 @@ fn generate_remotion_video(
         }
     }
 
-    // Serialize slide data to JSON for props
-    let slides_json: Vec<serde_json::Value> = slides.iter().map(|(title, bullets)| {
-        serde_json::json!({
-            "title": title,
-            "bullets": bullets,
-        })
+    // Serialize slide data to JSON — SlideContent has serde(tag = "kind")
+    let slides_json: Vec<serde_json::Value> = slides.iter().map(|s| {
+        serde_json::to_value(s).unwrap_or_default()
     }).collect();
 
     // Generate TTS narration if enabled via --narrate flag or NABA_PEA_NARRATE env var
@@ -2393,9 +2820,10 @@ fn generate_remotion_video(
             std::fs::create_dir_all(&audio_dir)
                 .map_err(|e| NyayaError::Config(format!("create audio dir: {}", e)))?;
             eprintln!("[pea/doc] generating narration with {} for {} slides", tts.provider(), slides.len());
-            for (i, (title, bullets)) in slides.iter().enumerate() {
+            for (i, slide) in slides.iter().enumerate() {
                 let mp3_path = audio_dir.join(format!("slide_{:03}.mp3", i));
-                let narration = crate::pea::tts::TtsDispatcher::slide_to_narration(title, bullets);
+                let (title, bullets) = slide_to_title_bullets(slide);
+                let narration = crate::pea::tts::TtsDispatcher::slide_to_narration(&title, &bullets);
                 match tts.synthesize(&narration, &mp3_path) {
                     Ok(true) => eprintln!("[pea/doc] narration slide {}: {}", i, mp3_path.display()),
                     Ok(false) => eprintln!("[pea/doc] narration slide {} skipped", i),
@@ -2429,7 +2857,6 @@ fn generate_remotion_video(
         "slides": slides_json,
         "primaryColor": primary,
         "accentColor": accent,
-        "framesPerSlide": 150,        // 5 seconds at 30fps
         "transitionFrames": 30,       // 1 second transition
         "images": image_refs,
         "audio": audio_entries,
@@ -2489,10 +2916,14 @@ registerRoot(RemotionRoot);
         .map_err(|e| NyayaError::Config(format!("write index.ts: {}", e)))?;
 
     // --- src/types.ts ---
-    let types_ts = r##"export interface SlideData {
-  title: string;
-  bullets: string[];
-}
+    let types_ts = r##"export type SlideEntry =
+  | { kind: "title"; title: string; subtitle: string; durationFrames: number }
+  | { kind: "content"; title: string; bullets: string[]; footnotes: string[]; durationFrames: number }
+  | { kind: "timeline"; title: string; events: { date: string; desc: string }[]; durationFrames: number }
+  | { kind: "stats"; title: string; stats: { label: string; value: string }[]; durationFrames: number }
+  | { kind: "quote"; text: string; attribution: string; durationFrames: number }
+  | { kind: "image"; caption: string; filename: string; attribution: string; durationFrames: number }
+  | { kind: "closing"; title: string; subtitle: string; durationFrames: number };
 
 export interface ImageRef {
   caption: string;
@@ -2506,10 +2937,9 @@ export interface AudioEntry {
 }
 
 export interface SlideshowProps {
-  slides: SlideData[];
+  slides: SlideEntry[];
   primaryColor: string;
   accentColor: string;
-  framesPerSlide: number;
   transitionFrames: number;
   images: ImageRef[];
   audio: AudioEntry[];
@@ -2526,10 +2956,9 @@ import type { SlideshowProps } from "./types";
 
 export const RemotionRoot: React.FC = () => {
   const defaultProps: SlideshowProps = {
-    slides: [{ title: "Loading...", bullets: [] }],
+    slides: [{ kind: "title", title: "Loading...", subtitle: "", durationFrames: 210 }],
     primaryColor: "#333333",
     accentColor: "#0066CC",
-    framesPerSlide: 150,
     transitionFrames: 30,
     images: [],
     audio: [],
@@ -2546,25 +2975,36 @@ export const RemotionRoot: React.FC = () => {
       defaultProps={defaultProps}
       calculateMetadata={async ({ props }) => {
         const fps = 30;
-        const n = props.slides.length;
-        const imageSlides = props.images.length;
-        const totalSlides = n + imageSlides;
-        const transitions = Math.max(0, totalSlides - 1);
+        // Sum per-slide durationFrames, accounting for image slides interleaved
+        let totalFrames = 0;
+        const imageSlideCount = props.images.length;
+        const allSlideCount = props.slides.length + imageSlideCount;
+        const transitions = Math.max(0, allSlideCount - 1);
 
-        // If audio exists, compute per-slide duration from audio
-        let totalFrames: number;
+        // Sum per-slide durations from slide metadata
+        for (const slide of props.slides) {
+          const dur = slide.durationFrames || 150;
+          totalFrames += dur;
+        }
+        // Add image slide durations (150 frames each)
+        totalFrames += imageSlideCount * 150;
+
+        // If audio exists, use max(audio, slide duration) per slide
         if (props.audio.length > 0) {
-          totalFrames = 0;
-          for (let i = 0; i < totalSlides; i++) {
+          let audioTotal = 0;
+          for (let i = 0; i < allSlideCount; i++) {
             const audioEntry = props.audio[i] || null;
-            const audioDur = audioEntry ? Math.ceil(audioEntry.durationSecs * fps) + 10 : props.framesPerSlide;
-            totalFrames += Math.max(audioDur, props.framesPerSlide);
+            const slideDur = i < props.slides.length ? (props.slides[i].durationFrames || 150) : 150;
+            if (audioEntry) {
+              audioTotal += Math.max(Math.ceil(audioEntry.durationSecs * fps) + 10, slideDur);
+            } else {
+              audioTotal += slideDur;
+            }
           }
-          totalFrames -= transitions * props.transitionFrames;
-        } else {
-          totalFrames = totalSlides * props.framesPerSlide - transitions * props.transitionFrames;
+          totalFrames = audioTotal;
         }
 
+        totalFrames -= transitions * props.transitionFrames;
         return { durationInFrames: Math.max(totalFrames, 30) };
       }}
     />
@@ -2590,7 +3030,10 @@ import { Slide } from "./components/Slide";
 import { TitleSlide } from "./components/TitleSlide";
 import { ClosingSlide } from "./components/ClosingSlide";
 import { ImageSlide } from "./components/ImageSlide";
-import type { SlideshowProps, ImageRef } from "./types";
+import { TimelineSlide } from "./components/TimelineSlide";
+import { StatsSlide } from "./components/StatsSlide";
+import { QuoteSlide } from "./components/QuoteSlide";
+import type { SlideshowProps, SlideEntry, ImageRef } from "./types";
 
 const TRANSITIONS = [
   () => fade(),
@@ -2600,6 +3043,8 @@ const TRANSITIONS = [
   () => wipe({ direction: "from-top-left" }),
   () => fade(),
   () => slide({ direction: "from-left" }),
+  () => wipe({ direction: "from-right" }),
+  () => slide({ direction: "from-top" }),
 ];
 
 const TIMINGS = [
@@ -2620,15 +3065,14 @@ export const Slideshow: React.FC<SlideshowProps> = ({
   slides,
   primaryColor,
   accentColor,
-  framesPerSlide,
   transitionFrames,
   images,
   audio,
 }) => {
   // Build sequence: interleave image slides after every ~3 content slides
   type SeqEntry =
-    | { kind: "slide"; data: { title: string; bullets: string[] }; idx: number }
-    | { kind: "image"; data: ImageRef; idx: number };
+    | { kind: "slide"; data: SlideEntry; idx: number }
+    | { kind: "imageSlide"; data: ImageRef; idx: number };
 
   const sequence: SeqEntry[] = [];
   let imageIdx = 0;
@@ -2636,38 +3080,38 @@ export const Slideshow: React.FC<SlideshowProps> = ({
 
   for (let i = 0; i < slides.length; i++) {
     sequence.push({ kind: "slide", data: slides[i], idx: i });
-    const isFirst = i === 0;
-    const isLast = i === slides.length - 1;
-    if (!isFirst && !isLast) {
+    const s = slides[i];
+    if (s.kind !== "title" && s.kind !== "closing") {
       contentCount++;
       if (contentCount % 3 === 0 && imageIdx < images.length) {
-        sequence.push({ kind: "image", data: images[imageIdx], idx: imageIdx });
+        sequence.push({ kind: "imageSlide", data: images[imageIdx], idx: imageIdx });
         imageIdx++;
       }
     }
   }
-  // Append remaining images
+  // Append remaining images before closing
   while (imageIdx < images.length) {
-    const lastSlideIdx = sequence.length;
-    sequence.splice(lastSlideIdx - 1, 0, { kind: "image", data: images[imageIdx], idx: imageIdx });
+    const lastIdx = sequence.length;
+    sequence.splice(lastIdx - 1, 0, { kind: "imageSlide", data: images[imageIdx], idx: imageIdx });
     imageIdx++;
   }
 
   const total = sequence.length;
+  const totalSlides = slides.length;
   const fps = 30;
 
   return (
     <TransitionSeries>
       {sequence.flatMap((entry, seqIdx) => {
-        // Compute per-slide duration: use audio if available, else default
         const audioEntry = audio[seqIdx] || null;
+        const slideDur = entry.kind === "slide" ? (entry.data.durationFrames || 150) : 150;
         const dur = audioEntry
-          ? Math.max(Math.ceil(audioEntry.durationSecs * fps) + 10, framesPerSlide)
-          : framesPerSlide;
+          ? Math.max(Math.ceil(audioEntry.durationSecs * fps) + 10, slideDur)
+          : slideDur;
 
         const elements: React.ReactNode[] = [];
 
-        if (entry.kind === "image") {
+        if (entry.kind === "imageSlide") {
           elements.push(
             <TransitionSeries.Sequence key={`img-${seqIdx}`} durationInFrames={dur}>
               <ImageSlide
@@ -2675,38 +3119,17 @@ export const Slideshow: React.FC<SlideshowProps> = ({
                 primaryColor={primaryColor}
                 accentColor={accentColor}
               />
-              {audioEntry && (
-                <Audio src={staticFile(audioEntry.filename)} />
-              )}
+              {audioEntry && <Audio src={staticFile(audioEntry.filename)} />}
             </TransitionSeries.Sequence>
           );
         } else {
+          const slideData = entry.data;
           const slideIdx = entry.idx;
-          const isFirst = slideIdx === 0;
-          const isLast = slideIdx === slides.length - 1;
-
-          const SlideComponent = isFirst
-            ? TitleSlide
-            : isLast
-              ? ClosingSlide
-              : Slide;
 
           elements.push(
-            <TransitionSeries.Sequence
-              key={`slide-${seqIdx}`}
-              durationInFrames={dur}
-            >
-              <SlideComponent
-                title={entry.data.title}
-                bullets={entry.data.bullets}
-                primaryColor={primaryColor}
-                accentColor={accentColor}
-                slideIndex={slideIdx}
-                totalSlides={slides.length}
-              />
-              {audioEntry && (
-                <Audio src={staticFile(audioEntry.filename)} />
-              )}
+            <TransitionSeries.Sequence key={`slide-${seqIdx}`} durationInFrames={dur}>
+              {renderSlide(slideData, slideIdx, totalSlides, primaryColor, accentColor)}
+              {audioEntry && <Audio src={staticFile(audioEntry.filename)} />}
             </TransitionSeries.Sequence>
           );
         }
@@ -2728,6 +3151,90 @@ export const Slideshow: React.FC<SlideshowProps> = ({
     </TransitionSeries>
   );
 };
+
+function renderSlide(
+  slide: SlideEntry,
+  slideIndex: number,
+  totalSlides: number,
+  primaryColor: string,
+  accentColor: string,
+): React.ReactNode {
+  switch (slide.kind) {
+    case "title":
+      return (
+        <TitleSlide
+          title={slide.title}
+          subtitle={slide.subtitle}
+          primaryColor={primaryColor}
+          accentColor={accentColor}
+          slideIndex={slideIndex}
+          totalSlides={totalSlides}
+        />
+      );
+    case "content":
+      return (
+        <Slide
+          title={slide.title}
+          bullets={slide.bullets}
+          footnotes={slide.footnotes}
+          primaryColor={primaryColor}
+          accentColor={accentColor}
+          slideIndex={slideIndex}
+          totalSlides={totalSlides}
+        />
+      );
+    case "timeline":
+      return (
+        <TimelineSlide
+          title={slide.title}
+          events={slide.events}
+          primaryColor={primaryColor}
+          accentColor={accentColor}
+          slideIndex={slideIndex}
+          totalSlides={totalSlides}
+        />
+      );
+    case "stats":
+      return (
+        <StatsSlide
+          title={slide.title}
+          stats={slide.stats}
+          primaryColor={primaryColor}
+          accentColor={accentColor}
+          slideIndex={slideIndex}
+          totalSlides={totalSlides}
+        />
+      );
+    case "quote":
+      return (
+        <QuoteSlide
+          text={slide.text}
+          attribution={slide.attribution}
+          primaryColor={primaryColor}
+          accentColor={accentColor}
+        />
+      );
+    case "image":
+      return (
+        <ImageSlide
+          image={{ caption: slide.caption, filename: slide.filename, attribution: slide.attribution }}
+          primaryColor={primaryColor}
+          accentColor={accentColor}
+        />
+      );
+    case "closing":
+      return (
+        <ClosingSlide
+          title={slide.title}
+          subtitle={slide.subtitle}
+          primaryColor={primaryColor}
+          accentColor={accentColor}
+          slideIndex={slideIndex}
+          totalSlides={totalSlides}
+        />
+      );
+  }
+}
 "##;
     std::fs::write(src_dir.join("Slideshow.tsx"), slideshow_tsx)
         .map_err(|e| NyayaError::Config(format!("write Slideshow.tsx: {}", e)))?;
@@ -3028,12 +3535,12 @@ import { SlideCounter } from "./SlideCounter";
 
 export const TitleSlide: React.FC<{
   title: string;
-  bullets: string[];
+  subtitle: string;
   primaryColor: string;
   accentColor: string;
   slideIndex: number;
   totalSlides: number;
-}> = ({ title, bullets, primaryColor, accentColor, slideIndex, totalSlides }) => {
+}> = ({ title, subtitle, primaryColor, accentColor, slideIndex, totalSlides }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -3075,7 +3582,7 @@ export const TitleSlide: React.FC<{
           }}
         />
         {/* Subtitle */}
-        {bullets.length > 0 && (
+        {subtitle && (
           <div
             style={{
               fontSize: 28,
@@ -3086,7 +3593,7 @@ export const TitleSlide: React.FC<{
               textTransform: "uppercase",
             }}
           >
-            {bullets[0]}
+            {subtitle}
           </div>
         )}
       </AbsoluteFill>
@@ -3104,6 +3611,7 @@ import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
 import { AnimatedGradient } from "./AnimatedGradient";
 import { AnimatedTitle } from "./AnimatedTitle";
 import { AnimatedBullets } from "./AnimatedBullets";
+import { FootnoteBar } from "./FootnoteBar";
 import { Particles } from "./Particles";
 import { ProgressBar } from "./ProgressBar";
 import { SlideCounter } from "./SlideCounter";
@@ -3111,11 +3619,12 @@ import { SlideCounter } from "./SlideCounter";
 export const Slide: React.FC<{
   title: string;
   bullets: string[];
+  footnotes?: string[];
   primaryColor: string;
   accentColor: string;
   slideIndex: number;
   totalSlides: number;
-}> = ({ title, bullets, primaryColor, accentColor, slideIndex, totalSlides }) => {
+}> = ({ title, bullets, footnotes, primaryColor, accentColor, slideIndex, totalSlides }) => {
   const frame = useCurrentFrame();
 
   // Section number indicator
@@ -3158,6 +3667,8 @@ export const Slide: React.FC<{
         </div>
       </AbsoluteFill>
 
+      {footnotes && footnotes.length > 0 && <FootnoteBar footnotes={footnotes} />}
+
       <ProgressBar
         slideIndex={slideIndex}
         totalSlides={totalSlides}
@@ -3185,12 +3696,12 @@ import { Particles } from "./Particles";
 
 export const ClosingSlide: React.FC<{
   title: string;
-  bullets: string[];
+  subtitle: string;
   primaryColor: string;
   accentColor: string;
   slideIndex: number;
   totalSlides: number;
-}> = ({ title, bullets, primaryColor, accentColor }) => {
+}> = ({ title, subtitle, primaryColor, accentColor }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -3255,7 +3766,7 @@ export const ClosingSlide: React.FC<{
         >
           {title}
         </div>
-        {bullets.length > 0 && (
+        {subtitle && (
           <div
             style={{
               fontSize: 22,
@@ -3265,7 +3776,7 @@ export const ClosingSlide: React.FC<{
               fontWeight: 300,
             }}
           >
-            {bullets[0]}
+            {subtitle}
           </div>
         )}
       </AbsoluteFill>
@@ -3378,6 +3889,390 @@ export const ImageSlide: React.FC<{
     std::fs::write(components_dir.join("ImageSlide.tsx"), image_slide)
         .map_err(|e| NyayaError::Config(format!("write ImageSlide.tsx: {}", e)))?;
 
+    // --- src/components/FootnoteBar.tsx ---
+    let footnote_bar = r##"import React from "react";
+import { interpolate, useCurrentFrame } from "remotion";
+
+export const FootnoteBar: React.FC<{
+  footnotes: string[];
+}> = ({ footnotes }) => {
+  const frame = useCurrentFrame();
+  const opacity = interpolate(frame, [80, 100], [0, 0.45], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 25,
+        left: 40,
+        right: 200,
+        fontSize: 13,
+        color: "rgba(255,255,255,1)",
+        opacity,
+        fontFamily: "'JetBrains Mono', monospace",
+        letterSpacing: 0.5,
+      }}
+    >
+      {footnotes.map((fn, i) => (
+        <span key={i} style={{ marginRight: 20 }}>
+          [{i + 1}] {fn}
+        </span>
+      ))}
+    </div>
+  );
+};
+"##;
+    std::fs::write(components_dir.join("FootnoteBar.tsx"), footnote_bar)
+        .map_err(|e| NyayaError::Config(format!("write FootnoteBar.tsx: {}", e)))?;
+
+    // --- src/components/TimelineSlide.tsx ---
+    let timeline_slide = r##"import React from "react";
+import {
+  AbsoluteFill,
+  spring,
+  interpolate,
+  useCurrentFrame,
+  useVideoConfig,
+} from "remotion";
+import { AnimatedGradient } from "./AnimatedGradient";
+import { AnimatedTitle } from "./AnimatedTitle";
+import { Particles } from "./Particles";
+import { ProgressBar } from "./ProgressBar";
+import { SlideCounter } from "./SlideCounter";
+
+export const TimelineSlide: React.FC<{
+  title: string;
+  events: { date: string; desc: string }[];
+  primaryColor: string;
+  accentColor: string;
+  slideIndex: number;
+  totalSlides: number;
+}> = ({ title, events, primaryColor, accentColor, slideIndex, totalSlides }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+
+  // Vertical line animation
+  const lineProgress = interpolate(frame, [10, 60], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  return (
+    <AbsoluteFill>
+      <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
+      <Particles count={15} />
+
+      <AbsoluteFill
+        style={{
+          padding: "60px 120px",
+          flexDirection: "column",
+          gap: 20,
+        }}
+      >
+        <AnimatedTitle text={title} fontSize={44} delay={0} />
+
+        <div style={{ position: "relative", marginTop: 30, marginLeft: 80, flex: 1 }}>
+          {/* Vertical connecting line */}
+          <div
+            style={{
+              position: "absolute",
+              left: 6,
+              top: 0,
+              width: 2,
+              height: `${lineProgress * 100}%`,
+              backgroundColor: accentColor,
+              opacity: 0.6,
+            }}
+          />
+
+          {events.map((event, i) => {
+            const delay = 15 + i * 18;
+            const s = spring({
+              frame: frame - delay,
+              fps,
+              config: { damping: 14, stiffness: 150 },
+            });
+            const opacity = interpolate(s, [0, 1], [0, 1]);
+            const translateX = interpolate(s, [0, 1], [-40, 0]);
+
+            return (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 24,
+                  marginBottom: 24,
+                  opacity,
+                  transform: `translateX(${translateX}px)`,
+                }}
+              >
+                {/* Timeline marker */}
+                <div
+                  style={{
+                    width: 14,
+                    height: 14,
+                    borderRadius: "50%",
+                    backgroundColor: accentColor,
+                    flexShrink: 0,
+                    marginTop: 8,
+                    boxShadow: `0 0 10px ${accentColor}`,
+                  }}
+                />
+                {/* Date */}
+                <div
+                  style={{
+                    fontSize: 26,
+                    fontWeight: 700,
+                    color: accentColor,
+                    minWidth: 80,
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  {event.date}
+                </div>
+                {/* Description */}
+                <div
+                  style={{
+                    fontSize: 24,
+                    color: "rgba(255,255,255,0.88)",
+                    lineHeight: 1.4,
+                    maxWidth: 1200,
+                  }}
+                >
+                  {event.desc}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </AbsoluteFill>
+
+      <ProgressBar slideIndex={slideIndex} totalSlides={totalSlides} accentColor={accentColor} />
+      <SlideCounter current={slideIndex} total={totalSlides} />
+    </AbsoluteFill>
+  );
+};
+"##;
+    std::fs::write(components_dir.join("TimelineSlide.tsx"), timeline_slide)
+        .map_err(|e| NyayaError::Config(format!("write TimelineSlide.tsx: {}", e)))?;
+
+    // --- src/components/StatsSlide.tsx ---
+    let stats_slide = r##"import React from "react";
+import {
+  AbsoluteFill,
+  interpolate,
+  useCurrentFrame,
+} from "remotion";
+import { AnimatedGradient } from "./AnimatedGradient";
+import { AnimatedTitle } from "./AnimatedTitle";
+import { Particles } from "./Particles";
+import { ProgressBar } from "./ProgressBar";
+import { SlideCounter } from "./SlideCounter";
+
+export const StatsSlide: React.FC<{
+  title: string;
+  stats: { label: string; value: string }[];
+  primaryColor: string;
+  accentColor: string;
+  slideIndex: number;
+  totalSlides: number;
+}> = ({ title, stats, primaryColor, accentColor, slideIndex, totalSlides }) => {
+  const frame = useCurrentFrame();
+
+  // Determine grid columns based on stat count
+  const cols = stats.length <= 2 ? 2 : 3;
+
+  return (
+    <AbsoluteFill>
+      <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
+      <Particles count={20} />
+
+      <AbsoluteFill
+        style={{
+          padding: "60px 120px",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 50,
+        }}
+      >
+        <AnimatedTitle text={title} fontSize={44} delay={0} />
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${cols}, 1fr)`,
+            gap: 60,
+            maxWidth: 1400,
+            width: "100%",
+          }}
+        >
+          {stats.map((stat, i) => {
+            const delay = 20 + i * 15;
+            const progress = interpolate(frame - delay, [0, 40], [0, 1], {
+              extrapolateLeft: "clamp",
+              extrapolateRight: "clamp",
+            });
+            const scale = interpolate(progress, [0, 1], [0.5, 1]);
+            const opacity = interpolate(progress, [0, 1], [0, 1]);
+
+            return (
+              <div
+                key={i}
+                style={{
+                  textAlign: "center",
+                  opacity,
+                  transform: `scale(${scale})`,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 56,
+                    fontWeight: 800,
+                    color: accentColor,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    textShadow: `0 0 20px ${accentColor}40`,
+                    marginBottom: 12,
+                  }}
+                >
+                  {stat.value}
+                </div>
+                <div
+                  style={{
+                    fontSize: 20,
+                    color: "rgba(255,255,255,0.7)",
+                    fontWeight: 400,
+                    textTransform: "uppercase",
+                    letterSpacing: 2,
+                  }}
+                >
+                  {stat.label}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </AbsoluteFill>
+
+      <ProgressBar slideIndex={slideIndex} totalSlides={totalSlides} accentColor={accentColor} />
+      <SlideCounter current={slideIndex} total={totalSlides} />
+    </AbsoluteFill>
+  );
+};
+"##;
+    std::fs::write(components_dir.join("StatsSlide.tsx"), stats_slide)
+        .map_err(|e| NyayaError::Config(format!("write StatsSlide.tsx: {}", e)))?;
+
+    // --- src/components/QuoteSlide.tsx ---
+    let quote_slide = r##"import React from "react";
+import {
+  AbsoluteFill,
+  interpolate,
+  useCurrentFrame,
+} from "remotion";
+import { AnimatedGradient } from "./AnimatedGradient";
+import { Particles } from "./Particles";
+
+export const QuoteSlide: React.FC<{
+  text: string;
+  attribution: string;
+  primaryColor: string;
+  accentColor: string;
+}> = ({ text, attribution, primaryColor, accentColor }) => {
+  const frame = useCurrentFrame();
+
+  const fadeIn = interpolate(frame, [5, 30], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  const attrOpacity = interpolate(frame, [35, 55], [0, 0.7], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  return (
+    <AbsoluteFill>
+      <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
+      <Particles count={30} />
+
+      <AbsoluteFill
+        style={{
+          justifyContent: "center",
+          alignItems: "center",
+          flexDirection: "column",
+          padding: "80px 160px",
+          gap: 40,
+        }}
+      >
+        {/* Opening quote mark */}
+        <div
+          style={{
+            fontSize: 120,
+            color: accentColor,
+            opacity: fadeIn * 0.4,
+            fontFamily: "Georgia, serif",
+            lineHeight: 0.8,
+            marginBottom: -20,
+          }}
+        >
+          {"\u201C"}
+        </div>
+
+        {/* Quote text */}
+        <div
+          style={{
+            fontSize: 38,
+            color: "rgba(255,255,255,0.95)",
+            textAlign: "center",
+            lineHeight: 1.6,
+            fontStyle: "italic",
+            maxWidth: 1200,
+            opacity: fadeIn,
+            fontWeight: 300,
+          }}
+        >
+          {text}
+        </div>
+
+        {/* Closing quote mark */}
+        <div
+          style={{
+            fontSize: 120,
+            color: accentColor,
+            opacity: fadeIn * 0.4,
+            fontFamily: "Georgia, serif",
+            lineHeight: 0.5,
+            marginTop: -20,
+          }}
+        >
+          {"\u201D"}
+        </div>
+
+        {/* Attribution */}
+        <div
+          style={{
+            fontSize: 24,
+            color: "rgba(255,255,255,0.6)",
+            opacity: attrOpacity,
+            fontStyle: "italic",
+            letterSpacing: 1,
+          }}
+        >
+          — {attribution}
+        </div>
+      </AbsoluteFill>
+    </AbsoluteFill>
+  );
+};
+"##;
+    std::fs::write(components_dir.join("QuoteSlide.tsx"), quote_slide)
+        .map_err(|e| NyayaError::Config(format!("write QuoteSlide.tsx: {}", e)))?;
+
     // --- Install dependencies and render ---
     eprintln!("[pea/doc] installing Remotion dependencies...");
     let install = std::process::Command::new("npm")
@@ -3431,14 +4326,15 @@ export const ImageSlide: React.FC<{
 /// Interactive slideshow HTML with keyboard navigation + auto-play.
 fn generate_slideshow_html_fallback(
     objective_desc: &str,
-    slides: &[(String, Vec<String>)],
+    slides: &[SlideContent],
     primary: &str,
     accent: &str,
     output_dir: &Path,
 ) -> Result<PathBuf> {
     eprintln!("[pea/doc] generating slideshow HTML fallback");
     let mut slide_divs = String::new();
-    for (i, (slide_title, bullets)) in slides.iter().enumerate() {
+    for (i, slide) in slides.iter().enumerate() {
+        let (slide_title, bullets) = slide_to_title_bullets(slide);
         let bullet_html: String = bullets
             .iter()
             .map(|b| format!("<li>{}</li>", html_escape(b)))
@@ -3448,7 +4344,7 @@ fn generate_slideshow_html_fallback(
             "<div class=\"slide\" id=\"slide-{i}\">\
              <h2>{title}</h2><ul>{bullets}</ul></div>\n",
             i = i,
-            title = html_escape(slide_title),
+            title = html_escape(&slide_title),
             bullets = bullet_html,
         ));
     }
@@ -4074,14 +4970,95 @@ mod tests {
             ("Bibliography".into(), "Jones et al. (2022). Wind Power Analysis. Energy Reports, Vol. 8, pp. 50-75.".into()),
         ];
         let slides = build_slides("Test Objective", &task_results);
-        let titles: Vec<&str> = slides.iter().map(|(t, _)| t.as_str()).collect();
+        // Extract titles from SlideContent
+        let titles: Vec<String> = slides.iter().map(|s| match s {
+            SlideContent::Title { title, .. } => title.clone(),
+            SlideContent::Content { title, .. } => title.clone(),
+            SlideContent::Timeline { title, .. } => title.clone(),
+            SlideContent::Stats { title, .. } => title.clone(),
+            SlideContent::Quote { text, .. } => text.clone(),
+            SlideContent::Image { caption, .. } => caption.clone(),
+            SlideContent::Closing { title, .. } => title.clone(),
+        }).collect();
         // References and Bibliography should not appear as content slide titles
-        assert!(!titles.contains(&"References"), "References section should be filtered: {:?}", titles);
-        assert!(!titles.contains(&"Bibliography"), "Bibliography section should be filtered: {:?}", titles);
-        // But Key Sources might appear if reference text matches
+        assert!(!titles.contains(&"References".to_string()), "References section should be filtered: {:?}", titles);
+        assert!(!titles.contains(&"Bibliography".to_string()), "Bibliography section should be filtered: {:?}", titles);
         // Title and closing should always be present
         assert_eq!(titles[0], "Test Objective");
-        assert_eq!(titles.last().unwrap(), &"Thank You");
+        assert_eq!(titles.last().unwrap(), "Thank You");
+        // First slide should be Title kind, last should be Closing
+        assert!(matches!(slides[0], SlideContent::Title { .. }));
+        assert!(matches!(slides.last().unwrap(), SlideContent::Closing { .. }));
+    }
+
+    #[test]
+    fn test_strip_markdown() {
+        assert_eq!(strip_markdown("### Header Text"), "Header Text");
+        assert_eq!(strip_markdown("**bold text**"), "bold text");
+        assert_eq!(strip_markdown("*italic text*"), "italic text");
+        assert_eq!(strip_markdown("`code`"), "code");
+        assert_eq!(strip_markdown("[link text](http://example.com)"), "link text");
+        assert_eq!(strip_markdown("![alt](image.png)"), "");
+        assert_eq!(strip_markdown("~~struck~~"), "struck");
+        assert_eq!(strip_markdown("__also bold__"), "also bold");
+        assert_eq!(strip_markdown("Normal text stays"), "Normal text stays");
+        // Mixed formatting
+        assert_eq!(strip_markdown("### **Bold Header**"), "Bold Header");
+    }
+
+    #[test]
+    fn test_extract_timeline_events() {
+        let text = "In 1979, the Iranian Revolution overthrew the Shah.\n\
+                     2003: The US invaded Iraq, destabilizing the region.\n\
+                     By 2024, tensions had escalated significantly between the two nations.";
+        let events = extract_timeline_events(text);
+        assert!(events.len() >= 2, "Should extract at least 2 events, got: {:?}", events);
+        assert_eq!(events[0].0, "1979");
+        assert_eq!(events[1].0, "2003");
+    }
+
+    #[test]
+    fn test_extract_key_stats() {
+        let text = "The war caused over 500,000 casualties on both sides.\n\
+                     Economic damage estimated at $2.5 billion in direct costs.\n\
+                     Approximately 45% of the population was displaced.";
+        let stats = extract_key_stats(text);
+        assert!(stats.len() >= 2, "Should extract at least 2 stats, got: {:?}", stats);
+    }
+
+    #[test]
+    fn test_extract_inline_citations() {
+        let text = "According to Smith (2023), the effect was significant. \
+                     Other research (Jones, 2022) confirmed these findings. \
+                     Brown et al. (2021) provided additional evidence.";
+        let cites = extract_inline_citations(text);
+        assert!(cites.len() >= 2, "Should extract at least 2 citations, got: {:?}", cites);
+        assert!(cites.iter().any(|c| c.contains("Smith")));
+        assert!(cites.iter().any(|c| c.contains("2023")));
+    }
+
+    #[test]
+    fn test_build_slides_documentary_structure() {
+        let task_results = vec![
+            ("Historical Background".into(),
+             "In 1979, the Iranian Revolution changed the political landscape. \
+              By 2003, regional tensions had escalated dramatically. \
+              In 2024, new conflicts emerged between the nations.".into()),
+            ("Economic Impact".into(),
+             "The conflict caused over 500,000 casualties across the region. \
+              Economic damage estimated at $12 billion in infrastructure losses. \
+              Approximately 35% of GDP was affected by sanctions.".into()),
+        ];
+        let slides = build_slides("Iran Israel War Analysis", &task_results);
+
+        // Should have Title + Content + possibly Timeline/Stats + Closing
+        assert!(slides.len() >= 4, "Should have at least 4 slides, got {}", slides.len());
+        assert!(matches!(slides[0], SlideContent::Title { .. }));
+        assert!(matches!(slides.last().unwrap(), SlideContent::Closing { .. }));
+
+        // Check for variety — should have more than just Title/Content/Closing
+        let kinds: Vec<&str> = slides.iter().map(|s| s.kind_str()).collect();
+        assert!(kinds.contains(&"content"), "Should have content slides: {:?}", kinds);
     }
 
     #[test]
