@@ -2027,6 +2027,21 @@ code {{ font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.9em;
 // Video generator (Remotion → ffmpeg → HTML fallback)
 // ---------------------------------------------------------------------------
 
+/// Measure audio duration in seconds using ffprobe.
+fn measure_audio_duration_ffprobe(path: &Path) -> Option<f32> {
+    let output = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1"])
+        .arg(path)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout);
+        s.trim().parse::<f32>().ok()
+    } else {
+        None
+    }
+}
+
 /// Check if a section title looks like a references/bibliography section.
 fn is_reference_section(title: &str) -> bool {
     let lower = title.to_lowercase();
@@ -2097,6 +2112,10 @@ fn extract_slide_bullets(text: &str) -> Vec<String> {
                             let search_from = pos + 2;
                             match remaining[search_from..].find(". ") {
                                 Some(_) => {
+                                    // Continue the loop — remaining still has more ". " to check
+                                    // But we need to advance, so take the whole thing up to the
+                                    // next actual boundary by continuing the loop
+                                    // Skip this non-boundary by searching ahead
                                     let ahead = &remaining[search_from..];
                                     if let Some(next_pos) = ahead.find(". ") {
                                         let abs_pos = search_from + next_pos;
@@ -2211,7 +2230,7 @@ fn build_slides(
 fn generate_video(
     objective_desc: &str,
     task_results: &[(String, String)],
-    _images: &[ImageEntry],
+    images: &[ImageEntry],
     style: Option<&StyleConfig>,
     output_dir: &Path,
 ) -> Result<PathBuf> {
@@ -2222,16 +2241,22 @@ fn generate_video(
 
     // -----------------------------------------------------------------------
     // Path 1: Remotion (highest quality — animated transitions, spring text)
+    // Requires node + npm; remotion itself is installed per-project via npm install
     // -----------------------------------------------------------------------
-    let has_remotion = std::process::Command::new("npx")
-        .args(["remotion", "--version"])
+    let has_node = std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let has_npm = std::process::Command::new("npm")
+        .arg("--version")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    if has_remotion {
-        eprintln!("[pea/doc] Remotion detected — generating animated video");
-        match generate_remotion_video(&slides, primary, accent, output_dir) {
+    if has_node && has_npm {
+        eprintln!("[pea/doc] Node.js + npm detected — generating Remotion video");
+        match generate_remotion_video(&slides, images, primary, accent, output_dir) {
             Ok(path) => return Ok(path),
             Err(e) => {
                 eprintln!("[pea/doc] Remotion render failed: {} — trying ffmpeg", e);
@@ -2277,7 +2302,9 @@ ul li::before {{ content: "→ "; color: rgba(255,255,255,0.7); }}
 
     // Convert to PNGs
     let has_wkhtmltoimage = std::process::Command::new("wkhtmltoimage")
-        .arg("--version").output().is_ok();
+        .arg("--version").output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
     if has_wkhtmltoimage {
         for i in 0..slides.len() {
             let _ = std::process::Command::new("wkhtmltoimage")
@@ -2290,7 +2317,8 @@ ul li::before {{ content: "→ "; color: rgba(255,255,255,0.7); }}
 
     // ffmpeg render
     if slides_dir.join("slide_000.png").exists() {
-        let has_ffmpeg = std::process::Command::new("ffmpeg").arg("-version").output().is_ok();
+        let has_ffmpeg = std::process::Command::new("ffmpeg").arg("-version").output()
+            .map(|o| o.status.success()).unwrap_or(false);
         if has_ffmpeg {
             let output_mp4 = output_dir.join("output.mp4");
             let result = std::process::Command::new("ffmpeg")
@@ -2318,6 +2346,7 @@ ul li::before {{ content: "→ "; color: rgba(255,255,255,0.7); }}
 /// Write a full Remotion project, run `npx remotion render`, return MP4 path.
 fn generate_remotion_video(
     slides: &[(String, Vec<String>)],
+    images: &[ImageEntry],
     primary: &str,
     accent: &str,
     output_dir: &Path,
@@ -2325,8 +2354,27 @@ fn generate_remotion_video(
     let remotion_dir = output_dir.join("remotion");
     let src_dir = remotion_dir.join("src");
     let components_dir = src_dir.join("components");
+    let public_dir = remotion_dir.join("public");
     std::fs::create_dir_all(&components_dir)
         .map_err(|e| NyayaError::Config(format!("create remotion dirs: {}", e)))?;
+    std::fs::create_dir_all(&public_dir)
+        .map_err(|e| NyayaError::Config(format!("create public dir: {}", e)))?;
+
+    // Copy images into public/ and build image refs JSON
+    let mut image_refs: Vec<serde_json::Value> = Vec::new();
+    for (caption, path, attribution) in images {
+        if let Some(filename) = path.file_name() {
+            let dest = public_dir.join(filename);
+            if path.exists() {
+                let _ = std::fs::copy(path, &dest);
+                image_refs.push(serde_json::json!({
+                    "caption": caption,
+                    "filename": filename.to_string_lossy(),
+                    "attribution": attribution.as_deref().unwrap_or(""),
+                }));
+            }
+        }
+    }
 
     // Serialize slide data to JSON for props
     let slides_json: Vec<serde_json::Value> = slides.iter().map(|(title, bullets)| {
@@ -2335,12 +2383,34 @@ fn generate_remotion_video(
             "bullets": bullets,
         })
     }).collect();
+
+    // Check for pre-existing narration audio files
+    let audio_dir = public_dir.join("audio");
+    let audio_entries: Vec<serde_json::Value> = if audio_dir.exists() {
+        slides.iter().enumerate().filter_map(|(i, _)| {
+            let mp3 = audio_dir.join(format!("slide_{:03}.mp3", i));
+            if mp3.exists() {
+                let duration = measure_audio_duration_ffprobe(&mp3).unwrap_or(5.0);
+                Some(serde_json::json!({
+                    "filename": format!("audio/slide_{:03}.mp3", i),
+                    "durationSecs": duration,
+                }))
+            } else {
+                None
+            }
+        }).collect()
+    } else {
+        Vec::new()
+    };
+
     let props = serde_json::json!({
         "slides": slides_json,
         "primaryColor": primary,
         "accentColor": accent,
         "framesPerSlide": 150,        // 5 seconds at 30fps
         "transitionFrames": 30,       // 1 second transition
+        "images": image_refs,
+        "audio": audio_entries,
     });
 
     let props_path = remotion_dir.join("slides-data.json");
@@ -2402,12 +2472,25 @@ registerRoot(RemotionRoot);
   bullets: string[];
 }
 
+export interface ImageRef {
+  caption: string;
+  filename: string;
+  attribution: string;
+}
+
+export interface AudioEntry {
+  filename: string;
+  durationSecs: number;
+}
+
 export interface SlideshowProps {
   slides: SlideData[];
   primaryColor: string;
   accentColor: string;
   framesPerSlide: number;
   transitionFrames: number;
+  images: ImageRef[];
+  audio: AudioEntry[];
 }
 "##;
     std::fs::write(src_dir.join("types.ts"), types_ts)
@@ -2426,6 +2509,8 @@ export const RemotionRoot: React.FC = () => {
     accentColor: "#0066CC",
     framesPerSlide: 150,
     transitionFrames: 30,
+    images: [],
+    audio: [],
   };
 
   return (
@@ -2438,11 +2523,27 @@ export const RemotionRoot: React.FC = () => {
       durationInFrames={300}
       defaultProps={defaultProps}
       calculateMetadata={async ({ props }) => {
+        const fps = 30;
         const n = props.slides.length;
-        const transitions = Math.max(0, n - 1);
-        const total =
-          n * props.framesPerSlide - transitions * props.transitionFrames;
-        return { durationInFrames: Math.max(total, 30) };
+        const imageSlides = props.images.length;
+        const totalSlides = n + imageSlides;
+        const transitions = Math.max(0, totalSlides - 1);
+
+        // If audio exists, compute per-slide duration from audio
+        let totalFrames: number;
+        if (props.audio.length > 0) {
+          totalFrames = 0;
+          for (let i = 0; i < totalSlides; i++) {
+            const audioEntry = props.audio[i] || null;
+            const audioDur = audioEntry ? Math.ceil(audioEntry.durationSecs * fps) + 10 : props.framesPerSlide;
+            totalFrames += Math.max(audioDur, props.framesPerSlide);
+          }
+          totalFrames -= transitions * props.transitionFrames;
+        } else {
+          totalFrames = totalSlides * props.framesPerSlide - transitions * props.transitionFrames;
+        }
+
+        return { durationInFrames: Math.max(totalFrames, 30) };
       }}
     />
   );
@@ -2452,20 +2553,22 @@ export const RemotionRoot: React.FC = () => {
         .map_err(|e| NyayaError::Config(format!("write Root.tsx: {}", e)))?;
 
     // --- src/Slideshow.tsx ---
-    // Main composition using TransitionSeries with varied transitions
+    // Main composition using TransitionSeries with varied transitions + images + audio
     let slideshow_tsx = r##"import React from "react";
 import {
   TransitionSeries,
   linearTiming,
   springTiming,
 } from "@remotion/transitions";
+import { Audio, staticFile } from "remotion";
 import { fade } from "@remotion/transitions/fade";
 import { slide } from "@remotion/transitions/slide";
 import { wipe } from "@remotion/transitions/wipe";
 import { Slide } from "./components/Slide";
 import { TitleSlide } from "./components/TitleSlide";
 import { ClosingSlide } from "./components/ClosingSlide";
-import type { SlideshowProps } from "./types";
+import { ImageSlide } from "./components/ImageSlide";
+import type { SlideshowProps, ImageRef } from "./types";
 
 const TRANSITIONS = [
   () => fade(),
@@ -2497,43 +2600,101 @@ export const Slideshow: React.FC<SlideshowProps> = ({
   accentColor,
   framesPerSlide,
   transitionFrames,
+  images,
+  audio,
 }) => {
-  const total = slides.length;
+  // Build sequence: interleave image slides after every ~3 content slides
+  type SeqEntry =
+    | { kind: "slide"; data: { title: string; bullets: string[] }; idx: number }
+    | { kind: "image"; data: ImageRef; idx: number };
+
+  const sequence: SeqEntry[] = [];
+  let imageIdx = 0;
+  let contentCount = 0;
+
+  for (let i = 0; i < slides.length; i++) {
+    sequence.push({ kind: "slide", data: slides[i], idx: i });
+    const isFirst = i === 0;
+    const isLast = i === slides.length - 1;
+    if (!isFirst && !isLast) {
+      contentCount++;
+      if (contentCount % 3 === 0 && imageIdx < images.length) {
+        sequence.push({ kind: "image", data: images[imageIdx], idx: imageIdx });
+        imageIdx++;
+      }
+    }
+  }
+  // Append remaining images
+  while (imageIdx < images.length) {
+    const lastSlideIdx = sequence.length;
+    sequence.splice(lastSlideIdx - 1, 0, { kind: "image", data: images[imageIdx], idx: imageIdx });
+    imageIdx++;
+  }
+
+  const total = sequence.length;
+  const fps = 30;
 
   return (
     <TransitionSeries>
-      {slides.flatMap((slideData, i) => {
-        const isFirst = i === 0;
-        const isLast = i === total - 1;
+      {sequence.flatMap((entry, seqIdx) => {
+        // Compute per-slide duration: use audio if available, else default
+        const audioEntry = audio[seqIdx] || null;
+        const dur = audioEntry
+          ? Math.max(Math.ceil(audioEntry.durationSecs * fps) + 10, framesPerSlide)
+          : framesPerSlide;
 
-        const SlideComponent = isFirst
-          ? TitleSlide
-          : isLast
-            ? ClosingSlide
-            : Slide;
+        const elements: React.ReactNode[] = [];
 
-        const elements: React.ReactNode[] = [
-          <TransitionSeries.Sequence
-            key={`slide-${i}`}
-            durationInFrames={framesPerSlide}
-          >
-            <SlideComponent
-              title={slideData.title}
-              bullets={slideData.bullets}
-              primaryColor={primaryColor}
-              accentColor={accentColor}
-              slideIndex={i}
-              totalSlides={total}
-            />
-          </TransitionSeries.Sequence>,
-        ];
+        if (entry.kind === "image") {
+          elements.push(
+            <TransitionSeries.Sequence key={`img-${seqIdx}`} durationInFrames={dur}>
+              <ImageSlide
+                image={entry.data}
+                primaryColor={primaryColor}
+                accentColor={accentColor}
+              />
+              {audioEntry && (
+                <Audio src={staticFile(audioEntry.filename)} />
+              )}
+            </TransitionSeries.Sequence>
+          );
+        } else {
+          const slideIdx = entry.idx;
+          const isFirst = slideIdx === 0;
+          const isLast = slideIdx === slides.length - 1;
 
-        if (i < total - 1) {
-          const presentation = TRANSITIONS[i % TRANSITIONS.length]();
-          const timing = TIMINGS[i % TIMINGS.length](transitionFrames);
+          const SlideComponent = isFirst
+            ? TitleSlide
+            : isLast
+              ? ClosingSlide
+              : Slide;
+
+          elements.push(
+            <TransitionSeries.Sequence
+              key={`slide-${seqIdx}`}
+              durationInFrames={dur}
+            >
+              <SlideComponent
+                title={entry.data.title}
+                bullets={entry.data.bullets}
+                primaryColor={primaryColor}
+                accentColor={accentColor}
+                slideIndex={slideIdx}
+                totalSlides={slides.length}
+              />
+              {audioEntry && (
+                <Audio src={staticFile(audioEntry.filename)} />
+              )}
+            </TransitionSeries.Sequence>
+          );
+        }
+
+        if (seqIdx < total - 1) {
+          const presentation = TRANSITIONS[seqIdx % TRANSITIONS.length]();
+          const timing = TIMINGS[seqIdx % TIMINGS.length](transitionFrames);
           elements.push(
             <TransitionSeries.Transition
-              key={`trans-${i}`}
+              key={`trans-${seqIdx}`}
               presentation={presentation}
               timing={timing}
             />
@@ -3092,6 +3253,108 @@ export const ClosingSlide: React.FC<{
 "##;
     std::fs::write(components_dir.join("ClosingSlide.tsx"), closing_slide)
         .map_err(|e| NyayaError::Config(format!("write ClosingSlide.tsx: {}", e)))?;
+
+    // --- src/components/ImageSlide.tsx ---
+    let image_slide = r##"import React from "react";
+import {
+  AbsoluteFill,
+  Img,
+  interpolate,
+  spring,
+  staticFile,
+  useCurrentFrame,
+  useVideoConfig,
+} from "remotion";
+import { AnimatedGradient } from "./AnimatedGradient";
+import type { ImageRef } from "../types";
+
+export const ImageSlide: React.FC<{
+  image: ImageRef;
+  primaryColor: string;
+  accentColor: string;
+}> = ({ image, primaryColor, accentColor }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+
+  const fadeIn = interpolate(frame, [0, 20], [0, 1], {
+    extrapolateRight: "clamp",
+  });
+  const scale = spring({
+    frame,
+    fps,
+    config: { damping: 20, stiffness: 80 },
+  });
+  const imgScale = interpolate(scale, [0, 1], [1.05, 1]);
+
+  const captionOpacity = interpolate(frame, [25, 45], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  return (
+    <AbsoluteFill>
+      <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
+      <AbsoluteFill
+        style={{
+          justifyContent: "center",
+          alignItems: "center",
+          padding: 60,
+        }}
+      >
+        <div
+          style={{
+            opacity: fadeIn,
+            transform: `scale(${imgScale})`,
+            borderRadius: 12,
+            overflow: "hidden",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
+            maxWidth: 1600,
+            maxHeight: 800,
+          }}
+        >
+          <Img
+            src={staticFile(image.filename)}
+            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+          />
+        </div>
+        <div
+          style={{
+            position: "absolute",
+            bottom: 80,
+            textAlign: "center",
+            opacity: captionOpacity,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 28,
+              color: "rgba(255,255,255,0.9)",
+              fontWeight: 500,
+              textShadow: "0 2px 10px rgba(0,0,0,0.5)",
+            }}
+          >
+            {image.caption}
+          </div>
+          {image.attribution && (
+            <div
+              style={{
+                fontSize: 16,
+                color: "rgba(255,255,255,0.5)",
+                marginTop: 8,
+                fontStyle: "italic",
+              }}
+            >
+              {image.attribution}
+            </div>
+          )}
+        </div>
+      </AbsoluteFill>
+    </AbsoluteFill>
+  );
+};
+"##;
+    std::fs::write(components_dir.join("ImageSlide.tsx"), image_slide)
+        .map_err(|e| NyayaError::Config(format!("write ImageSlide.tsx: {}", e)))?;
 
     // --- Install dependencies and render ---
     eprintln!("[pea/doc] installing Remotion dependencies...");
@@ -3793,6 +4056,7 @@ mod tests {
         // References and Bibliography should not appear as content slide titles
         assert!(!titles.contains(&"References"), "References section should be filtered: {:?}", titles);
         assert!(!titles.contains(&"Bibliography"), "Bibliography section should be filtered: {:?}", titles);
+        // But Key Sources might appear if reference text matches
         // Title and closing should always be present
         assert_eq!(titles[0], "Test Objective");
         assert_eq!(titles.last().unwrap(), &"Thank You");
