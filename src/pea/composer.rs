@@ -556,6 +556,10 @@ impl<'a> DocumentComposer<'a> {
              - Each chapter MUST cover a distinct aspect. Create a topic allocation: assign specific subtopics to EXACTLY ONE chapter. A subtopic mentioned in one chapter's description MUST NOT appear in another's.\n\
              - FORBIDDEN pattern: separate chapters for 'Implications and Conclusion' vs 'Implications for X and Y' — merge these into ONE chapter.\n\
              - FORBIDDEN pattern: separate chapters for 'Case Studies' and 'Real-World Applications' — merge these into ONE chapter.\n\
+             - FORBIDDEN pattern: separate chapters for 'Behavioral Biases' and 'Cognitive Biases' — these are the same topic, merge into ONE chapter.\n\
+             - FORBIDDEN pattern: separate chapters for 'Heuristics and Biases' and 'Decision-Making Biases' — merge into ONE chapter.\n\
+             - FORBIDDEN pattern: separate chapters for 'Theoretical Framework' and 'Literature Review' when they cover the same theories — merge or clearly delineate.\n\
+             - RULE: Before finalizing, count unique keywords across all chapters. If two chapters share >50% of their keywords, they MUST be merged.\n\
              - After drafting the outline, verify: if you removed any chapter, would ALL its content be missing? If not, that chapter overlaps with another and must be merged.\n\
              - Output ONLY valid JSON, no explanation",
             objective, corpus_summary, task_summaries,
@@ -1828,10 +1832,7 @@ impl<'a> DocumentComposer<'a> {
 
                     // Append unique claims from absorbed section to target
                     if !unique_claims.is_empty() {
-                        let addendum = format!(
-                            "\n\n**Additional findings** (from {}): {}",
-                            absorb_title, unique_claims
-                        );
+                        let addendum = format!("\n\n{}", unique_claims);
                         sections[i_idx].content.push_str(&addendum);
                         // Update summary
                         if !sections[i_idx].summary.contains("merged") {
@@ -3710,6 +3711,22 @@ fn lookup_short_name(domain: &str) -> Option<&'static str> {
     }
 }
 
+/// Returns true if the name is a platform/repository that should not appear as a citation author.
+fn is_platform_name(name: &str) -> bool {
+    const PLATFORMS: &[&str] = &[
+        "arxiv", "ssrn", "researchgate", "scholar", "jstor",
+        "sciencedirect", "springer", "wiley", "doi", "openalex",
+        "pubmed", "ncbi", "pmc", "biorxiv", "medrxiv",
+    ];
+    PLATFORMS.contains(&name.to_lowercase().as_str())
+}
+
+/// Like `lookup_short_name`, but returns `None` for platform/repository names
+/// that shouldn't be used as citation authors.
+fn lookup_author_name(domain: &str) -> Option<&'static str> {
+    lookup_short_name(domain).filter(|name| !is_platform_name(name))
+}
+
 /// Capitalize the second-level domain as a fallback short name.
 fn domain_fallback(domain: &str) -> String {
     let d = domain.trim_start_matches("www.");
@@ -3720,8 +3737,21 @@ fn domain_fallback(domain: &str) -> String {
     } else {
         parts.first().copied().unwrap_or(d)
     };
-    let bad_domains = ["market","stock","behavioral","blog","news","article","post","page"];
-    if bad_domains.contains(&name.to_lowercase().as_str()) {
+    let bad_domains = ["market","stock","behavioral","blog","news","article","post","page",
+                       "wjarr","wm","mdpi","ijsr","frontiersin","hindawi",
+                       "co","com","org","net","edu","gov","io"];
+    if bad_domains.contains(&name.to_lowercase().as_str()) || name.len() <= 2 {
+        // Try a more meaningful part of the domain
+        let meaningful = parts.iter()
+            .rev()
+            .find(|p| p.len() > 2 && !bad_domains.contains(&p.to_lowercase().as_str()));
+        if let Some(m) = meaningful {
+            let mut c2 = m.chars();
+            return match c2.next() {
+                None => format!("{} [Web]", d),
+                Some(first) => first.to_uppercase().to_string() + c2.as_str(),
+            };
+        }
         return format!("{} [Web]", d);
     }
     let mut c = name.chars();
@@ -3755,9 +3785,9 @@ fn format_apa_inline(authors: &[String], year: Option<u32>, url: &str, title: &s
             _ => format!("({} et al., {})", last_name(&authors[0]), year_str),
         }
     } else {
-        // Fallback: domain short name or first title word
+        // Fallback: domain short name or first title word (filter platform names)
         let domain = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or("");
-        let name = lookup_short_name(domain)
+        let name = lookup_author_name(domain)
             .map(String::from)
             .unwrap_or_else(|| {
                 let skip = ["a","an","the","of","in","on","for","to","and","with","by"];
@@ -3801,7 +3831,7 @@ fn format_apa_reference(
 
     let author_str = if authors.is_empty() {
         let domain = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or("");
-        lookup_short_name(domain)
+        lookup_author_name(domain)
             .map(String::from)
             .unwrap_or_else(|| domain_fallback(domain))
     } else {
@@ -3906,9 +3936,9 @@ fn apply_apa_citations(
                 .get(url)
                 .map(|e| e.inline_key.clone())
                 .unwrap_or_else(|| {
-                    // Fallback for URLs not in registry
+                    // Fallback for URLs not in registry (filter platform names)
                     let domain = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or("");
-                    let name = lookup_short_name(domain)
+                    let name = lookup_author_name(domain)
                         .map(String::from)
                         .unwrap_or_else(|| domain_fallback(domain));
                     format!("({}, n.d.)", name)
@@ -3945,7 +3975,7 @@ fn apply_apa_citations(
     for url in &cited_urls {
         if !registry.contains_key(url) {
             let domain = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or("");
-            let name = lookup_short_name(domain)
+            let name = lookup_author_name(domain)
                 .map(String::from)
                 .unwrap_or_else(|| domain_fallback(domain));
             ref_entries.push((format!("{}. (n.d.). {}", name, url), url));
@@ -4433,7 +4463,9 @@ mod tests {
     fn test_unknown_domain_fallback() {
         assert_eq!(domain_fallback("example.com"), "Example");
         assert_eq!(domain_fallback("www.mysite.org"), "Mysite");
-        assert_eq!(domain_fallback("news.somesite.co.uk"), "Co");
+        assert_eq!(domain_fallback("news.somesite.co.uk"), "Somesite");
+        // Short/platform domains get [Web] suffix or meaningful fallback
+        assert_eq!(domain_fallback("wjarr.com"), "wjarr.com [Web]");
     }
 
     #[test]
