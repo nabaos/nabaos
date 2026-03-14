@@ -722,6 +722,74 @@ pub(crate) fn sanitize_latex(tex: &str) -> String {
     fixed
 }
 
+/// Like `sanitize_latex` but preserves \documentclass, \begin{document}, \end{document}.
+/// Used by `diagnose_and_fix_latex` where the LLM returns a complete document.
+pub(crate) fn sanitize_latex_preserve_structure(tex: &str) -> String {
+    let mut result = tex.to_string();
+
+    // Strip LLM thinking tokens
+    while let Some(start) = result.find("<think>") {
+        if let Some(end) = result[start..].find("</think>") {
+            result = format!("{}{}", &result[..start], &result[start + end + 8..]);
+        } else {
+            let line_end = result[start..].find('\n').unwrap_or(result.len() - start);
+            result = format!("{}{}", &result[..start], &result[start + line_end..]);
+        }
+    }
+    result = result.replace("</think>", "");
+    result = result.replace("<think>", "");
+
+    // Remove unsafe packages
+    let unsafe_packages = [
+        "pgfornament", "lettrine", "draftwatermark", "fontspec",
+        "luatexja", "polyglossia",
+    ];
+    for pkg in &unsafe_packages {
+        let pattern1 = format!("\\usepackage{{{}}}", pkg);
+        let pattern2 = format!("\\usepackage[", );
+        result = result.lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !trimmed.contains(&pattern1) && !(trimmed.starts_with(&pattern2) && trimmed.contains(&format!("{{{}}}", pkg)))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
+    // Remove problematic TikZ options
+    result = result.replace("blur radius", "");
+    result = result.replace("shadow xshift", "");
+    result = result.replace("shadow yshift", "");
+
+    // Fix .tikz references
+    let mut fixed = String::with_capacity(result.len());
+    for line in result.lines() {
+        if line.contains("\\includegraphics") && line.contains(".tikz") {
+            if let Some(start) = line.find('{') {
+                if let Some(end) = line.rfind('}') {
+                    let filename = &line[start + 1..end];
+                    fixed.push_str(&format!("\\input{{{}}}", filename));
+                    fixed.push('\n');
+                    continue;
+                }
+            }
+        }
+        fixed.push_str(line);
+        fixed.push('\n');
+    }
+
+    // Strip markdown code fences
+    fixed = fixed.replace("```latex", "").replace("```tex", "").replace("```", "");
+
+    fixed = remove_unresolved_cites(&fixed);
+    fixed = convert_markdown_tables(&fixed);
+    fixed = balance_environments(&fixed);
+    fixed = balance_braces_and_math(&fixed);
+    fixed = fix_stray_items(&fixed);
+
+    fixed
+}
+
 /// Remove `\cite{key}` commands since we don't generate .bib files.
 /// These always render as `[?]` in the PDF. Replace with empty string —
 /// the actual source is usually already cited inline as a footnote or URL.
@@ -1072,8 +1140,9 @@ pub(crate) fn diagnose_and_fix_latex(
 
     let raw_output = String::from_utf8_lossy(&result.output).to_string();
     let extracted = extract_latex_source(&raw_output);
-    // Apply sanitization to the LLM fix as well
-    Ok(sanitize_latex(&extracted))
+    // Apply light sanitization that preserves document structure
+    // (sanitize_latex strips \documentclass which breaks full-document fixes)
+    Ok(sanitize_latex_preserve_structure(&extracted))
 }
 
 fn extract_latex_source(raw: &str) -> String {
@@ -1757,6 +1826,17 @@ mod tests {
         assert!(!result.contains("\\begin{document}"));
         assert!(!result.contains("\\end{document}"));
         assert!(result.contains("Hello"));
+    }
+
+    #[test]
+    fn test_sanitize_preserve_structure_keeps_documentclass() {
+        let input = "\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage{pgfornament}\n\\begin{document}\nHello\n\\end{document}";
+        let result = sanitize_latex_preserve_structure(input);
+        assert!(result.contains("\\documentclass"));
+        assert!(result.contains("\\begin{document}"));
+        assert!(result.contains("\\end{document}"));
+        assert!(result.contains("Hello"));
+        assert!(!result.contains("pgfornament"));
     }
 
     #[test]
