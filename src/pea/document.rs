@@ -2857,7 +2857,7 @@ fn generate_remotion_video(
         "slides": slides_json,
         "primaryColor": primary,
         "accentColor": accent,
-        "transitionFrames": 30,       // 1 second transition
+        "transitionFrames": 45,       // 1.5 second cinematic transition
         "images": image_refs,
         "audio": audio_entries,
     });
@@ -2959,7 +2959,7 @@ export const RemotionRoot: React.FC = () => {
     slides: [{ kind: "title", title: "Loading...", subtitle: "", durationFrames: 210 }],
     primaryColor: "#333333",
     accentColor: "#0066CC",
-    transitionFrames: 30,
+    transitionFrames: 45,
     images: [],
     audio: [],
   };
@@ -3248,13 +3248,15 @@ export const AnimatedGradient: React.FC<{
   accentColor: string;
 }> = ({ primaryColor, accentColor }) => {
   const frame = useCurrentFrame();
-  const angle = interpolate(frame, [0, 300], [135, 160]);
-  const shift = interpolate(frame, [0, 300], [0, 15]);
+  const angle = interpolate(frame, [0, 300], [135, 155]);
+  const shift = interpolate(frame, [0, 300], [0, 12]);
+  // Darken the gradient for cinematic depth
+  const darkBase = "rgba(8,8,16,1)";
 
   return (
     <AbsoluteFill
       style={{
-        background: `linear-gradient(${angle}deg, ${primaryColor} ${shift}%, ${accentColor} 100%)`,
+        background: `linear-gradient(${angle}deg, ${darkBase} 0%, ${primaryColor} ${20 + shift}%, ${accentColor} 100%)`,
       }}
     />
   );
@@ -3531,6 +3533,7 @@ import { AbsoluteFill, spring, interpolate, useCurrentFrame, useVideoConfig } fr
 import { AnimatedGradient } from "./AnimatedGradient";
 import { AnimatedTitle } from "./AnimatedTitle";
 import { Particles } from "./Particles";
+import { CinematicOverlay } from "./CinematicOverlay";
 import { SlideCounter } from "./SlideCounter";
 
 export const TitleSlide: React.FC<{
@@ -3550,18 +3553,25 @@ export const TitleSlide: React.FC<{
     fps,
     config: { damping: 20, stiffness: 60 },
   });
-  const lineW = interpolate(lineWidth, [0, 1], [0, 400]);
+  const lineW = interpolate(lineWidth, [0, 1], [0, 500]);
 
   // Subtitle fade in
-  const subtitleOpacity = interpolate(frame, [40, 60], [0, 0.7], {
+  const subtitleOpacity = interpolate(frame, [50, 75], [0, 0.7], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
+  // Subtle camera drift
+  const driftX = interpolate(frame, [0, 210], [2, -2]);
+  const driftY = interpolate(frame, [0, 210], [1, -1]);
+  const driftScale = interpolate(frame, [0, 210], [1.02, 1.0]);
+
   return (
-    <AbsoluteFill>
-      <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
-      <Particles count={50} />
+    <CinematicOverlay grainIntensity={0.04} vignetteIntensity={0.6}>
+      <AbsoluteFill style={{ transform: `scale(${driftScale}) translate(${driftX}px, ${driftY}px)` }}>
+        <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
+        <Particles count={50} />
+      </AbsoluteFill>
       <AbsoluteFill
         style={{
           justifyContent: "center",
@@ -3570,7 +3580,7 @@ export const TitleSlide: React.FC<{
           gap: 30,
         }}
       >
-        <AnimatedTitle text={title} fontSize={80} delay={5} />
+        <AnimatedTitle text={title} fontSize={76} delay={5} />
         {/* Decorative line */}
         <div
           style={{
@@ -3579,18 +3589,20 @@ export const TitleSlide: React.FC<{
             backgroundColor: accentColor,
             borderRadius: 2,
             opacity: 0.8,
+            boxShadow: `0 0 15px ${accentColor}60`,
           }}
         />
         {/* Subtitle */}
         {subtitle && (
           <div
             style={{
-              fontSize: 28,
+              fontSize: 26,
               color: "rgba(255,255,255,0.7)",
               opacity: subtitleOpacity,
               fontWeight: 300,
-              letterSpacing: 3,
+              letterSpacing: 4,
               textTransform: "uppercase",
+              fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
             }}
           >
             {subtitle}
@@ -3598,7 +3610,7 @@ export const TitleSlide: React.FC<{
         )}
       </AbsoluteFill>
       <SlideCounter current={slideIndex} total={totalSlides} />
-    </AbsoluteFill>
+    </CinematicOverlay>
   );
 };
 "##;
@@ -3612,6 +3624,8 @@ import { AnimatedGradient } from "./AnimatedGradient";
 import { AnimatedTitle } from "./AnimatedTitle";
 import { AnimatedBullets } from "./AnimatedBullets";
 import { FootnoteBar } from "./FootnoteBar";
+import { LowerThird } from "./LowerThird";
+import { CinematicOverlay } from "./CinematicOverlay";
 import { Particles } from "./Particles";
 import { ProgressBar } from "./ProgressBar";
 import { SlideCounter } from "./SlideCounter";
@@ -3628,14 +3642,20 @@ export const Slide: React.FC<{
   const frame = useCurrentFrame();
 
   // Section number indicator
-  const numOpacity = interpolate(frame, [0, 10], [0, 0.15], {
+  const numOpacity = interpolate(frame, [0, 10], [0, 0.08], {
     extrapolateRight: "clamp",
   });
 
+  // Subtle camera drift for cinematic feel
+  const driftX = interpolate(frame, [0, 180], [1, -1]);
+  const driftScale = interpolate(frame, [0, 180], [1.01, 1.0]);
+
   return (
-    <AbsoluteFill>
-      <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
-      <Particles count={25} />
+    <CinematicOverlay>
+      <AbsoluteFill style={{ transform: `scale(${driftScale}) translateX(${driftX}px)` }}>
+        <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
+        <Particles count={20} />
+      </AbsoluteFill>
 
       {/* Large section number watermark */}
       <div
@@ -3643,11 +3663,12 @@ export const Slide: React.FC<{
           position: "absolute",
           right: 60,
           top: 40,
-          fontSize: 200,
+          fontSize: 220,
           fontWeight: 900,
           color: "white",
           opacity: numOpacity,
-          fontFamily: "monospace",
+          fontFamily: "'JetBrains Mono', monospace",
+          letterSpacing: -8,
         }}
       >
         {String(slideIndex).padStart(2, "0")}
@@ -3657,15 +3678,23 @@ export const Slide: React.FC<{
         style={{
           justifyContent: "center",
           padding: "80px 120px",
-          gap: 40,
+          gap: 36,
           flexDirection: "column",
         }}
       >
-        <AnimatedTitle text={title} fontSize={56} delay={0} />
-        <div style={{ marginTop: 20 }}>
+        <AnimatedTitle text={title} fontSize={52} delay={0} />
+        <div style={{ marginTop: 16 }}>
           <AnimatedBullets bullets={bullets} delay={20} accentColor={accentColor} />
         </div>
       </AbsoluteFill>
+
+      {/* Chapter marker lower-third */}
+      <LowerThird
+        label={`Section ${String(slideIndex).padStart(2, "0")}`}
+        sublabel={title.length > 40 ? title.slice(0, 40) + "..." : title}
+        accentColor={accentColor}
+        delay={3}
+      />
 
       {footnotes && footnotes.length > 0 && <FootnoteBar footnotes={footnotes} />}
 
@@ -3675,7 +3704,7 @@ export const Slide: React.FC<{
         accentColor={accentColor}
       />
       <SlideCounter current={slideIndex} total={totalSlides} />
-    </AbsoluteFill>
+    </CinematicOverlay>
   );
 };
 "##;
@@ -3692,6 +3721,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import { AnimatedGradient } from "./AnimatedGradient";
+import { CinematicOverlay } from "./CinematicOverlay";
 import { Particles } from "./Particles";
 
 export const ClosingSlide: React.FC<{
@@ -3728,7 +3758,7 @@ export const ClosingSlide: React.FC<{
   });
 
   return (
-    <AbsoluteFill>
+    <CinematicOverlay grainIntensity={0.03} vignetteIntensity={0.65}>
       <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
       <Particles count={60} />
 
@@ -3739,9 +3769,10 @@ export const ClosingSlide: React.FC<{
             width: 300,
             height: 300,
             borderRadius: "50%",
-            border: `2px solid rgba(255,255,255,0.1)`,
+            border: `2px solid rgba(255,255,255,0.08)`,
             transform: `scale(${ringScale * 2})`,
             position: "absolute",
+            boxShadow: "0 0 40px rgba(255,255,255,0.03)",
           }}
         />
       </AbsoluteFill>
@@ -3762,6 +3793,7 @@ export const ClosingSlide: React.FC<{
             opacity,
             transform: `scale(${scale})`,
             textShadow: "0 4px 30px rgba(0,0,0,0.4)",
+            fontFamily: "'Inter', 'Helvetica Neue', sans-serif",
           }}
         >
           {title}
@@ -3769,18 +3801,19 @@ export const ClosingSlide: React.FC<{
         {subtitle && (
           <div
             style={{
-              fontSize: 22,
-              color: "rgba(255,255,255,0.6)",
+              fontSize: 20,
+              color: "rgba(255,255,255,0.55)",
               opacity: subOpacity,
-              letterSpacing: 2,
+              letterSpacing: 3,
               fontWeight: 300,
+              textTransform: "uppercase",
             }}
           >
             {subtitle}
           </div>
         )}
       </AbsoluteFill>
-    </AbsoluteFill>
+    </CinematicOverlay>
   );
 };
 "##;
@@ -3793,12 +3826,11 @@ import {
   AbsoluteFill,
   Img,
   interpolate,
-  spring,
   staticFile,
   useCurrentFrame,
-  useVideoConfig,
 } from "remotion";
 import { AnimatedGradient } from "./AnimatedGradient";
+import { CinematicOverlay } from "./CinematicOverlay";
 import type { ImageRef } from "../types";
 
 export const ImageSlide: React.FC<{
@@ -3807,63 +3839,75 @@ export const ImageSlide: React.FC<{
   accentColor: string;
 }> = ({ image, primaryColor, accentColor }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
 
-  const fadeIn = interpolate(frame, [0, 20], [0, 1], {
+  const fadeIn = interpolate(frame, [0, 25], [0, 1], {
     extrapolateRight: "clamp",
   });
-  const scale = spring({
-    frame,
-    fps,
-    config: { damping: 20, stiffness: 80 },
-  });
-  const imgScale = interpolate(scale, [0, 1], [1.05, 1]);
 
-  const captionOpacity = interpolate(frame, [25, 45], [0, 1], {
+  // Ken Burns effect — slow zoom + pan over duration
+  const kenBurnsScale = interpolate(frame, [0, 150], [1.0, 1.12], {
+    extrapolateRight: "clamp",
+  });
+  const kenBurnsPanX = interpolate(frame, [0, 150], [0, -25], {
+    extrapolateRight: "clamp",
+  });
+  const kenBurnsPanY = interpolate(frame, [0, 150], [0, -10], {
+    extrapolateRight: "clamp",
+  });
+
+  const captionOpacity = interpolate(frame, [30, 50], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
   return (
-    <AbsoluteFill>
+    <CinematicOverlay grainIntensity={0.03} vignetteIntensity={0.55}>
       <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
       <AbsoluteFill
         style={{
           justifyContent: "center",
           alignItems: "center",
-          padding: 60,
+          padding: 50,
         }}
       >
         <div
           style={{
             opacity: fadeIn,
-            transform: `scale(${imgScale})`,
-            borderRadius: 12,
+            borderRadius: 8,
             overflow: "hidden",
-            boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
+            boxShadow: "0 25px 80px rgba(0,0,0,0.5)",
             maxWidth: 1600,
-            maxHeight: 800,
+            maxHeight: 820,
           }}
         >
           <Img
             src={staticFile(image.filename)}
-            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              transform: `scale(${kenBurnsScale}) translate(${kenBurnsPanX}px, ${kenBurnsPanY}px)`,
+            }}
           />
         </div>
         <div
           style={{
             position: "absolute",
-            bottom: 80,
+            bottom: 70,
             textAlign: "center",
             opacity: captionOpacity,
           }}
         >
           <div
             style={{
-              fontSize: 28,
-              color: "rgba(255,255,255,0.9)",
+              fontSize: 26,
+              color: "rgba(255,255,255,0.92)",
               fontWeight: 500,
-              textShadow: "0 2px 10px rgba(0,0,0,0.5)",
+              textShadow: "0 2px 15px rgba(0,0,0,0.7)",
+              padding: "8px 24px",
+              backgroundColor: "rgba(0,0,0,0.35)",
+              borderRadius: 4,
+              backdropFilter: "blur(4px)",
             }}
           >
             {image.caption}
@@ -3871,8 +3915,8 @@ export const ImageSlide: React.FC<{
           {image.attribution && (
             <div
               style={{
-                fontSize: 16,
-                color: "rgba(255,255,255,0.5)",
+                fontSize: 14,
+                color: "rgba(255,255,255,0.45)",
                 marginTop: 8,
                 fontStyle: "italic",
               }}
@@ -3882,7 +3926,7 @@ export const ImageSlide: React.FC<{
           )}
         </div>
       </AbsoluteFill>
-    </AbsoluteFill>
+    </CinematicOverlay>
   );
 };
 "##;
@@ -3939,6 +3983,8 @@ import {
 } from "remotion";
 import { AnimatedGradient } from "./AnimatedGradient";
 import { AnimatedTitle } from "./AnimatedTitle";
+import { CinematicOverlay } from "./CinematicOverlay";
+import { LowerThird } from "./LowerThird";
 import { Particles } from "./Particles";
 import { ProgressBar } from "./ProgressBar";
 import { SlideCounter } from "./SlideCounter";
@@ -3955,15 +4001,20 @@ export const TimelineSlide: React.FC<{
   const { fps } = useVideoConfig();
 
   // Vertical line animation
-  const lineProgress = interpolate(frame, [10, 60], [0, 1], {
+  const lineProgress = interpolate(frame, [10, 80], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
+  // Camera drift
+  const driftY = interpolate(frame, [0, 240], [2, -2]);
+
   return (
-    <AbsoluteFill>
-      <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
-      <Particles count={15} />
+    <CinematicOverlay>
+      <AbsoluteFill style={{ transform: `translateY(${driftY}px)` }}>
+        <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
+        <Particles count={12} />
+      </AbsoluteFill>
 
       <AbsoluteFill
         style={{
@@ -3972,7 +4023,7 @@ export const TimelineSlide: React.FC<{
           gap: 20,
         }}
       >
-        <AnimatedTitle text={title} fontSize={44} delay={0} />
+        <AnimatedTitle text={title} fontSize={42} delay={0} />
 
         <div style={{ position: "relative", marginTop: 30, marginLeft: 80, flex: 1 }}>
           {/* Vertical connecting line */}
@@ -4051,9 +4102,11 @@ export const TimelineSlide: React.FC<{
         </div>
       </AbsoluteFill>
 
+      <LowerThird label="Timeline" accentColor={accentColor} delay={5} />
+
       <ProgressBar slideIndex={slideIndex} totalSlides={totalSlides} accentColor={accentColor} />
       <SlideCounter current={slideIndex} total={totalSlides} />
-    </AbsoluteFill>
+    </CinematicOverlay>
   );
 };
 "##;
@@ -4069,6 +4122,8 @@ import {
 } from "remotion";
 import { AnimatedGradient } from "./AnimatedGradient";
 import { AnimatedTitle } from "./AnimatedTitle";
+import { CinematicOverlay } from "./CinematicOverlay";
+import { LowerThird } from "./LowerThird";
 import { Particles } from "./Particles";
 import { ProgressBar } from "./ProgressBar";
 import { SlideCounter } from "./SlideCounter";
@@ -4087,9 +4142,9 @@ export const StatsSlide: React.FC<{
   const cols = stats.length <= 2 ? 2 : 3;
 
   return (
-    <AbsoluteFill>
+    <CinematicOverlay>
       <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
-      <Particles count={20} />
+      <Particles count={15} />
 
       <AbsoluteFill
         style={{
@@ -4100,7 +4155,7 @@ export const StatsSlide: React.FC<{
           gap: 50,
         }}
       >
-        <AnimatedTitle text={title} fontSize={44} delay={0} />
+        <AnimatedTitle text={title} fontSize={42} delay={0} />
 
         <div
           style={{
@@ -4158,9 +4213,11 @@ export const StatsSlide: React.FC<{
         </div>
       </AbsoluteFill>
 
+      <LowerThird label="Key Figures" accentColor={accentColor} delay={5} />
+
       <ProgressBar slideIndex={slideIndex} totalSlides={totalSlides} accentColor={accentColor} />
       <SlideCounter current={slideIndex} total={totalSlides} />
-    </AbsoluteFill>
+    </CinematicOverlay>
   );
 };
 "##;
@@ -4175,6 +4232,7 @@ import {
   useCurrentFrame,
 } from "remotion";
 import { AnimatedGradient } from "./AnimatedGradient";
+import { CinematicOverlay } from "./CinematicOverlay";
 import { Particles } from "./Particles";
 
 export const QuoteSlide: React.FC<{
@@ -4196,9 +4254,9 @@ export const QuoteSlide: React.FC<{
   });
 
   return (
-    <AbsoluteFill>
+    <CinematicOverlay grainIntensity={0.04} vignetteIntensity={0.6}>
       <AnimatedGradient primaryColor={primaryColor} accentColor={accentColor} />
-      <Particles count={30} />
+      <Particles count={25} />
 
       <AbsoluteFill
         style={{
@@ -4212,12 +4270,13 @@ export const QuoteSlide: React.FC<{
         {/* Opening quote mark */}
         <div
           style={{
-            fontSize: 120,
+            fontSize: 140,
             color: accentColor,
-            opacity: fadeIn * 0.4,
+            opacity: fadeIn * 0.3,
             fontFamily: "Georgia, serif",
             lineHeight: 0.8,
             marginBottom: -20,
+            textShadow: `0 0 30px ${accentColor}30`,
           }}
         >
           {"\u201C"}
@@ -4266,12 +4325,203 @@ export const QuoteSlide: React.FC<{
           — {attribution}
         </div>
       </AbsoluteFill>
-    </AbsoluteFill>
+    </CinematicOverlay>
   );
 };
 "##;
     std::fs::write(components_dir.join("QuoteSlide.tsx"), quote_slide)
         .map_err(|e| NyayaError::Config(format!("write QuoteSlide.tsx: {}", e)))?;
+
+    // --- src/components/FilmGrain.tsx ---
+    let film_grain = r##"import React from "react";
+import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
+
+export const FilmGrain: React.FC<{ intensity?: number }> = ({ intensity = 0.06 }) => {
+  const frame = useCurrentFrame();
+  // Animate the seed to make grain flicker like real film
+  const seed = frame * 0.7;
+  const freq = 0.65 + Math.sin(frame * 0.1) * 0.05;
+
+  return (
+    <AbsoluteFill style={{ pointerEvents: "none", mixBlendMode: "overlay" }}>
+      <svg width="100%" height="100%" style={{ position: "absolute" }}>
+        <filter id={`grain-${frame % 4}`}>
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency={freq}
+            numOctaves={3}
+            seed={seed}
+            stitchTiles="stitch"
+          />
+          <feColorMatrix type="saturate" values="0" />
+        </filter>
+        <rect
+          width="100%"
+          height="100%"
+          filter={`url(#grain-${frame % 4})`}
+          opacity={intensity}
+        />
+      </svg>
+    </AbsoluteFill>
+  );
+};
+"##;
+    std::fs::write(components_dir.join("FilmGrain.tsx"), film_grain)
+        .map_err(|e| NyayaError::Config(format!("write FilmGrain.tsx: {}", e)))?;
+
+    // --- src/components/Vignette.tsx ---
+    let vignette = r##"import React from "react";
+import { AbsoluteFill } from "remotion";
+
+export const Vignette: React.FC<{ intensity?: number }> = ({ intensity = 0.55 }) => {
+  return (
+    <AbsoluteFill
+      style={{
+        pointerEvents: "none",
+        background: `radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,${intensity}) 100%)`,
+      }}
+    />
+  );
+};
+"##;
+    std::fs::write(components_dir.join("Vignette.tsx"), vignette)
+        .map_err(|e| NyayaError::Config(format!("write Vignette.tsx: {}", e)))?;
+
+    // --- src/components/CinematicOverlay.tsx ---
+    // Wraps any content with film grain + vignette + subtle color grading
+    let cinematic_overlay = r##"import React from "react";
+import { AbsoluteFill } from "remotion";
+import { FilmGrain } from "./FilmGrain";
+import { Vignette } from "./Vignette";
+
+export const CinematicOverlay: React.FC<{
+  children: React.ReactNode;
+  grainIntensity?: number;
+  vignetteIntensity?: number;
+}> = ({ children, grainIntensity = 0.05, vignetteIntensity = 0.5 }) => {
+  return (
+    <AbsoluteFill
+      style={{
+        // Subtle color grading: slight warm tint, boosted contrast
+        filter: "contrast(1.08) saturate(1.12) brightness(0.97)",
+      }}
+    >
+      {children}
+      <Vignette intensity={vignetteIntensity} />
+      <FilmGrain intensity={grainIntensity} />
+    </AbsoluteFill>
+  );
+};
+"##;
+    std::fs::write(components_dir.join("CinematicOverlay.tsx"), cinematic_overlay)
+        .map_err(|e| NyayaError::Config(format!("write CinematicOverlay.tsx: {}", e)))?;
+
+    // --- src/components/LowerThird.tsx ---
+    // Broadcast-style lower-third with animated accent bar + text reveal
+    let lower_third = r##"import React from "react";
+import { spring, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+
+export const LowerThird: React.FC<{
+  label: string;
+  sublabel?: string;
+  accentColor: string;
+  delay?: number;
+}> = ({ label, sublabel, accentColor, delay = 5 }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+
+  // Accent bar slides in
+  const barWidth = spring({
+    frame: frame - delay,
+    fps,
+    config: { damping: 18, stiffness: 100 },
+  });
+  const barW = interpolate(barWidth, [0, 1], [0, 4]);
+
+  // Text fades in after bar
+  const textOpacity = interpolate(frame - delay, [8, 22], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const textX = interpolate(frame - delay, [8, 22], [20, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  // Background panel
+  const panelWidth = spring({
+    frame: frame - delay,
+    fps,
+    config: { damping: 20, stiffness: 80 },
+  });
+  const panelW = interpolate(panelWidth, [0, 1], [0, 100]);
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 80,
+        left: 60,
+        display: "flex",
+        alignItems: "stretch",
+        gap: 0,
+      }}
+    >
+      {/* Accent bar */}
+      <div
+        style={{
+          width: barW,
+          backgroundColor: accentColor,
+          borderRadius: 2,
+        }}
+      />
+      {/* Text panel */}
+      <div
+        style={{
+          backgroundColor: "rgba(0,0,0,0.65)",
+          padding: "14px 28px",
+          borderRadius: "0 4px 4px 0",
+          opacity: panelW / 100,
+          overflow: "hidden",
+          backdropFilter: "blur(8px)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 22,
+            fontWeight: 600,
+            color: "rgba(255,255,255,0.95)",
+            opacity: textOpacity,
+            transform: `translateX(${textX}px)`,
+            letterSpacing: 1,
+            textTransform: "uppercase",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </div>
+        {sublabel && (
+          <div
+            style={{
+              fontSize: 15,
+              color: "rgba(255,255,255,0.55)",
+              opacity: textOpacity,
+              transform: `translateX(${textX}px)`,
+              marginTop: 4,
+              letterSpacing: 0.5,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {sublabel}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+"##;
+    std::fs::write(components_dir.join("LowerThird.tsx"), lower_third)
+        .map_err(|e| NyayaError::Config(format!("write LowerThird.tsx: {}", e)))?;
 
     // --- Install dependencies and render ---
     eprintln!("[pea/doc] installing Remotion dependencies...");
@@ -4297,8 +4547,9 @@ export const QuoteSlide: React.FC<{
         .args([
             "remotion", "render",
             "--codec=h264",
-            "--crf=18",
-            "--jpeg-quality=90",
+            "--crf=17",
+            "--jpeg-quality=95",
+            "--color-space=bt709",
         ])
         .arg(format!("--props={}", props_path.display()))
         .args(["src/index.ts", "Slideshow"])
