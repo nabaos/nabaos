@@ -190,6 +190,9 @@ enum PeaCommands {
         /// Output mode: academic, magazine, blog, or video
         #[arg(long, default_value = "academic")]
         mode: String,
+        /// Enable TTS narration for video output (Piper → espeak-ng → OpenAI → ElevenLabs)
+        #[arg(long)]
+        narrate: bool,
     },
     /// List all objectives
     List,
@@ -1138,7 +1141,11 @@ fn cmd_pea(action: PeaCommands, data_dir: &Path) -> Result<()> {
             description,
             budget,
             mode,
+            narrate,
         } => {
+            if narrate {
+                nabaos::pea::tts::enable_narrate();
+            }
             let output_mode: nabaos::pea::objective::OutputMode = mode
                 .parse()
                 .map_err(|e: String| nabaos::core::error::NyayaError::Config(e))?;

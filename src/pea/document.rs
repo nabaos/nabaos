@@ -2384,8 +2384,30 @@ fn generate_remotion_video(
         })
     }).collect();
 
-    // Check for pre-existing narration audio files
+    // Generate TTS narration if enabled via --narrate flag or NABA_PEA_NARRATE env var
     let audio_dir = public_dir.join("audio");
+    let narrate = crate::pea::tts::is_narrate_enabled();
+    if narrate {
+        let tts = crate::pea::tts::TtsDispatcher::detect();
+        if tts.is_available() {
+            std::fs::create_dir_all(&audio_dir)
+                .map_err(|e| NyayaError::Config(format!("create audio dir: {}", e)))?;
+            eprintln!("[pea/doc] generating narration with {} for {} slides", tts.provider(), slides.len());
+            for (i, (title, bullets)) in slides.iter().enumerate() {
+                let mp3_path = audio_dir.join(format!("slide_{:03}.mp3", i));
+                let narration = crate::pea::tts::TtsDispatcher::slide_to_narration(title, bullets);
+                match tts.synthesize(&narration, &mp3_path) {
+                    Ok(true) => eprintln!("[pea/doc] narration slide {}: {}", i, mp3_path.display()),
+                    Ok(false) => eprintln!("[pea/doc] narration slide {} skipped", i),
+                    Err(e) => eprintln!("[pea/doc] narration slide {} error: {}", i, e),
+                }
+            }
+        } else {
+            eprintln!("[pea/doc] narration requested but no TTS provider available");
+        }
+    }
+
+    // Check for narration audio files (populated by TTS above or pre-existing)
     let audio_entries: Vec<serde_json::Value> = if audio_dir.exists() {
         slides.iter().enumerate().filter_map(|(i, _)| {
             let mp3 = audio_dir.join(format!("slide_{:03}.mp3", i));

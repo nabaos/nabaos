@@ -18,3 +18,4 @@ pub mod output_store;
 pub mod pramana;
 pub mod research;
 pub mod statistical;
+pub mod tts;
