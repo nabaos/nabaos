@@ -100,6 +100,9 @@ impl<'a> PeaBridge<'a> {
             "max_tokens": 16384,
         });
 
+        let context_len = system.len() + prompt.len();
+        eprintln!("[pea] calling llm.chat for task: {} (context: {} chars)", task_description, context_len);
+
         match self.registry.execute_ability(
             self.manifest,
             "llm.chat",
@@ -108,6 +111,7 @@ impl<'a> PeaBridge<'a> {
             Ok(result) => {
                 let output = String::from_utf8_lossy(&result.output).to_string();
                 let cost = parse_cost(&result.facts);
+                eprintln!("[pea] llm.chat completed, output: {} chars, cost: ${:.4}", output.len(), cost);
                 TaskResult {
                     success: true,
                     output,
