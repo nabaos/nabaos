@@ -1687,7 +1687,7 @@ impl App {
                     "objective completed".to_string(),
                     0,
                 )];
-                match engine.create_objective(description, budget_usd, desires) {
+                match engine.create_objective(description, budget_usd, desires, crate::pea::objective::OutputMode::Academic) {
                     Ok(obj_id) => {
                         let short_id = if obj_id.len() > 8 {
                             &obj_id[..8]

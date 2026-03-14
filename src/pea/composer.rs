@@ -290,8 +290,9 @@ impl<'a> DocumentComposer<'a> {
         images: &[ImageEntry],
         style: &StyleConfig,
         output_dir: &Path,
+        output_mode: &crate::pea::objective::OutputMode,
     ) -> Result<PathBuf> {
-        self.compose_document_with_kg(objective, corpus, task_results, images, style, output_dir, None)
+        self.compose_document_with_kg(objective, corpus, task_results, images, style, output_dir, None, output_mode)
     }
 
     /// Composition pipeline with optional knowledge graph for structural deduplication.
@@ -304,6 +305,7 @@ impl<'a> DocumentComposer<'a> {
         style: &StyleConfig,
         output_dir: &Path,
         kg: Option<&KnowledgeGraph>,
+        output_mode: &crate::pea::objective::OutputMode,
     ) -> Result<PathBuf> {
         let pipeline_start = Instant::now();
         std::fs::create_dir_all(output_dir)
@@ -491,7 +493,7 @@ impl<'a> DocumentComposer<'a> {
             review_notes: all_notes,
         };
 
-        let result = self.assemble_output(&doc, &all_images, style, output_dir);
+        let result = self.assemble_output(&doc, &all_images, style, output_dir, output_mode);
         self.tokens.log_summary(pipeline_start.elapsed());
         result
     }
@@ -2733,6 +2735,7 @@ plt.close()
         images: &[ImageEntry],
         style: &StyleConfig,
         output_dir: &Path,
+        output_mode: &crate::pea::objective::OutputMode,
     ) -> Result<PathBuf> {
         // Enforce final chapter ordering: front-matter first, appendix/methodology last
         let sections = reorder_final_sections(&doc.sections);
@@ -2753,6 +2756,7 @@ plt.close()
             images,
             Some(style),
             output_dir,
+            output_mode,
         )
     }
 

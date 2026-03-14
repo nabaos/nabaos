@@ -90,6 +90,7 @@ impl PeaEngine {
         description: &str,
         budget_usd: f64,
         desires: Vec<(String, String, i32)>,
+        output_mode: OutputMode,
     ) -> Result<String> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -115,6 +116,7 @@ impl PeaEngine {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(15),
             last_tick_at: 0,
+            output_mode,
         };
         self.store.save_objective(&obj)?;
 
@@ -1285,6 +1287,7 @@ impl PeaEngine {
                             &style_config,
                             &output_dir,
                             kg_ref,
+                            &obj.output_mode,
                         )
                     };
 
@@ -1301,6 +1304,7 @@ impl PeaEngine {
                                 &images,
                                 Some(&style_config),
                                 &output_dir,
+                                &obj.output_mode,
                             )
                         }
                     };
@@ -1466,7 +1470,7 @@ impl PeaEngine {
             desires.len() as i32,
         ));
 
-        let obj_id = self.create_objective(&description, budget_usd, desires)?;
+        let obj_id = self.create_objective(&description, budget_usd, desires, original.output_mode.clone())?;
 
         // Store prior context in beliefs
         let mut obj = self.store.load_objective(&obj_id)?.unwrap();
@@ -1527,7 +1531,7 @@ mod tests {
             ("Write docs".to_string(), "docs published".to_string(), 1),
         ];
         let obj_id = engine
-            .create_objective("Launch product", 50.0, desires)
+            .create_objective("Launch product", 50.0, desires, OutputMode::default())
             .unwrap();
 
         assert!(obj_id.starts_with("obj_"));
@@ -1554,7 +1558,7 @@ mod tests {
             ("Write report".to_string(), "report written".to_string(), 1),
         ];
         let obj_id = engine
-            .create_objective("Complete research", 20.0, desires)
+            .create_objective("Complete research", 20.0, desires, OutputMode::default())
             .unwrap();
 
         let activities = engine.tick().unwrap();
@@ -1583,6 +1587,7 @@ mod tests {
                 "Test objective",
                 10.0,
                 vec![("Do something".to_string(), "done".to_string(), 0)],
+                OutputMode::default(),
             )
             .unwrap();
 
@@ -1615,6 +1620,7 @@ mod tests {
                 "Pausable objective",
                 10.0,
                 vec![("Task A".to_string(), "done".to_string(), 0)],
+                OutputMode::default(),
             )
             .unwrap();
 
@@ -1639,6 +1645,7 @@ mod tests {
                 "Stuck objective",
                 10.0,
                 vec![("Do something".to_string(), "done".to_string(), 0)],
+                OutputMode::default(),
             )
             .unwrap();
 
@@ -1698,6 +1705,7 @@ mod tests {
                 "Budget test",
                 0.0,
                 vec![("Something".to_string(), "done".to_string(), 0)],
+                OutputMode::default(),
             )
             .unwrap();
 

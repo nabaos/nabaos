@@ -102,6 +102,40 @@ pub enum BudgetStrategy {
     Minimal,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputMode {
+    #[default]
+    Academic,
+    Magazine,
+    Blog,
+    Video,
+}
+
+impl fmt::Display for OutputMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Academic => write!(f, "academic"),
+            Self::Magazine => write!(f, "magazine"),
+            Self::Blog => write!(f, "blog"),
+            Self::Video => write!(f, "video"),
+        }
+    }
+}
+
+impl std::str::FromStr for OutputMode {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "academic" => Ok(Self::Academic),
+            "magazine" => Ok(Self::Magazine),
+            "blog" => Ok(Self::Blog),
+            "video" => Ok(Self::Video),
+            _ => Err(format!("unknown output mode: {}", s)),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Structs
 // ---------------------------------------------------------------------------
@@ -157,6 +191,7 @@ pub struct Objective {
     pub milestones: Vec<Milestone>,
     pub heartbeat_interval_secs: u64,
     pub last_tick_at: u64,
+    pub output_mode: OutputMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,6 +293,12 @@ impl ObjectiveStore {
         )
         .map_err(|e| NyayaError::Cache(format!("failed to create PEA tables: {e}")))?;
 
+        // Migration: add output_mode column for existing databases
+        let _ = conn.execute(
+            "ALTER TABLE pea_objectives ADD COLUMN output_mode TEXT NOT NULL DEFAULT 'academic'",
+            [],
+        );
+
         Ok(Self { conn })
     }
 
@@ -280,8 +321,9 @@ impl ObjectiveStore {
                 "INSERT OR REPLACE INTO pea_objectives
                  (id, description, status, created_at, updated_at,
                   beliefs_json, budget_usd, spent_usd, budget_strategy,
-                  progress_score, milestones_json, heartbeat_interval_secs, last_tick_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                  progress_score, milestones_json, heartbeat_interval_secs, last_tick_at,
+                  output_mode)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 rusqlite::params![
                     obj.id,
                     obj.description,
@@ -296,6 +338,7 @@ impl ObjectiveStore {
                     milestones_json,
                     obj.heartbeat_interval_secs,
                     obj.last_tick_at,
+                    obj.output_mode.to_string(),
                 ],
             )
             .map_err(|e| NyayaError::Cache(format!("save objective: {e}")))?;
@@ -308,7 +351,8 @@ impl ObjectiveStore {
             .prepare(
                 "SELECT id, description, status, created_at, updated_at,
                         beliefs_json, budget_usd, spent_usd, budget_strategy,
-                        progress_score, milestones_json, heartbeat_interval_secs, last_tick_at
+                        progress_score, milestones_json, heartbeat_interval_secs, last_tick_at,
+                        output_mode
                  FROM pea_objectives WHERE id = ?1",
             )
             .map_err(|e| NyayaError::Cache(format!("prepare load_objective: {e}")))?;
@@ -329,6 +373,7 @@ impl ObjectiveStore {
                     milestones_json: row.get(10)?,
                     heartbeat_interval_secs: row.get(11)?,
                     last_tick_at: row.get(12)?,
+                    output_mode: row.get::<_, String>(13).unwrap_or_else(|_| "academic".to_string()),
                 })
             })
             .map_err(|e| NyayaError::Cache(format!("query load_objective: {e}")))?;
@@ -346,7 +391,8 @@ impl ObjectiveStore {
             .prepare(
                 "SELECT id, description, status, created_at, updated_at,
                         beliefs_json, budget_usd, spent_usd, budget_strategy,
-                        progress_score, milestones_json, heartbeat_interval_secs, last_tick_at
+                        progress_score, milestones_json, heartbeat_interval_secs, last_tick_at,
+                        output_mode
                  FROM pea_objectives WHERE status = 'active'",
             )
             .map_err(|e| NyayaError::Cache(format!("prepare list_active: {e}")))?;
@@ -367,6 +413,7 @@ impl ObjectiveStore {
                     milestones_json: row.get(10)?,
                     heartbeat_interval_secs: row.get(11)?,
                     last_tick_at: row.get(12)?,
+                    output_mode: row.get::<_, String>(13).unwrap_or_else(|_| "academic".to_string()),
                 })
             })
             .map_err(|e| NyayaError::Cache(format!("query list_active: {e}")))?;
@@ -609,6 +656,7 @@ struct ObjectiveRow {
     milestones_json: String,
     heartbeat_interval_secs: u64,
     last_tick_at: u64,
+    output_mode: String,
 }
 
 fn row_to_objective(r: ObjectiveRow) -> Result<Objective> {
@@ -621,6 +669,8 @@ fn row_to_objective(r: ObjectiveRow) -> Result<Objective> {
     let budget_strategy: BudgetStrategy =
         serde_json::from_value(serde_json::Value::String(r.budget_strategy))
             .map_err(|e| NyayaError::Cache(format!("deserialize budget_strategy: {e}")))?;
+
+    let output_mode: OutputMode = r.output_mode.parse().unwrap_or_default();
 
     Ok(Objective {
         id: r.id,
@@ -636,6 +686,7 @@ fn row_to_objective(r: ObjectiveRow) -> Result<Objective> {
         milestones,
         heartbeat_interval_secs: r.heartbeat_interval_secs,
         last_tick_at: r.last_tick_at,
+        output_mode,
     })
 }
 
@@ -717,6 +768,25 @@ mod tests {
     }
 
     #[test]
+    fn test_output_mode_display_and_parse() {
+        assert_eq!(OutputMode::Academic.to_string(), "academic");
+        assert_eq!(OutputMode::Magazine.to_string(), "magazine");
+        assert_eq!(OutputMode::Blog.to_string(), "blog");
+        assert_eq!(OutputMode::Video.to_string(), "video");
+
+        assert_eq!("academic".parse::<OutputMode>().unwrap(), OutputMode::Academic);
+        assert_eq!("Magazine".parse::<OutputMode>().unwrap(), OutputMode::Magazine);
+        assert_eq!("BLOG".parse::<OutputMode>().unwrap(), OutputMode::Blog);
+        assert_eq!("video".parse::<OutputMode>().unwrap(), OutputMode::Video);
+        assert!("unknown".parse::<OutputMode>().is_err());
+    }
+
+    #[test]
+    fn test_output_mode_default() {
+        assert_eq!(OutputMode::default(), OutputMode::Academic);
+    }
+
+    #[test]
     fn test_objective_store_save_load() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
@@ -740,6 +810,7 @@ mod tests {
             }],
             heartbeat_interval_secs: 60,
             last_tick_at: 999,
+            output_mode: OutputMode::default(),
         };
 
         store.save_objective(&obj).unwrap();
@@ -780,6 +851,7 @@ mod tests {
             milestones: vec![],
             heartbeat_interval_secs: 300,
             last_tick_at: 0,
+            output_mode: OutputMode::default(),
         };
 
         store

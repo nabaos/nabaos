@@ -187,6 +187,9 @@ enum PeaCommands {
         /// Budget in USD
         #[arg(long, default_value = "50.0")]
         budget: f64,
+        /// Output mode: academic, magazine, blog, or video
+        #[arg(long, default_value = "academic")]
+        mode: String,
     },
     /// List all objectives
     List,
@@ -1134,13 +1137,17 @@ fn cmd_pea(action: PeaCommands, data_dir: &Path) -> Result<()> {
         PeaCommands::Start {
             description,
             budget,
+            mode,
         } => {
+            let output_mode: nabaos::pea::objective::OutputMode = mode
+                .parse()
+                .map_err(|e: String| nabaos::core::error::NyayaError::Config(e))?;
             let desires = vec![(
                 description.clone(),
                 format!("{} completed successfully", description),
                 0,
             )];
-            let obj_id = engine.create_objective(&description, budget, desires)?;
+            let obj_id = engine.create_objective(&description, budget, desires, output_mode)?;
             println!("{}", fmt::header_line("Objective Created"));
             println!("{}", fmt::active(&description));
             println!("{}", fmt::row("ID", &obj_id));

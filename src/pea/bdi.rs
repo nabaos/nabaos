@@ -206,6 +206,7 @@ mod tests {
             milestones: vec![],
             heartbeat_interval_secs: 300,
             last_tick_at: 0,
+            output_mode: OutputMode::default(),
         }
     }
 

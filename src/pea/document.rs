@@ -192,9 +192,25 @@ pub fn assemble_document(
     images: &[ImageEntry],             // (caption, image_path, attribution)
     style: Option<&StyleConfig>,
     output_dir: &Path,
+    output_mode: &crate::pea::objective::OutputMode,
 ) -> Result<PathBuf> {
     std::fs::create_dir_all(output_dir)
         .map_err(|e| NyayaError::Config(format!("Failed to create output dir: {}", e)))?;
+
+    // Branch by output mode
+    use crate::pea::objective::OutputMode;
+    match output_mode {
+        OutputMode::Academic => {} // fall through to existing LaTeX pipeline below
+        OutputMode::Magazine => {
+            return generate_magazine_html(objective_desc, task_results, images, style, output_dir);
+        }
+        OutputMode::Blog => {
+            return generate_blog_html(objective_desc, task_results, images, style, output_dir);
+        }
+        OutputMode::Video => {
+            return generate_video(objective_desc, task_results, images, style, output_dir);
+        }
+    }
 
     // 1. Generate LaTeX source via LLM
     let tex_source = generate_latex_source(registry, manifest, objective_desc, task_results, images, style)?;
@@ -1647,6 +1663,596 @@ pub(crate) fn auto_fix_lint(tex: &str, errors: &[LintError]) -> String {
     }
 
     result
+}
+
+// ---------------------------------------------------------------------------
+// Magazine HTML generator
+// ---------------------------------------------------------------------------
+
+fn generate_magazine_html(
+    objective_desc: &str,
+    task_results: &[(String, String)],
+    images: &[ImageEntry],
+    style: Option<&StyleConfig>,
+    output_dir: &Path,
+) -> Result<PathBuf> {
+    let s = style.cloned().unwrap_or_default();
+    let title = html_escape(objective_desc);
+    let primary = &s.primary_color;
+    let accent = &s.accent_color;
+
+    let font_stack = match s.font_family.as_str() {
+        "sans-serif" => "'Helvetica Neue', Arial, sans-serif",
+        "monospace" => "'JetBrains Mono', 'Fira Code', monospace",
+        _ => "'Georgia', 'Palatino', serif",
+    };
+
+    // Build sections with magazine layout
+    let mut sections = String::new();
+    for (i, (desc, text)) in task_results.iter().enumerate() {
+        let first_char = text.chars().next().unwrap_or('T');
+        let rest = if text.len() > 1 { &text[first_char.len_utf8()..] } else { "" };
+        let drop_cap = if i == 0 || s.use_drop_caps {
+            format!(
+                "<span class=\"drop-cap\">{}</span>{}",
+                html_escape(&first_char.to_string()),
+                text_to_html(rest),
+            )
+        } else {
+            text_to_html(text)
+        };
+
+        // Pull quote from first sentence
+        let pull_quote = text.split('.').next().unwrap_or("").trim();
+        let pull_quote_html = if !pull_quote.is_empty() && pull_quote.len() > 20 && pull_quote.len() < 200 {
+            format!(
+                "<blockquote class=\"pull-quote\">{}</blockquote>",
+                html_escape(pull_quote),
+            )
+        } else {
+            String::new()
+        };
+
+        sections.push_str(&format!(
+            "<section class=\"magazine-section\">\n\
+             <h2>{num}. {heading}</h2>\n\
+             {pull_quote}\n\
+             <div class=\"content\">{body}</div>\n\
+             </section>\n",
+            num = i + 1,
+            heading = html_escape(desc),
+            pull_quote = pull_quote_html,
+            body = drop_cap,
+        ));
+    }
+
+    // Image gallery
+    let mut gallery = String::new();
+    let mut credits: Vec<String> = Vec::new();
+    for (caption, path, attribution) in images {
+        if let Some(filename) = path.file_name() {
+            if let Some(attr) = attribution {
+                credits.push(format!(
+                    "<li><strong>{}</strong> — {}</li>",
+                    html_escape(caption), html_escape(attr),
+                ));
+            }
+            gallery.push_str(&format!(
+                "<figure class=\"gallery-item\">\
+                 <img src=\"{}\" alt=\"{}\">\
+                 <figcaption>{}</figcaption>\
+                 </figure>\n",
+                filename.to_string_lossy(),
+                html_escape(caption),
+                html_escape(caption),
+            ));
+        }
+    }
+
+    let gallery_section = if gallery.is_empty() {
+        String::new()
+    } else {
+        format!("<section class=\"gallery\"><h2>Gallery</h2><div class=\"gallery-grid\">{}</div></section>", gallery)
+    };
+
+    let credits_section = if credits.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<section class=\"credits\"><h2>Photo Credits</h2><ul>{}</ul></section>",
+            credits.join("\n"),
+        )
+    };
+
+    let html = format!(
+        r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<style>
+:root {{ --primary: {primary}; --accent: {accent}; }}
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: {font_stack}; color: #222; background: #fafafa; line-height: 1.7; }}
+
+/* Hero header */
+.hero {{
+  background: linear-gradient(135deg, {primary} 0%, {accent} 100%);
+  color: #fff; padding: 4rem 2rem; text-align: center;
+  margin-bottom: 3rem;
+}}
+.hero h1 {{ font-size: 2.8rem; font-weight: 700; margin-bottom: 0.5rem; letter-spacing: -0.02em; }}
+.hero .subtitle {{ font-size: 1.1rem; opacity: 0.85; }}
+
+/* Multi-column layout */
+.magazine-body {{ max-width: 1100px; margin: 0 auto; padding: 0 2rem; }}
+.magazine-section {{ margin-bottom: 3rem; break-inside: avoid; }}
+.magazine-section h2 {{ color: var(--accent); font-size: 1.6rem; margin-bottom: 1rem; padding-bottom: 0.4rem; border-bottom: 2px solid var(--accent); }}
+.magazine-section .content {{ columns: 2; column-gap: 2.5rem; text-align: justify; }}
+
+/* Drop cap */
+.drop-cap {{ float: left; font-size: 3.5rem; line-height: 0.8; padding: 0.1em 0.1em 0 0; color: var(--accent); font-weight: 700; }}
+
+/* Pull quotes */
+.pull-quote {{
+  float: right; width: 40%; margin: 0 0 1rem 1.5rem; padding: 1rem 1.5rem;
+  border-left: 4px solid var(--accent); font-size: 1.2rem; font-style: italic;
+  color: var(--primary); background: rgba(0,0,0,0.02); line-height: 1.5;
+}}
+
+/* Gallery */
+.gallery {{ margin: 3rem 0; }}
+.gallery h2 {{ text-align: center; color: var(--accent); margin-bottom: 1.5rem; }}
+.gallery-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.5rem; }}
+.gallery-item {{ text-align: center; }}
+.gallery-item img {{ width: 100%; height: auto; border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.12); }}
+.gallery-item figcaption {{ font-style: italic; color: #666; margin-top: 0.5rem; font-size: 0.9rem; }}
+
+/* Credits */
+.credits {{ margin: 3rem 0; padding: 1.5rem; background: #f0f0f0; border-radius: 8px; }}
+.credits h2 {{ margin-bottom: 1rem; color: var(--primary); }}
+
+/* Print styles */
+@media print {{
+  .hero {{ background: none; color: #000; border-bottom: 3px solid #000; }}
+  .magazine-section .content {{ columns: 1; }}
+  .pull-quote {{ float: none; width: 100%; margin: 1rem 0; }}
+}}
+@media (max-width: 768px) {{
+  .magazine-section .content {{ columns: 1; }}
+  .pull-quote {{ float: none; width: 100%; margin: 1rem 0; }}
+  .hero h1 {{ font-size: 2rem; }}
+}}
+</style>
+</head>
+<body>
+<header class="hero">
+<h1>{title}</h1>
+<p class="subtitle">A comprehensive exploration</p>
+</header>
+<main class="magazine-body">
+{sections}
+{gallery}
+{credits}
+</main>
+</body>
+</html>"##,
+        title = title,
+        primary = primary,
+        accent = accent,
+        font_stack = font_stack,
+        sections = sections,
+        gallery = gallery_section,
+        credits = credits_section,
+    );
+
+    let html_path = output_dir.join("output.html");
+    std::fs::write(&html_path, &html)
+        .map_err(|e| NyayaError::Config(format!("Failed to write magazine HTML: {}", e)))?;
+    Ok(html_path)
+}
+
+// ---------------------------------------------------------------------------
+// Blog HTML generator
+// ---------------------------------------------------------------------------
+
+fn generate_blog_html(
+    objective_desc: &str,
+    task_results: &[(String, String)],
+    images: &[ImageEntry],
+    style: Option<&StyleConfig>,
+    output_dir: &Path,
+) -> Result<PathBuf> {
+    let s = style.cloned().unwrap_or_default();
+    let title = html_escape(objective_desc);
+    let primary = &s.primary_color;
+    let accent = &s.accent_color;
+
+    let font_stack = match s.font_family.as_str() {
+        "sans-serif" => "'Helvetica Neue', Arial, sans-serif",
+        "monospace" => "'JetBrains Mono', 'Fira Code', monospace",
+        _ => "'Georgia', 'Palatino', serif",
+    };
+
+    // Estimate reading time (~200 words per minute)
+    let total_words: usize = task_results.iter().map(|(_, t)| t.split_whitespace().count()).sum();
+    let reading_minutes = (total_words / 200).max(1);
+
+    // Build TOC
+    let mut toc = String::new();
+    for (i, (desc, _)) in task_results.iter().enumerate() {
+        toc.push_str(&format!(
+            "<li><a href=\"#section-{}\">{}</a></li>\n",
+            i + 1,
+            html_escape(desc),
+        ));
+    }
+
+    // Build sections
+    let mut sections = String::new();
+    for (i, (desc, text)) in task_results.iter().enumerate() {
+        let mut image_html = String::new();
+        for (caption, path, attribution) in images {
+            if let Some(filename) = path.file_name() {
+                let cap_lower = caption.to_lowercase();
+                let desc_lower = desc.to_lowercase();
+                if cap_lower.contains(&desc_lower) || desc_lower.contains(&cap_lower) {
+                    let attr_html = attribution.as_ref()
+                        .map(|a| format!(" <span class=\"attr\">{}</span>", html_escape(a)))
+                        .unwrap_or_default();
+                    image_html.push_str(&format!(
+                        "<figure><img src=\"{}\" alt=\"{}\">\
+                         <figcaption>{}{}</figcaption></figure>\n",
+                        filename.to_string_lossy(),
+                        html_escape(caption),
+                        html_escape(caption),
+                        attr_html,
+                    ));
+                }
+            }
+        }
+
+        sections.push_str(&format!(
+            "<section id=\"section-{num}\">\n\
+             <h2>{heading}</h2>\n\
+             {images}\
+             <div class=\"content\">{body}</div>\n\
+             </section>\n",
+            num = i + 1,
+            heading = html_escape(desc),
+            images = image_html,
+            body = text_to_html(text),
+        ));
+    }
+
+    let html = format!(
+        r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="{og_desc}">
+<meta property="og:type" content="article">
+<style>
+:root {{ --primary: {primary}; --accent: {accent}; }}
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: {font_stack}; color: #333; background: #fff; line-height: 1.8; }}
+
+.blog-container {{ display: flex; max-width: 1000px; margin: 0 auto; padding: 2rem 1rem; gap: 2rem; }}
+
+/* Sidebar TOC */
+.toc-sidebar {{
+  position: sticky; top: 2rem; align-self: flex-start;
+  width: 220px; flex-shrink: 0; padding: 1rem;
+  border-right: 1px solid #eee; font-size: 0.85rem;
+}}
+.toc-sidebar h3 {{ color: var(--accent); margin-bottom: 0.8rem; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+.toc-sidebar ol {{ padding-left: 1.2em; }}
+.toc-sidebar li {{ margin-bottom: 0.4rem; }}
+.toc-sidebar a {{ color: #555; text-decoration: none; }}
+.toc-sidebar a:hover {{ color: var(--accent); }}
+
+/* Main content */
+.blog-main {{ flex: 1; max-width: 720px; }}
+
+.blog-header {{ margin-bottom: 2.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid #eee; }}
+.blog-header h1 {{ font-size: 2.2rem; color: var(--primary); margin-bottom: 0.5rem; line-height: 1.3; }}
+.blog-meta {{ color: #888; font-size: 0.9rem; }}
+
+section {{ margin-bottom: 2.5rem; }}
+section h2 {{ color: var(--accent); font-size: 1.4rem; margin-bottom: 0.8rem; padding-bottom: 0.3rem; border-bottom: 1px solid #f0f0f0; }}
+.content {{ margin: 1em 0; }}
+.content p {{ margin-bottom: 1em; }}
+
+/* Images */
+figure {{ margin: 1.5rem 0; text-align: center; }}
+figure img {{ max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
+figcaption {{ font-style: italic; color: #666; margin-top: 0.5em; font-size: 0.9rem; }}
+figcaption .attr {{ font-size: 0.8em; color: #999; display: block; }}
+
+/* Blockquote */
+blockquote {{ margin: 1.5rem 0; padding: 1rem 1.5rem; border-left: 4px solid var(--accent); background: #f9f9f9; font-style: italic; color: #555; }}
+
+/* Code blocks */
+pre {{ background: #f5f5f5; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.9rem; margin: 1rem 0; }}
+code {{ font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.9em; }}
+
+@media (max-width: 768px) {{
+  .blog-container {{ flex-direction: column; }}
+  .toc-sidebar {{ position: static; width: 100%; border-right: none; border-bottom: 1px solid #eee; padding-bottom: 1rem; margin-bottom: 1rem; }}
+}}
+@media print {{
+  .toc-sidebar {{ display: none; }}
+}}
+</style>
+</head>
+<body>
+<div class="blog-container">
+<nav class="toc-sidebar">
+<h3>Contents</h3>
+<ol>
+{toc}
+</ol>
+</nav>
+<main class="blog-main">
+<header class="blog-header">
+<h1>{title}</h1>
+<p class="blog-meta">{reading_time} min read</p>
+</header>
+{sections}
+</main>
+</div>
+</body>
+</html>"##,
+        title = title,
+        og_desc = html_escape(&objective_desc.chars().take(160).collect::<String>()),
+        primary = primary,
+        accent = accent,
+        font_stack = font_stack,
+        toc = toc,
+        reading_time = reading_minutes,
+        sections = sections,
+    );
+
+    let html_path = output_dir.join("output.html");
+    std::fs::write(&html_path, &html)
+        .map_err(|e| NyayaError::Config(format!("Failed to write blog HTML: {}", e)))?;
+    Ok(html_path)
+}
+
+// ---------------------------------------------------------------------------
+// Video generator (ffmpeg + Remotion + HTML fallback)
+// ---------------------------------------------------------------------------
+
+fn generate_video(
+    objective_desc: &str,
+    task_results: &[(String, String)],
+    _images: &[ImageEntry],
+    style: Option<&StyleConfig>,
+    output_dir: &Path,
+) -> Result<PathBuf> {
+    let s = style.cloned().unwrap_or_default();
+    let primary = &s.primary_color;
+    let accent = &s.accent_color;
+
+    // Build slides: title slide + one per section + closing slide
+    let mut slides: Vec<(String, Vec<String>)> = Vec::new();
+
+    // Title slide
+    slides.push((objective_desc.to_string(), vec!["A comprehensive exploration".into()]));
+
+    // Content slides (one per section, with bullet points)
+    for (desc, text) in task_results.iter().take(12) {
+        let bullets: Vec<String> = text
+            .split('.')
+            .map(|s| s.trim().to_string())
+            .filter(|s| s.len() > 10 && s.len() < 120)
+            .take(4)
+            .collect();
+        if !bullets.is_empty() {
+            slides.push((desc.clone(), bullets));
+        }
+    }
+
+    // Closing slide
+    slides.push(("Thank You".into(), vec![format!("Generated by NabaOS PEA")]));
+
+    // Generate slide PNGs as HTML
+    let slides_dir = output_dir.join("slides");
+    std::fs::create_dir_all(&slides_dir)
+        .map_err(|e| NyayaError::Config(format!("Failed to create slides dir: {}", e)))?;
+
+    for (i, (slide_title, bullets)) in slides.iter().enumerate() {
+        let bullet_html: String = bullets
+            .iter()
+            .map(|b| format!("<li>{}</li>", html_escape(b)))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let slide_html = format!(
+            r##"<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ width: 1920px; height: 1080px; display: flex; flex-direction: column;
+  justify-content: center; align-items: center; font-family: 'Helvetica Neue', Arial, sans-serif;
+  background: linear-gradient(135deg, {primary} 0%, {accent} 100%); color: #fff; padding: 80px; }}
+h1 {{ font-size: 64px; text-align: center; margin-bottom: 40px; line-height: 1.2; }}
+ul {{ list-style: none; font-size: 36px; line-height: 1.8; }}
+ul li::before {{ content: "→ "; color: rgba(255,255,255,0.7); }}
+</style></head><body>
+<h1>{title}</h1>
+<ul>{bullets}</ul>
+</body></html>"##,
+            primary = primary,
+            accent = accent,
+            title = html_escape(slide_title),
+            bullets = bullet_html,
+        );
+
+        let slide_path = slides_dir.join(format!("slide_{:03}.html", i));
+        std::fs::write(&slide_path, &slide_html)
+            .map_err(|e| NyayaError::Config(format!("Failed to write slide HTML: {}", e)))?;
+    }
+
+    // Try wkhtmltoimage to convert HTML slides to PNGs
+    let has_wkhtmltoimage = std::process::Command::new("wkhtmltoimage")
+        .arg("--version")
+        .output()
+        .is_ok();
+
+    if has_wkhtmltoimage {
+        for i in 0..slides.len() {
+            let html_path = slides_dir.join(format!("slide_{:03}.html", i));
+            let png_path = slides_dir.join(format!("slide_{:03}.png", i));
+            let _ = std::process::Command::new("wkhtmltoimage")
+                .args(["--width", "1920", "--height", "1080", "--quality", "90"])
+                .arg(&html_path)
+                .arg(&png_path)
+                .output();
+        }
+    }
+
+    // Check if we have PNGs (from wkhtmltoimage)
+    let has_pngs = slides_dir.join("slide_000.png").exists();
+
+    // Try ffmpeg if we have PNGs
+    if has_pngs {
+        let has_ffmpeg = std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_ok();
+
+        if has_ffmpeg {
+            let output_mp4 = output_dir.join("output.mp4");
+            let input_pattern = slides_dir.join("slide_%03d.png");
+            let result = std::process::Command::new("ffmpeg")
+                .args(["-y", "-framerate", "1/5"])
+                .arg("-i").arg(&input_pattern)
+                .args(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-vf", "scale=1920:1080"])
+                .arg(&output_mp4)
+                .output();
+
+            if let Ok(output) = result {
+                if output.status.success() && output_mp4.exists() {
+                    eprintln!("[pea/doc] video generated: {}", output_mp4.display());
+                    return Ok(output_mp4);
+                }
+            }
+            eprintln!("[pea/doc] ffmpeg failed, falling back to slideshow HTML");
+        }
+    }
+
+    // Try Remotion if available
+    let has_remotion = std::process::Command::new("npx")
+        .args(["remotion", "--version"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if has_remotion {
+        eprintln!("[pea/doc] Remotion detected — skipping for now (use ffmpeg path)");
+        // Future: write Remotion project and render
+    }
+
+    // Final fallback: slideshow HTML with CSS animations
+    eprintln!("[pea/doc] generating slideshow HTML fallback");
+    let mut slide_divs = String::new();
+    for (i, (slide_title, bullets)) in slides.iter().enumerate() {
+        let bullet_html: String = bullets
+            .iter()
+            .map(|b| format!("<li>{}</li>", html_escape(b)))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        slide_divs.push_str(&format!(
+            "<div class=\"slide\" id=\"slide-{i}\">\
+             <h2>{title}</h2><ul>{bullets}</ul></div>\n",
+            i = i,
+            title = html_escape(slide_title),
+            bullets = bullet_html,
+        ));
+    }
+
+    let total_slides = slides.len();
+    let slideshow_html = format!(
+        r##"<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title} — Slideshow</title>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: 'Helvetica Neue', Arial, sans-serif; background: #111; color: #fff; overflow: hidden; }}
+.slide {{
+  display: none; width: 100vw; height: 100vh;
+  flex-direction: column; justify-content: center; align-items: center;
+  background: linear-gradient(135deg, {primary} 0%, {accent} 100%);
+  padding: 60px; text-align: center;
+  animation: fadeIn 0.5s ease-in;
+}}
+.slide.active {{ display: flex; }}
+.slide h2 {{ font-size: 3rem; margin-bottom: 2rem; }}
+.slide ul {{ list-style: none; font-size: 1.5rem; line-height: 2.2; }}
+.slide ul li::before {{ content: "→ "; opacity: 0.7; }}
+.controls {{
+  position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 1rem; z-index: 10;
+}}
+.controls button {{
+  padding: 0.5rem 1.5rem; font-size: 1rem; cursor: pointer;
+  border: 2px solid rgba(255,255,255,0.5); background: rgba(0,0,0,0.3);
+  color: #fff; border-radius: 6px;
+}}
+.controls button:hover {{ background: rgba(255,255,255,0.2); }}
+.counter {{ position: fixed; bottom: 30px; right: 30px; color: rgba(255,255,255,0.5); font-size: 0.9rem; }}
+@keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
+</style>
+</head>
+<body>
+{slides}
+<div class="controls">
+<button onclick="prev()">← Prev</button>
+<button onclick="toggleAuto()">Auto</button>
+<button onclick="next()">Next →</button>
+</div>
+<div class="counter" id="counter">1 / {total}</div>
+<script>
+let current = 0;
+const total = {total};
+let autoTimer = null;
+function show(n) {{
+  document.querySelectorAll('.slide').forEach(s => s.classList.remove('active'));
+  current = ((n % total) + total) % total;
+  document.getElementById('slide-' + current).classList.add('active');
+  document.getElementById('counter').textContent = (current + 1) + ' / ' + total;
+}}
+function next() {{ show(current + 1); }}
+function prev() {{ show(current - 1); }}
+function toggleAuto() {{
+  if (autoTimer) {{ clearInterval(autoTimer); autoTimer = null; }}
+  else {{ autoTimer = setInterval(next, 5000); }}
+}}
+document.addEventListener('keydown', e => {{
+  if (e.key === 'ArrowRight' || e.key === ' ') next();
+  if (e.key === 'ArrowLeft') prev();
+}});
+show(0);
+</script>
+</body></html>"##,
+        title = html_escape(objective_desc),
+        primary = primary,
+        accent = accent,
+        slides = slide_divs,
+        total = total_slides,
+    );
+
+    let html_path = output_dir.join("output.html");
+    std::fs::write(&html_path, &slideshow_html)
+        .map_err(|e| NyayaError::Config(format!("Failed to write slideshow HTML: {}", e)))?;
+    Ok(html_path)
 }
 
 // ---------------------------------------------------------------------------
