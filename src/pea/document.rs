@@ -2027,7 +2027,149 @@ code {{ font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.9em;
 // Video generator (Remotion → ffmpeg → HTML fallback)
 // ---------------------------------------------------------------------------
 
-/// Build slide data from task results: title slide + content slides + closing.
+/// Check if a section title looks like a references/bibliography section.
+fn is_reference_section(title: &str) -> bool {
+    let lower = title.to_lowercase();
+    lower.contains("reference") || lower.contains("bibliograph")
+}
+
+/// Return true if the string looks like slide noise (URLs, APA fragments, mostly punctuation).
+fn looks_like_slide_noise(s: &str) -> bool {
+    let s = s.trim();
+    if s.contains("://") || s.contains("www.") {
+        return true;
+    }
+    // APA / citation fragments
+    let lower = s.to_lowercase();
+    if lower.contains("doi:") || lower.contains("doi.org") || lower.contains("et al")
+        || lower.contains("vol.") || lower.contains(", pp.") || lower.contains("isbn")
+        || lower.contains("journal of") || lower.contains("retrieved from")
+    {
+        return true;
+    }
+    // Pattern: "Author (YYYY)" — typical citation start
+    if s.contains("(20") || s.contains("(19") {
+        // If it also has commas (author list), likely a citation
+        if s.matches(',').count() >= 2 {
+            return true;
+        }
+    }
+    // Mostly digits / punctuation (>65% noise chars)
+    if !s.is_empty() {
+        let noise_chars = s.chars().filter(|c| c.is_ascii_digit() || c.is_ascii_punctuation() || c.is_whitespace()).count();
+        if (noise_chars as f64 / s.len() as f64) > 0.65 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Extract clean bullet points from a block of text.
+///
+/// Split on newlines first, then sentence boundaries (`. [A-Z]`), filter for
+/// reasonable length (15-140 chars), reject noise, strip numbered-list markers.
+fn extract_slide_bullets(text: &str) -> Vec<String> {
+    let mut candidates: Vec<String> = Vec::new();
+
+    // First split on newlines to get natural paragraphs/lines
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() { continue; }
+
+        // If the whole line is noise, skip early
+        if looks_like_slide_noise(line) { continue; }
+
+        // Sentence-split on ". [A-Z]" boundaries
+        let mut remaining = line;
+        loop {
+            match remaining.find(". ") {
+                Some(pos) => {
+                    let after = &remaining[pos + 2..];
+                    if after.starts_with(|c: char| c.is_uppercase()) {
+                        // Sentence boundary found
+                        let sentence = remaining[..pos + 1].trim().to_string();
+                        candidates.push(sentence);
+                        remaining = after;
+                    } else {
+                        // Not a boundary, keep scanning past this ". "
+                        if pos + 2 < remaining.len() {
+                            // Look for next ". " from after this one
+                            let search_from = pos + 2;
+                            match remaining[search_from..].find(". ") {
+                                Some(_) => {
+                                    let ahead = &remaining[search_from..];
+                                    if let Some(next_pos) = ahead.find(". ") {
+                                        let abs_pos = search_from + next_pos;
+                                        let after_next = &remaining[abs_pos + 2..];
+                                        if after_next.starts_with(|c: char| c.is_uppercase()) {
+                                            let sentence = remaining[..abs_pos + 1].trim().to_string();
+                                            candidates.push(sentence);
+                                            remaining = after_next;
+                                        } else {
+                                            // Give up splitting this line
+                                            break;
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                None => break,
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                None => break,
+            }
+        }
+        if !remaining.trim().is_empty() {
+            candidates.push(remaining.trim().to_string());
+        }
+    }
+
+    candidates
+        .into_iter()
+        // Strip numbered-list markers like "1. ", "2) ", "- "
+        .map(|s| {
+            let s = s.trim().to_string();
+            if let Some(rest) = s.strip_prefix("- ") {
+                rest.to_string()
+            } else if s.starts_with(|c: char| c.is_ascii_digit()) {
+                // Strip "1. " or "1) " prefixes
+                let re_stripped = s.trim_start_matches(|c: char| c.is_ascii_digit());
+                if let Some(rest) = re_stripped.strip_prefix(". ").or_else(|| re_stripped.strip_prefix(") ")) {
+                    rest.to_string()
+                } else {
+                    s
+                }
+            } else {
+                s
+            }
+        })
+        .filter(|s| s.len() >= 15 && s.len() <= 140)
+        .filter(|s| !looks_like_slide_noise(s))
+        .take(4)
+        .collect()
+}
+
+/// Extract short APA-style source entries from reference text for a "Key Sources" slide.
+fn extract_key_sources(ref_text: &str) -> Vec<String> {
+    ref_text
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| {
+            // Must contain a year-like pattern
+            l.contains("19") || l.contains("20")
+        })
+        .filter(|l| l.len() >= 15 && l.len() <= 100)
+        .filter(|l| !l.starts_with("http") && !l.starts_with("doi"))
+        .map(|l| if l.len() > 65 { format!("{}...", &l[..62]) } else { l })
+        .take(5)
+        .collect()
+}
+
+/// Build slide data from task results: title slide + content slides + key sources + closing.
 fn build_slides(
     objective_desc: &str,
     task_results: &[(String, String)],
@@ -2037,16 +2179,27 @@ fn build_slides(
     // Title slide
     slides.push((objective_desc.to_string(), vec!["A comprehensive exploration".into()]));
 
-    // Content slides (one per section, with bullet points)
+    // Collect reference text for Key Sources slide
+    let mut ref_texts: Vec<String> = Vec::new();
+
+    // Content slides (one per section, skip references)
     for (desc, text) in task_results.iter().take(12) {
-        let bullets: Vec<String> = text
-            .split('.')
-            .map(|s| s.trim().to_string())
-            .filter(|s| s.len() > 10 && s.len() < 120)
-            .take(4)
-            .collect();
+        if is_reference_section(desc) {
+            ref_texts.push(text.clone());
+            continue;
+        }
+        let bullets = extract_slide_bullets(text);
         if !bullets.is_empty() {
             slides.push((desc.clone(), bullets));
+        }
+    }
+
+    // Key Sources slide (from reference sections)
+    if !ref_texts.is_empty() {
+        let combined_refs = ref_texts.join("\n");
+        let sources = extract_key_sources(&combined_refs);
+        if !sources.is_empty() {
+            slides.push(("Key Sources".into(), sources));
         }
     }
 
@@ -3601,5 +3754,57 @@ mod tests {
         let errors = lint_latex(tex);
         let residue: Vec<_> = errors.iter().filter(|e| e.kind == "prompt_residue_caption").collect();
         assert_eq!(residue.len(), 1);
+    }
+
+    // --- Video slide extraction tests ---
+
+    #[test]
+    fn test_extract_slide_bullets_filters_urls() {
+        let text = "Climate change is a major global challenge. \
+            See https://www.ipcc.ch/report/ar6 for details. \
+            Temperatures have risen by 1.1 degrees Celsius since pre-industrial times. \
+            Visit www.nasa.gov/climate for more data.";
+        let bullets = extract_slide_bullets(text);
+        for b in &bullets {
+            assert!(!b.contains("://"), "Bullet should not contain URL: {}", b);
+            assert!(!b.contains("www."), "Bullet should not contain www: {}", b);
+        }
+    }
+
+    #[test]
+    fn test_extract_slide_bullets_filters_apa() {
+        // Typical reference block with multiple APA entries
+        let text = "Smith, J., Brown, A., & Lee, C. (2023). Climate impacts on agriculture. Journal of Science, Vol. 42, pp. 100-115.\n\
+            Jones, R. et al. (2022). Global warming trends. Nature Reviews, Vol. 8, pp. 50-75.\n\
+            Retrieved from https://doi.org/10.1234/example";
+        let bullets = extract_slide_bullets(text);
+        assert!(bullets.is_empty(), "APA references should produce no bullets, got: {:?}", bullets);
+    }
+
+    #[test]
+    fn test_build_slides_skips_references_section() {
+        let task_results = vec![
+            ("Introduction".into(), "Renewable energy sources are becoming increasingly important for global sustainability efforts.".into()),
+            ("References".into(), "Smith (2023). Solar Energy Review. Journal of Renewables, Vol. 15, pp. 1-20.".into()),
+            ("Bibliography".into(), "Jones et al. (2022). Wind Power Analysis. Energy Reports, Vol. 8, pp. 50-75.".into()),
+        ];
+        let slides = build_slides("Test Objective", &task_results);
+        let titles: Vec<&str> = slides.iter().map(|(t, _)| t.as_str()).collect();
+        // References and Bibliography should not appear as content slide titles
+        assert!(!titles.contains(&"References"), "References section should be filtered: {:?}", titles);
+        assert!(!titles.contains(&"Bibliography"), "Bibliography section should be filtered: {:?}", titles);
+        // Title and closing should always be present
+        assert_eq!(titles[0], "Test Objective");
+        assert_eq!(titles.last().unwrap(), &"Thank You");
+    }
+
+    #[test]
+    fn test_looks_like_slide_noise() {
+        assert!(looks_like_slide_noise("https://example.com/page"));
+        assert!(looks_like_slide_noise("See www.example.org for details"));
+        assert!(looks_like_slide_noise("doi:10.1234/test.5678"));
+        assert!(looks_like_slide_noise("Smith et al. (2023)"));
+        assert!(looks_like_slide_noise("Vol. 42, pp. 100-115"));
+        assert!(!looks_like_slide_noise("Climate change affects global temperatures significantly"));
     }
 }
