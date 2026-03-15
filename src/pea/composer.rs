@@ -476,20 +476,15 @@ impl<'a> DocumentComposer<'a> {
         }
 
         // Merge stock images + generated charts
-        // Video mode: skip both stock images and charts (PixiJS renders its own visuals)
+        // Video mode: keep stock images for PhotoReveal scenes
         // Other modes: skip stock images for analytical themes only
-        let mut all_images: Vec<ImageEntry> = if *output_mode == crate::pea::objective::OutputMode::Video {
-            eprintln!("[composer] skipping images for video mode (PixiJS renders visuals)");
-            Vec::new()
-        } else if style.should_skip_stock_images() {
+        let mut all_images: Vec<ImageEntry> = if style.should_skip_stock_images() {
             eprintln!("[composer] skipping stock images (theme={})", style.theme);
             Vec::new()
         } else {
             images.to_vec()
         };
-        if *output_mode != crate::pea::objective::OutputMode::Video {
-            all_images.extend(chart_images);
-        }
+        all_images.extend(chart_images);
 
         // Phase 5: Assemble final output
         eprintln!("[composer] assembling final document...");
@@ -2751,7 +2746,7 @@ plt.close()
         kg: Option<&KnowledgeGraph>,
     ) -> Result<String> {
         let section_summaries: String = doc.sections.iter()
-            .map(|s| format!("### {}\n{}", s.title, crate::pea::research::safe_slice(&s.content, 800)))
+            .map(|s| format!("### {}\n{}", s.title, crate::pea::research::safe_slice(&s.content, 2000)))
             .collect::<Vec<_>>()
             .join("\n\n");
 
@@ -2774,14 +2769,14 @@ plt.close()
             counters, particle effects, and timeline visualizations.";
 
         let prompt = format!(
-            r#"Imagine a 60-90 second motion graphics video for: "{objective}"
+            r#"Imagine a 3-5 minute motion graphics video for: "{objective}"
 
 ## Source Material
 {section_summaries}
 {kg_summary}
 
 ## Creative Brief Questions
-Think through each of these and write a creative concept (400-600 words):
+Think through each of these and write a creative concept (600-900 words):
 
 1. **Hook** — What grabs attention in the first 5 seconds? A shocking number? A provocative question? A visual metaphor?
 2. **Visual Metaphor** — What single visual idea ties the whole video together? (e.g., a timeline unfolding, data raining down, ideas converging)
@@ -2790,6 +2785,9 @@ Think through each of these and write a creative concept (400-600 words):
 5. **Comparisons** — What before/after or side-by-side comparisons would be visually striking?
 6. **Emotional Arc** — Map the journey: curiosity → understanding → insight. Where are the peaks?
 7. **Closing Impact** — What's the takeaway that lingers? What final image/phrase stays with the viewer?
+8. **Photo Moments** — Identify 5-8 moments where a full-screen photo would be powerful. What should each photo show? What Ken Burns motion (zoom in, pan left/right) would enhance each?
+9. **Presenter Beats** — Where should an animated presenter character appear to explain complex points? What pose/gesture would they use (pointing at data, thinking, excited)?
+10. **Visual Icons** — What 3-4 groups of animated symbols/icons would help illustrate key concepts? (e.g., for energy: solar panel, wind turbine, battery, factory)
 
 Write your creative concept as flowing prose, not bullet points. Be specific about visual moments."#,
         );
@@ -2797,7 +2795,7 @@ Write your creative concept as flowing prose, not bullet points. Be specific abo
         let input = serde_json::json!({
             "system": system,
             "prompt": prompt,
-            "max_tokens": 2048,
+            "max_tokens": 3072,
             "thinking": false,
         });
 
@@ -2815,11 +2813,23 @@ Write your creative concept as flowing prose, not bullet points. Be specific abo
         &self,
         concept: &str,
         doc: &ComposedDocument,
+        images: &[document::ImageEntry],
     ) -> Result<Vec<document::VideoScene>> {
         let section_data: String = doc.sections.iter()
-            .map(|s| format!("### {}\n{}", s.title, crate::pea::research::safe_slice(&s.content, 600)))
+            .map(|s| format!("### {}\n{}", s.title, crate::pea::research::safe_slice(&s.content, 1500)))
             .collect::<Vec<_>>()
             .join("\n\n");
+
+        let available_photos: String = if images.is_empty() {
+            "No photos available.".to_string()
+        } else {
+            images.iter()
+                .filter_map(|(caption, path, _attr)| {
+                    path.file_name().map(|f| format!("- {} ({})", f.to_string_lossy(), caption))
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
 
         let system = "You are a motion graphics scene architect. You convert creative concepts \
             into structured scene data for a PixiJS rendering engine. Output ONLY a valid JSON array.";
@@ -2832,6 +2842,9 @@ Write your creative concept as flowing prose, not bullet points. Be specific abo
 
 ## Section Data (for extracting real numbers/facts)
 {section_data}
+
+## Available Photos
+{available_photos}
 
 ## Available Scene Types
 
@@ -2867,14 +2880,31 @@ Write your creative concept as flowing prose, not bullet points. Be specific abo
    Fields: title (string), subtitle (string), kind: "closing"
    Default: 210 frames (7s)
 
+9. **photoReveal** — Full-screen photo with Ken Burns pan/zoom effect
+   Fields: caption (string), filename (string, from Available Photos), attribution (string), kenBurnsDirection ("zoom_in_right"|"zoom_in_left"|"zoom_out_center"|"pan_left"|"pan_right"), kind: "photoReveal"
+   Default: 180 frames (6s)
+
+10. **presenterNarration** — Animated 2D presenter character with speech bubble
+    Fields: text (string), pose ("neutral"|"pointing"|"thinking"|"excited"), gestureSide ("left"|"right"), kind: "presenterNarration"
+    Default: 210 frames (7s)
+
+11. **iconAnimation** — Animated contextual icons/symbols
+    Fields: title (string), icons (array of {{name, label}}, max 8), animation ("grow"|"orbit"|"flow"|"transform"), kind: "iconAnimation"
+    Icon names: car, battery, factory, solar, wind, dollar, graph, globe, book, lightbulb, rocket, heart, shield, gear, leaf, chart
+    Default: 180 frames (6s)
+
 ## Rules
-- Output 8-15 scenes as a JSON array
+- Output 30-50 scenes as a JSON array
+- Total duration target: 5400-9000 frames (3-5 minutes at 30fps)
 - First scene MUST be "opener", last MUST be "closing"
 - Vary scene types — don't repeat the same type consecutively
 - Use REAL data from the section content (real numbers, real facts)
 - For kineticText, wrap 2-4 key words in **bold** markers
 - For dataCounter, extract actual statistics and use numeric values
 - For barRace, use actual comparative data with numeric values
+- Place photoReveal every 4-6 scenes (use filenames from Available Photos)
+- Include presenterNarration 3-5 times for complex explanations
+- Include iconAnimation 3-4 times for concept groups
 - You may include durationFrames or omit for defaults
 
 Output ONLY a valid JSON array. No markdown fences, no explanation."#,
@@ -2883,7 +2913,7 @@ Output ONLY a valid JSON array. No markdown fences, no explanation."#,
         let input = serde_json::json!({
             "system": system,
             "prompt": prompt,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "thinking": false,
         });
 
@@ -3037,7 +3067,7 @@ Output ONLY a valid JSON array. No markdown, no explanation."#,
         if *output_mode == crate::pea::objective::OutputMode::Video {
             // Phase 1: Try two-phase PixiJS motion graphics pipeline
             let pixi_result = self.generate_video_concept(&doc.title, doc, kg)
-                .and_then(|concept| self.structure_video_scenes(&concept, doc));
+                .and_then(|concept| self.structure_video_scenes(&concept, doc, images));
 
             match pixi_result {
                 Ok(scenes) => {

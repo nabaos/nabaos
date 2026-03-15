@@ -2192,6 +2192,13 @@ pub struct ComparisonPoint {
     pub right: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IconEntry {
+    pub name: String,
+    #[serde(default)]
+    pub label: String,
+}
+
 fn default_opener_duration() -> u32 { 240 }
 fn default_kinetic_duration() -> u32 { 180 }
 fn default_counter_duration() -> u32 { 210 }
@@ -2200,8 +2207,15 @@ fn default_particle_duration() -> u32 { 150 }
 fn default_timeline_path_duration() -> u32 { 270 }
 fn default_comparison_duration() -> u32 { 240 }
 fn default_closing_motion_duration() -> u32 { 210 }
+fn default_photo_reveal_duration() -> u32 { 180 }
+fn default_presenter_duration() -> u32 { 210 }
+fn default_icon_animation_duration() -> u32 { 180 }
 fn default_layout() -> String { "cascade".to_string() }
 fn default_preset() -> String { "stars".to_string() }
+fn default_ken_burns() -> String { "zoom_in_right".to_string() }
+fn default_pose() -> String { "neutral".to_string() }
+fn default_gesture_side() -> String { "left".to_string() }
+fn default_icon_animation_type() -> String { "grow".to_string() }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -2264,6 +2278,34 @@ pub enum VideoScene {
         #[serde(rename = "durationFrames", default = "default_closing_motion_duration")]
         duration_frames: u32,
     },
+    PhotoReveal {
+        #[serde(default)]
+        caption: String,
+        filename: String,
+        #[serde(default)]
+        attribution: String,
+        #[serde(rename = "kenBurnsDirection", default = "default_ken_burns")]
+        ken_burns_direction: String,
+        #[serde(rename = "durationFrames", default = "default_photo_reveal_duration")]
+        duration_frames: u32,
+    },
+    PresenterNarration {
+        text: String,
+        #[serde(default = "default_pose")]
+        pose: String,
+        #[serde(rename = "gestureSide", default = "default_gesture_side")]
+        gesture_side: String,
+        #[serde(rename = "durationFrames", default = "default_presenter_duration")]
+        duration_frames: u32,
+    },
+    IconAnimation {
+        title: String,
+        icons: Vec<IconEntry>,
+        #[serde(default = "default_icon_animation_type")]
+        animation: String,
+        #[serde(rename = "durationFrames", default = "default_icon_animation_duration")]
+        duration_frames: u32,
+    },
 }
 
 impl VideoScene {
@@ -2276,7 +2318,10 @@ impl VideoScene {
             | VideoScene::ParticleMood { duration_frames, .. }
             | VideoScene::TimelinePath { duration_frames, .. }
             | VideoScene::ComparisonSplit { duration_frames, .. }
-            | VideoScene::Closing { duration_frames, .. } => *duration_frames,
+            | VideoScene::Closing { duration_frames, .. }
+            | VideoScene::PhotoReveal { duration_frames, .. }
+            | VideoScene::PresenterNarration { duration_frames, .. }
+            | VideoScene::IconAnimation { duration_frames, .. } => *duration_frames,
         }
     }
 
@@ -2291,6 +2336,9 @@ impl VideoScene {
             VideoScene::TimelinePath { .. } => "timelinePath",
             VideoScene::ComparisonSplit { .. } => "comparisonSplit",
             VideoScene::Closing { .. } => "closing",
+            VideoScene::PhotoReveal { .. } => "photoReveal",
+            VideoScene::PresenterNarration { .. } => "presenterNarration",
+            VideoScene::IconAnimation { .. } => "iconAnimation",
         }
     }
 
@@ -2303,7 +2351,10 @@ impl VideoScene {
             | VideoScene::ParticleMood { duration_frames, .. }
             | VideoScene::TimelinePath { duration_frames, .. }
             | VideoScene::ComparisonSplit { duration_frames, .. }
-            | VideoScene::Closing { duration_frames, .. } => duration_frames,
+            | VideoScene::Closing { duration_frames, .. }
+            | VideoScene::PhotoReveal { duration_frames, .. }
+            | VideoScene::PresenterNarration { duration_frames, .. }
+            | VideoScene::IconAnimation { duration_frames, .. } => duration_frames,
         }
     }
 }
@@ -2311,9 +2362,13 @@ impl VideoScene {
 /// Validate and fix video scenes: ensure Opener first, Closing last, clamp counts/durations,
 /// fix invalid layout/preset values.
 pub fn validate_video_scenes(scenes: &mut Vec<VideoScene>, title: &str) {
-    // Fix invalid layout values
+    // Fix invalid layout/preset/direction/pose/animation values
     let valid_layouts = ["cascade", "converge", "wave", "typewriter"];
     let valid_presets = ["stars", "rain", "fireflies", "snow", "nebula"];
+    let valid_ken_burns = ["zoom_in_right", "zoom_in_left", "zoom_out_center", "pan_left", "pan_right"];
+    let valid_poses = ["neutral", "pointing", "thinking", "excited"];
+    let valid_gesture_sides = ["left", "right"];
+    let valid_animations = ["grow", "orbit", "flow", "transform"];
 
     for scene in scenes.iter_mut() {
         match scene {
@@ -2326,6 +2381,25 @@ pub fn validate_video_scenes(scenes: &mut Vec<VideoScene>, title: &str) {
                 if !valid_presets.contains(&preset.as_str()) {
                     *preset = "stars".to_string();
                 }
+            }
+            VideoScene::PhotoReveal { ken_burns_direction, .. } => {
+                if !valid_ken_burns.contains(&ken_burns_direction.as_str()) {
+                    *ken_burns_direction = "zoom_in_right".to_string();
+                }
+            }
+            VideoScene::PresenterNarration { pose, gesture_side, .. } => {
+                if !valid_poses.contains(&pose.as_str()) {
+                    *pose = "neutral".to_string();
+                }
+                if !valid_gesture_sides.contains(&gesture_side.as_str()) {
+                    *gesture_side = "left".to_string();
+                }
+            }
+            VideoScene::IconAnimation { animation, icons, .. } => {
+                if !valid_animations.contains(&animation.as_str()) {
+                    *animation = "grow".to_string();
+                }
+                icons.truncate(8);
             }
             _ => {}
         }
@@ -2350,17 +2424,17 @@ pub fn validate_video_scenes(scenes: &mut Vec<VideoScene>, title: &str) {
         });
     }
 
-    // Clamp to 8-20 scenes
-    if scenes.len() > 20 {
+    // Clamp to 8-60 scenes
+    if scenes.len() > 60 {
         let closing = scenes.pop().unwrap();
-        scenes.truncate(19);
+        scenes.truncate(59);
         scenes.push(closing);
     }
 
-    // Clamp duration_frames to 90-360
+    // Clamp duration_frames to 90-450
     for scene in scenes.iter_mut() {
         let df = scene.duration_frames_mut();
-        *df = (*df).clamp(90, 360);
+        *df = (*df).clamp(90, 450);
     }
 }
 
@@ -4864,7 +4938,7 @@ export const LowerThird: React.FC<{
 /// Generate a PixiJS + Remotion motion graphics video from VideoScene data.
 pub fn generate_pixi_video(
     scenes: &[VideoScene],
-    _images: &[ImageEntry],
+    images: &[ImageEntry],
     style: Option<&StyleConfig>,
     output_dir: &Path,
 ) -> Result<PathBuf> {
@@ -4887,6 +4961,42 @@ pub fn generate_pixi_video(
     let scenes_dir = src_dir.join("scenes");
     std::fs::create_dir_all(&scenes_dir)
         .map_err(|e| NyayaError::Config(format!("create scenes dir: {}", e)))?;
+
+    // Copy renderable images to public/ dir for PhotoReveal scenes
+    let public_dir = remotion_dir.join("public");
+    std::fs::create_dir_all(&public_dir)
+        .map_err(|e| NyayaError::Config(format!("create public dir: {}", e)))?;
+    let renderable_exts = ["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp"];
+    let mut copied_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (_caption, path, _attr) in images {
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if renderable_exts.contains(&ext.to_ascii_lowercase().as_str()) {
+                if let Some(fname) = path.file_name() {
+                    let dest = public_dir.join(fname);
+                    if let Ok(_) = std::fs::copy(path, &dest) {
+                        copied_files.insert(fname.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("[pea/doc] copied {} images to public/", copied_files.len());
+
+    // Convert PhotoReveal scenes with missing filenames to ParticleMood fallback
+    let mut scenes = scenes.to_vec();
+    for scene in scenes.iter_mut() {
+        if let VideoScene::PhotoReveal { filename, caption, duration_frames, .. } = scene {
+            if !copied_files.contains(filename.as_str()) {
+                eprintln!("[pea/doc] PhotoReveal fallback: {} not found, converting to ParticleMood", filename);
+                *scene = VideoScene::ParticleMood {
+                    text: caption.clone(),
+                    preset: "nebula".to_string(),
+                    duration_frames: *duration_frames,
+                };
+            }
+        }
+    }
+    let scenes = &scenes;
 
     // --- Write scenes-data.json ---
     let scenes_json = serde_json::to_string_pretty(scenes)
@@ -4939,6 +5049,7 @@ pub fn generate_pixi_video(
 export interface BarEntry { label: string; value: number; }
 export interface WaypointEntry { year: string; label: string; }
 export interface ComparisonPoint { left: string; right: string; }
+export interface IconEntry { name: string; label: string; }
 
 export type VideoScene =
   | { kind: "opener"; title: string; subtitle?: string; mood?: string; durationFrames: number }
@@ -4948,7 +5059,10 @@ export type VideoScene =
   | { kind: "particleMood"; text: string; preset: string; durationFrames: number }
   | { kind: "timelinePath"; title: string; waypoints: WaypointEntry[]; durationFrames: number }
   | { kind: "comparisonSplit"; title: string; leftLabel?: string; rightLabel?: string; points: ComparisonPoint[]; durationFrames: number }
-  | { kind: "closing"; title: string; subtitle?: string; durationFrames: number };
+  | { kind: "closing"; title: string; subtitle?: string; durationFrames: number }
+  | { kind: "photoReveal"; caption?: string; filename: string; attribution?: string; kenBurnsDirection: string; durationFrames: number }
+  | { kind: "presenterNarration"; text: string; pose: string; gestureSide: string; durationFrames: number }
+  | { kind: "iconAnimation"; title: string; icons: IconEntry[]; animation: string; durationFrames: number };
 
 export interface MotionVideoProps {
   scenes: VideoScene[];
@@ -5043,6 +5157,9 @@ export const PixiCanvas: React.FC<PixiCanvasProps> = ({ setup, update, bg = 0x16
     write_pixi_scene_timeline_path(&scenes_dir, primary, accent)?;
     write_pixi_scene_comparison_split(&scenes_dir, primary, accent)?;
     write_pixi_scene_closing(&scenes_dir, primary, accent)?;
+    write_pixi_scene_photo_reveal(&scenes_dir, primary, accent)?;
+    write_pixi_scene_presenter_narration(&scenes_dir, primary, accent)?;
+    write_pixi_scene_icon_animation(&scenes_dir, primary, accent)?;
 
     // --- src/MotionVideo.tsx ---
     let motion_video = format!(r##"import React from "react";
@@ -5056,6 +5173,9 @@ import {{ ParticleMoodScene }} from "./scenes/particle-mood";
 import {{ TimelinePathScene }} from "./scenes/timeline-path";
 import {{ ComparisonSplitScene }} from "./scenes/comparison-split";
 import {{ ClosingScene }} from "./scenes/closing";
+import {{ PhotoRevealScene }} from "./scenes/photo-reveal";
+import {{ PresenterNarrationScene }} from "./scenes/presenter-narration";
+import {{ IconAnimationScene }} from "./scenes/icon-animation";
 
 const CROSSFADE = 15;
 
@@ -5069,6 +5189,9 @@ function renderScene(scene: VideoScene) {{
     case "timelinePath": return <TimelinePathScene title={{scene.title}} waypoints={{scene.waypoints}} />;
     case "comparisonSplit": return <ComparisonSplitScene title={{scene.title}} leftLabel={{scene.leftLabel || "Before"}} rightLabel={{scene.rightLabel || "After"}} points={{scene.points}} />;
     case "closing": return <ClosingScene title={{scene.title}} subtitle={{scene.subtitle || ""}} />;
+    case "photoReveal": return <PhotoRevealScene caption={{scene.caption || ""}} filename={{scene.filename}} attribution={{scene.attribution || ""}} kenBurnsDirection={{scene.kenBurnsDirection}} accentColor="__ACCENT__" />;
+    case "presenterNarration": return <PresenterNarrationScene text={{scene.text}} pose={{scene.pose}} gestureSide={{scene.gestureSide}} />;
+    case "iconAnimation": return <IconAnimationScene title={{scene.title}} icons={{scene.icons}} animation={{scene.animation}} />;
   }}
 }}
 
@@ -5099,6 +5222,7 @@ export const MotionVideo: React.FC<{{ scenes: VideoScene[] }}> = ({{ scenes }}) 
   );
 }};
 "##);
+    let motion_video = motion_video.replace("__ACCENT__", accent);
     std::fs::write(src_dir.join("MotionVideo.tsx"), &motion_video)
         .map_err(|e| NyayaError::Config(format!("write MotionVideo.tsx: {}", e)))?;
 
@@ -5772,6 +5896,394 @@ export const ClosingScene: React.FC<Props> = ({{ title, subtitle }}) => {{
 "##);
     std::fs::write(dir.join("closing.tsx"), &code)
         .map_err(|e| NyayaError::Config(format!("write closing.tsx: {}", e)))
+}
+
+fn write_pixi_scene_photo_reveal(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+    let code = r##"import React from "react";
+import { useCurrentFrame, useVideoConfig, Img, staticFile } from "remotion";
+
+interface Props { caption: string; filename: string; attribution: string; kenBurnsDirection: string; accentColor: string; }
+
+export const PhotoRevealScene: React.FC<Props> = ({ caption, filename, attribution, kenBurnsDirection, accentColor }) => {
+  const frame = useCurrentFrame();
+  const { durationInFrames } = useVideoConfig();
+  const progress = frame / durationInFrames;
+
+  let scale = 1;
+  let translateX = 0;
+  let translateY = 0;
+  switch (kenBurnsDirection) {
+    case "zoom_in_right":
+      scale = 1 + 0.12 * progress;
+      translateX = -3 * progress;
+      break;
+    case "zoom_in_left":
+      scale = 1 + 0.12 * progress;
+      translateX = 3 * progress;
+      break;
+    case "zoom_out_center":
+      scale = 1.12 - 0.12 * progress;
+      break;
+    case "pan_left":
+      scale = 1.08;
+      translateX = 5 * progress;
+      break;
+    case "pan_right":
+      scale = 1.08;
+      translateX = -5 * progress;
+      break;
+  }
+
+  const captionOpacity = Math.max(0, Math.min(1, (frame - 30) / 20));
+
+  return (
+    <div style={{ width: 1920, height: 1080, overflow: "hidden", position: "relative", backgroundColor: "#16161e" }}>
+      <Img
+        src={staticFile(filename)}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          transform: `scale(${scale}) translate(${translateX}%, ${translateY}%)`,
+        }}
+      />
+      {caption && (
+        <div style={{
+          position: "absolute",
+          bottom: 60,
+          left: 0,
+          right: 0,
+          textAlign: "center",
+          opacity: captionOpacity,
+        }}>
+          <div style={{
+            display: "inline-block",
+            padding: "12px 32px",
+            backgroundColor: "rgba(22,22,30,0.75)",
+            borderRadius: 8,
+          }}>
+            <span style={{ color: "#fff", fontSize: 32, fontFamily: "Arial" }}>{caption}</span>
+            {attribution && (
+              <span style={{ color: accentColor, fontSize: 18, marginLeft: 16, fontFamily: "Arial" }}>{attribution}</span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+"##;
+    // Replace accentColor default — pass from parent via prop
+    let _ = accent; // accent color is passed as prop from MotionVideo
+    std::fs::write(dir.join("photo-reveal.tsx"), code)
+        .map_err(|e| NyayaError::Config(format!("write photo-reveal.tsx: {}", e)))
+}
+
+fn write_pixi_scene_presenter_narration(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+    let ac = css_to_hex_int(accent);
+    let code = format!(r##"import React, {{ useCallback, useRef }} from "react";
+import {{ PixiCanvas }} from "../pixi-canvas";
+import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
+import {{ easeOutCubic, spring }} from "../easing";
+
+interface Props {{ text: string; pose: string; gestureSide: string; }}
+
+export const PresenterNarrationScene: React.FC<Props> = ({{ text, pose, gestureSide }}) => {{
+  const wordsRef = useRef<string[]>([]);
+
+  const setup = useCallback((app: Application) => {{
+    wordsRef.current = text.split(/\s+/);
+    const charX = gestureSide === "left" ? 480 : 1440;
+    const bubbleX = gestureSide === "left" ? 1100 : 820;
+
+    // Head
+    const head = new Graphics();
+    head.circle(0, 0, 40);
+    head.fill({{ color: 0xe8d5b7 }});
+    head.circle(0, 0, 40);
+    head.stroke({{ color: {ac}, width: 3 }});
+    head.x = charX; head.y = 340; head.label = "head";
+    app.stage.addChild(head);
+
+    // Eyes
+    const eyes = new Graphics();
+    eyes.label = "eyes";
+    eyes.circle(-14, -5, 5); eyes.circle(14, -5, 5);
+    eyes.fill(0x333333);
+    eyes.x = charX; eyes.y = 340;
+    app.stage.addChild(eyes);
+
+    // Smile
+    const smile = new Graphics();
+    smile.arc(0, 5, 15, 0, Math.PI);
+    smile.stroke({{ color: 0x333333, width: 2 }});
+    smile.x = charX; smile.y = 340; smile.label = "smile";
+    app.stage.addChild(smile);
+
+    // Torso
+    const torso = new Graphics();
+    torso.roundRect(-30, 0, 60, 80, 10);
+    torso.fill({{ color: {ac}, alpha: 0.8 }});
+    torso.x = charX; torso.y = 385; torso.label = "torso";
+    app.stage.addChild(torso);
+
+    // Left arm
+    const lArm = new Graphics(); lArm.label = "lArm";
+    lArm.x = charX; lArm.y = 400;
+    app.stage.addChild(lArm);
+
+    // Right arm
+    const rArm = new Graphics(); rArm.label = "rArm";
+    rArm.x = charX; rArm.y = 400;
+    app.stage.addChild(rArm);
+
+    // Speech bubble background
+    const bubble = new Graphics();
+    bubble.roundRect(0, 0, 600, 300, 16);
+    bubble.fill({{ color: 0xffffff, alpha: 0.95 }});
+    bubble.stroke({{ color: {ac}, width: 2 }});
+    bubble.x = bubbleX - 300; bubble.y = 280; bubble.label = "bubble"; bubble.alpha = 0;
+    app.stage.addChild(bubble);
+
+    // Speech text
+    const style = new TextStyle({{ fontFamily: "Arial", fontSize: 28, fill: 0x222222, wordWrap: true, wordWrapWidth: 560, lineHeight: 38 }});
+    const t = new Text({{ text: "", style }}); t.label = "speechText";
+    t.x = bubbleX - 280; t.y = 300; t.alpha = 0;
+    app.stage.addChild(t);
+  }}, [text, gestureSide]);
+
+  const update = useCallback((app: Application, progress: number) => {{
+    const charX = gestureSide === "left" ? 480 : 1440;
+
+    // Idle bob
+    const head = app.stage.children.find((c: any) => c.label === "head");
+    if (head) {{ head.y = 340 + Math.sin(progress * Math.PI * 6) * 3; }}
+
+    // Blink every ~90 frames
+    const eyes = app.stage.children.find((c: any) => c.label === "eyes") as Graphics | undefined;
+    if (eyes) {{
+      const blinkPhase = (progress * 210) % 90;
+      eyes.alpha = blinkPhase < 3 ? 0.1 : 1;
+    }}
+
+    // Arms based on pose
+    const lArm = app.stage.children.find((c: any) => c.label === "lArm") as Graphics | undefined;
+    const rArm = app.stage.children.find((c: any) => c.label === "rArm") as Graphics | undefined;
+    if (lArm && rArm) {{
+      lArm.clear(); rArm.clear();
+      const armProgress = easeOutCubic(Math.min(progress * 3, 1));
+      switch (pose) {{
+        case "pointing": {{
+          // One arm points toward text
+          const dir = gestureSide === "left" ? 1 : -1;
+          lArm.moveTo(-30, 0); lArm.lineTo(-30 + dir * 80 * armProgress, -40 * armProgress);
+          lArm.stroke({{ color: {ac}, width: 4 }});
+          rArm.moveTo(30, 0); rArm.lineTo(30, 60);
+          rArm.stroke({{ color: {ac}, width: 4 }});
+          break;
+        }}
+        case "thinking": {{
+          // Hand on chin
+          lArm.moveTo(-30, 0); lArm.lineTo(-20, -50 * armProgress);
+          lArm.stroke({{ color: {ac}, width: 4 }});
+          rArm.moveTo(30, 0); rArm.lineTo(30, 60);
+          rArm.stroke({{ color: {ac}, width: 4 }});
+          break;
+        }}
+        case "excited": {{
+          // Arms up
+          lArm.moveTo(-30, 0); lArm.lineTo(-60, -70 * armProgress);
+          lArm.stroke({{ color: {ac}, width: 4 }});
+          rArm.moveTo(30, 0); rArm.lineTo(60, -70 * armProgress);
+          rArm.stroke({{ color: {ac}, width: 4 }});
+          break;
+        }}
+        default: {{
+          // Neutral — arms at sides with slight idle bob
+          const bob = Math.sin(progress * Math.PI * 4) * 5;
+          lArm.moveTo(-30, 0); lArm.lineTo(-35, 60 + bob);
+          lArm.stroke({{ color: {ac}, width: 4 }});
+          rArm.moveTo(30, 0); rArm.lineTo(35, 60 + bob);
+          rArm.stroke({{ color: {ac}, width: 4 }});
+        }}
+      }}
+    }}
+
+    // Speech bubble + progressive word reveal
+    const bubble = app.stage.children.find((c: any) => c.label === "bubble");
+    if (bubble) {{ bubble.alpha = spring(Math.min(progress * 4, 1)); }}
+
+    const speechText = app.stage.children.find((c: any) => c.label === "speechText") as Text | undefined;
+    if (speechText) {{
+      speechText.alpha = Math.min(progress * 4, 1);
+      const wordCount = Math.floor(wordsRef.current.length * Math.min(progress * 1.5, 1));
+      speechText.text = wordsRef.current.slice(0, wordCount).join(" ");
+    }}
+  }}, [pose, gestureSide]);
+
+  return <PixiCanvas setup={{setup}} update={{update}} />;
+}};
+"##);
+    std::fs::write(dir.join("presenter-narration.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write presenter-narration.tsx: {}", e)))
+}
+
+fn write_pixi_scene_icon_animation(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+    let ac = css_to_hex_int(accent);
+    let code = format!(r##"import React, {{ useCallback }} from "react";
+import {{ PixiCanvas }} from "../pixi-canvas";
+import {{ Application, Graphics, Text, TextStyle, Container }} from "pixi.js";
+import {{ spring, stagger, easeOutCubic }} from "../easing";
+
+interface IconEntry {{ name: string; label: string; }}
+interface Props {{ title: string; icons: IconEntry[]; animation: string; }}
+
+function drawIcon(g: Graphics, name: string, size: number, color: number) {{
+  const s = size;
+  switch (name) {{
+    case "car":
+      g.roundRect(-s * 0.6, -s * 0.2, s * 1.2, s * 0.4, 6); g.fill({{ color }});
+      g.circle(-s * 0.3, s * 0.25, s * 0.12); g.fill(0x333333);
+      g.circle(s * 0.3, s * 0.25, s * 0.12); g.fill(0x333333);
+      g.rect(-s * 0.15, -s * 0.35, s * 0.4, s * 0.2); g.fill({{ color, alpha: 0.6 }});
+      break;
+    case "battery":
+      g.roundRect(-s * 0.3, -s * 0.4, s * 0.6, s * 0.8, 4); g.stroke({{ color, width: 3 }});
+      g.rect(-s * 0.1, -s * 0.5, s * 0.2, s * 0.1); g.fill({{ color }});
+      g.rect(-s * 0.2, -s * 0.1, s * 0.4, s * 0.4); g.fill({{ color, alpha: 0.7 }});
+      break;
+    case "factory":
+      g.rect(-s * 0.4, -s * 0.1, s * 0.8, s * 0.5); g.fill({{ color, alpha: 0.8 }});
+      g.rect(-s * 0.3, -s * 0.45, s * 0.1, s * 0.35); g.fill({{ color }});
+      g.rect(-s * 0.05, -s * 0.55, s * 0.1, s * 0.45); g.fill({{ color }});
+      g.circle(-s * 0.25, -s * 0.5, s * 0.06); g.fill({{ color: 0xcccccc, alpha: 0.5 }});
+      break;
+    case "solar":
+      g.rect(-s * 0.4, -s * 0.05, s * 0.8, s * 0.4); g.fill({{ color, alpha: 0.7 }});
+      for (let i = 0; i < 3; i++) {{ g.moveTo(-s * 0.35, s * 0.05 + i * s * 0.12); g.lineTo(s * 0.35, s * 0.05 + i * s * 0.12); }}
+      g.stroke({{ color, width: 1 }});
+      g.circle(s * 0.25, -s * 0.35, s * 0.12); g.fill({{ color: 0xffcc00 }});
+      for (let a = 0; a < 8; a++) {{
+        const angle = a * Math.PI / 4;
+        g.moveTo(s * 0.25 + Math.cos(angle) * s * 0.15, -s * 0.35 + Math.sin(angle) * s * 0.15);
+        g.lineTo(s * 0.25 + Math.cos(angle) * s * 0.22, -s * 0.35 + Math.sin(angle) * s * 0.22);
+      }}
+      g.stroke({{ color: 0xffcc00, width: 2 }});
+      break;
+    case "wind":
+      g.rect(-s * 0.03, -s * 0.1, s * 0.06, s * 0.5); g.fill({{ color }});
+      for (let b = 0; b < 3; b++) {{
+        const angle = b * Math.PI * 2 / 3;
+        g.moveTo(0, -s * 0.1);
+        g.lineTo(Math.cos(angle) * s * 0.35, -s * 0.1 + Math.sin(angle) * s * 0.35);
+      }}
+      g.stroke({{ color, width: 3 }});
+      break;
+    case "dollar":
+      g.circle(0, 0, s * 0.35); g.stroke({{ color, width: 3 }});
+      break;
+    case "graph":
+      g.moveTo(-s * 0.35, s * 0.35); g.lineTo(-s * 0.35, -s * 0.35); g.lineTo(s * 0.35, -s * 0.35);
+      g.stroke({{ color, width: 2 }});
+      g.moveTo(-s * 0.25, s * 0.2); g.lineTo(-s * 0.05, -s * 0.1); g.lineTo(s * 0.1, s * 0.05); g.lineTo(s * 0.3, -s * 0.25);
+      g.stroke({{ color, width: 3 }});
+      break;
+    case "globe":
+      g.circle(0, 0, s * 0.35); g.stroke({{ color, width: 2 }});
+      g.ellipse(0, 0, s * 0.15, s * 0.35); g.stroke({{ color, width: 1 }});
+      g.moveTo(-s * 0.35, 0); g.lineTo(s * 0.35, 0); g.stroke({{ color, width: 1 }});
+      break;
+    default:
+      // Generic circle for unknown icons
+      g.circle(0, 0, s * 0.3); g.fill({{ color, alpha: 0.6 }});
+      g.circle(0, 0, s * 0.3); g.stroke({{ color, width: 2 }});
+  }}
+}}
+
+export const IconAnimationScene: React.FC<Props> = ({{ title, icons, animation }}) => {{
+  const setup = useCallback((app: Application) => {{
+    // Title
+    const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 48, fontWeight: "bold", fill: {ac}, wordWrap: true, wordWrapWidth: 1600, align: "center" }});
+    const t = new Text({{ text: title, style: titleStyle }});
+    t.anchor.set(0.5); t.x = 960; t.y = 120; t.label = "title";
+    app.stage.addChild(t);
+
+    // Icon containers
+    const n = icons.length;
+    const spacing = Math.min(240, 1600 / (n + 1));
+    const startX = 960 - (spacing * (n - 1)) / 2;
+    for (let i = 0; i < n; i++) {{
+      const container = new Container();
+      container.x = startX + i * spacing;
+      container.y = 480;
+      container.label = `icon_${{i}}`;
+      container.scale.set(0);
+
+      const g = new Graphics();
+      drawIcon(g, icons[i].name, 60, {ac});
+      container.addChild(g);
+
+      const labelStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 22, fill: 0xc8c8d2, align: "center", wordWrap: true, wordWrapWidth: 180 }});
+      const lbl = new Text({{ text: icons[i].label, style: labelStyle }});
+      lbl.anchor.set(0.5); lbl.y = 80; lbl.alpha = 0; lbl.label = "label";
+      container.addChild(lbl);
+
+      app.stage.addChild(container);
+    }}
+  }}, [title, icons]);
+
+  const update = useCallback((app: Application, progress: number) => {{
+    // Title fade in
+    const t = app.stage.children.find((c: any) => c.label === "title");
+    if (t) {{ t.alpha = Math.min(1, progress * 4); }}
+
+    const n = icons.length;
+    for (let i = 0; i < n; i++) {{
+      const container = app.stage.children.find((c: any) => c.label === `icon_${{i}}`);
+      if (!container) continue;
+      const p = stagger(i, n, Math.max(0, (progress - 0.1) / 0.7));
+
+      switch (animation) {{
+        case "grow": {{
+          const s = spring(p);
+          container.scale.set(s);
+          break;
+        }}
+        case "orbit": {{
+          const s = spring(Math.min(p * 2, 1));
+          container.scale.set(s);
+          const angle = p * Math.PI * 2 + (i * Math.PI * 2) / n;
+          const radius = 200;
+          const baseX = 960;
+          container.x = baseX + Math.cos(angle) * radius * easeOutCubic(Math.min(p, 1));
+          container.y = 480 + Math.sin(angle) * radius * 0.4 * easeOutCubic(Math.min(p, 1));
+          break;
+        }}
+        case "flow": {{
+          const s = spring(Math.min(p * 2, 1));
+          container.scale.set(s);
+          container.x = -100 + (960 - (240 * (n - 1)) / 2 + i * 240 + 100) * easeOutCubic(Math.min(p, 1));
+          break;
+        }}
+        default: {{
+          // "transform" — scale sequence
+          const phase = (p * 3) % 1;
+          const s = 0.8 + 0.4 * Math.sin(phase * Math.PI);
+          container.scale.set(spring(Math.min(p * 2, 1)) * s);
+        }}
+      }}
+
+      // Label fade in
+      const label = container.children?.find((c: any) => c.label === "label");
+      if (label) {{ label.alpha = Math.max(0, Math.min(1, (p - 0.5) * 3)); }}
+    }}
+  }}, [icons, animation]);
+
+  return <PixiCanvas setup={{setup}} update={{update}} />;
+}};
+"##);
+    std::fs::write(dir.join("icon-animation.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write icon-animation.tsx: {}", e)))
 }
 
 /// Interactive slideshow HTML with keyboard navigation + auto-play.
@@ -6669,13 +7181,13 @@ mod tests {
 
     #[test]
     fn test_validate_video_scenes_clamps_count() {
-        let mut scenes: Vec<VideoScene> = (0..25).map(|i| {
+        let mut scenes: Vec<VideoScene> = (0..70).map(|i| {
             VideoScene::KineticText {
                 text: format!("Scene {}", i), layout: "cascade".into(), duration_frames: 180,
             }
         }).collect();
         validate_video_scenes(&mut scenes, "Test");
-        assert!(scenes.len() <= 20);
+        assert!(scenes.len() <= 60);
         assert!(matches!(scenes.first(), Some(VideoScene::Opener { .. })));
         assert!(matches!(scenes.last(), Some(VideoScene::Closing { .. })));
     }
@@ -6708,6 +7220,111 @@ mod tests {
         validate_video_scenes(&mut scenes, "Test");
 
         assert_eq!(scenes[0].duration_frames(), 90);  // clamped up
-        assert_eq!(scenes[1].duration_frames(), 360); // clamped down
+        assert_eq!(scenes[1].duration_frames(), 450); // clamped down
+    }
+
+    // ── New Scene Type Tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_video_scene_new_types_roundtrip() {
+        let json = r#"[
+            {"kind":"photoReveal","caption":"Solar farm at sunrise","filename":"solar.jpg","attribution":"Unsplash","kenBurnsDirection":"zoom_in_right","durationFrames":180},
+            {"kind":"presenterNarration","text":"Let me explain how this works","pose":"pointing","gestureSide":"left","durationFrames":210},
+            {"kind":"iconAnimation","title":"Energy Sources","icons":[{"name":"solar","label":"Solar"},{"name":"wind","label":"Wind"},{"name":"battery","label":"Storage"}],"animation":"grow","durationFrames":180}
+        ]"#;
+        let scenes: Vec<VideoScene> = serde_json::from_str(json).unwrap();
+        assert_eq!(scenes.len(), 3);
+        assert_eq!(scenes[0].kind_str(), "photoReveal");
+        assert_eq!(scenes[1].kind_str(), "presenterNarration");
+        assert_eq!(scenes[2].kind_str(), "iconAnimation");
+
+        // Duration checks
+        assert_eq!(scenes[0].duration_frames(), 180);
+        assert_eq!(scenes[1].duration_frames(), 210);
+        assert_eq!(scenes[2].duration_frames(), 180);
+
+        // Roundtrip
+        let serialized = serde_json::to_string(&scenes).unwrap();
+        let roundtrip: Vec<VideoScene> = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(roundtrip.len(), 3);
+    }
+
+    #[test]
+    fn test_video_scene_new_types_defaults() {
+        let json = r#"[
+            {"kind":"photoReveal","filename":"photo.jpg"},
+            {"kind":"presenterNarration","text":"Hello"},
+            {"kind":"iconAnimation","title":"Icons","icons":[{"name":"car","label":"Car"}]}
+        ]"#;
+        let scenes: Vec<VideoScene> = serde_json::from_str(json).unwrap();
+        assert_eq!(scenes[0].duration_frames(), 180); // default_photo_reveal_duration
+        assert_eq!(scenes[1].duration_frames(), 210); // default_presenter_duration
+        assert_eq!(scenes[2].duration_frames(), 180); // default_icon_animation_duration
+
+        // Default field values
+        if let VideoScene::PhotoReveal { ken_burns_direction, caption, .. } = &scenes[0] {
+            assert_eq!(ken_burns_direction, "zoom_in_right");
+            assert_eq!(caption, "");
+        }
+        if let VideoScene::PresenterNarration { pose, gesture_side, .. } = &scenes[1] {
+            assert_eq!(pose, "neutral");
+            assert_eq!(gesture_side, "left");
+        }
+        if let VideoScene::IconAnimation { animation, .. } = &scenes[2] {
+            assert_eq!(animation, "grow");
+        }
+    }
+
+    #[test]
+    fn test_validate_new_scene_types_fixes_invalid() {
+        let mut scenes = vec![
+            VideoScene::Opener { title: "T".into(), subtitle: "".into(), mood: "".into(), duration_frames: 240 },
+            VideoScene::PhotoReveal { caption: "".into(), filename: "x.jpg".into(), attribution: "".into(), ken_burns_direction: "invalid".into(), duration_frames: 180 },
+            VideoScene::PresenterNarration { text: "Hi".into(), pose: "invalid".into(), gesture_side: "invalid".into(), duration_frames: 210 },
+            VideoScene::IconAnimation {
+                title: "Icons".into(),
+                icons: (0..12).map(|i| IconEntry { name: format!("icon{}", i), label: format!("L{}", i) }).collect(),
+                animation: "invalid".into(),
+                duration_frames: 180,
+            },
+            VideoScene::Closing { title: "End".into(), subtitle: "".into(), duration_frames: 210 },
+        ];
+        validate_video_scenes(&mut scenes, "Test");
+
+        if let VideoScene::PhotoReveal { ken_burns_direction, .. } = &scenes[1] {
+            assert_eq!(ken_burns_direction, "zoom_in_right"); // fixed
+        }
+        if let VideoScene::PresenterNarration { pose, gesture_side, .. } = &scenes[2] {
+            assert_eq!(pose, "neutral"); // fixed
+            assert_eq!(gesture_side, "left"); // fixed
+        }
+        if let VideoScene::IconAnimation { animation, icons, .. } = &scenes[3] {
+            assert_eq!(animation, "grow"); // fixed
+            assert!(icons.len() <= 8); // truncated
+        }
+    }
+
+    #[test]
+    fn test_validate_clamps_to_60_scenes() {
+        let mut scenes: Vec<VideoScene> = (0..65).map(|i| {
+            VideoScene::ParticleMood {
+                text: format!("Scene {}", i), preset: "stars".into(), duration_frames: 150,
+            }
+        }).collect();
+        validate_video_scenes(&mut scenes, "Test");
+        assert!(scenes.len() <= 60);
+        assert!(matches!(scenes.first(), Some(VideoScene::Opener { .. })));
+        assert!(matches!(scenes.last(), Some(VideoScene::Closing { .. })));
+    }
+
+    #[test]
+    fn test_validate_clamps_duration_to_450() {
+        let mut scenes = vec![
+            VideoScene::Opener { title: "T".into(), subtitle: "".into(), mood: "".into(), duration_frames: 240 },
+            VideoScene::PhotoReveal { caption: "".into(), filename: "x.jpg".into(), attribution: "".into(), ken_burns_direction: "pan_left".into(), duration_frames: 500 },
+            VideoScene::Closing { title: "End".into(), subtitle: "".into(), duration_frames: 210 },
+        ];
+        validate_video_scenes(&mut scenes, "Test");
+        assert_eq!(scenes[1].duration_frames(), 450); // clamped down from 500
     }
 }
