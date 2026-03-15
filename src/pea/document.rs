@@ -2146,9 +2146,28 @@ impl SlideContent {
 
 // ── PixiJS Motion Graphics Scene Types ──────────────────────────────────────
 
+/// Deserialize a value that might be a string or a number into a String.
+fn string_or_number<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where D: serde::Deserializer<'de> {
+    struct StringOrNumber;
+    impl<'de> serde::de::Visitor<'de> for StringOrNumber {
+        type Value = String;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a string or number")
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<String, E> { Ok(v.to_string()) }
+        fn visit_string<E: serde::de::Error>(self, v: String) -> std::result::Result<String, E> { Ok(v) }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> std::result::Result<String, E> { Ok(v.to_string()) }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> std::result::Result<String, E> { Ok(v.to_string()) }
+        fn visit_f64<E: serde::de::Error>(self, v: f64) -> std::result::Result<String, E> { Ok(v.to_string()) }
+    }
+    deserializer.deserialize_any(StringOrNumber)
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CounterEntry {
     pub label: String,
+    #[serde(deserialize_with = "string_or_number")]
     pub value: String,
     #[serde(default)]
     pub unit: String,
@@ -6614,6 +6633,22 @@ mod tests {
         // Default layout and preset
         if let VideoScene::KineticText { layout, .. } = &scenes[1] {
             assert_eq!(layout, "cascade");
+        }
+    }
+
+    #[test]
+    fn test_counter_entry_accepts_numeric_value() {
+        // LLMs sometimes produce numeric values instead of strings
+        let json = r#"{"kind":"dataCounter","title":"Stats","counters":[
+            {"label":"Global EV Sales","value":1200000,"unit":" units"},
+            {"label":"Growth Rate","value":"45%"}
+        ]}"#;
+        let scene: VideoScene = serde_json::from_str(json).unwrap();
+        if let VideoScene::DataCounter { counters, .. } = &scene {
+            assert_eq!(counters[0].value, "1200000");
+            assert_eq!(counters[1].value, "45%");
+        } else {
+            panic!("expected DataCounter");
         }
     }
 
