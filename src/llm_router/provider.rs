@@ -237,7 +237,10 @@ impl LlmProvider {
                         || msg.contains("503")
                         || msg.contains("rate")
                         || msg.contains("timed out")
-                        || msg.contains("timeout");
+                        || msg.contains("timeout")
+                        || msg.contains("error decoding")
+                        || msg.contains("connection closed")
+                        || msg.contains("broken pipe");
                     if !retryable {
                         return Err(e);
                     }
@@ -293,9 +296,17 @@ impl LlmProvider {
                     )));
                 }
 
-                let parsed: AnthropicResponse = resp
-                    .json()
-                    .map_err(|e| NyayaError::Config(format!("LLM response parse failed: {}", e)))?;
+                let body_text = resp.text()
+                    .map_err(|e| NyayaError::Config(format!("LLM response read failed: {}", e)))?;
+
+                let parsed: AnthropicResponse = serde_json::from_str(&body_text)
+                    .map_err(|e| {
+                        let preview: String = body_text.chars().take(200).collect();
+                        NyayaError::Config(format!(
+                            "LLM response parse failed: {} (body preview: {})",
+                            e, preview
+                        ))
+                    })?;
 
                 let text = parsed
                     .content
@@ -376,9 +387,17 @@ impl LlmProvider {
                     )));
                 }
 
-                let parsed: serde_json::Value = resp
-                    .json()
-                    .map_err(|e| NyayaError::Config(format!("LLM response parse failed: {}", e)))?;
+                let body_text = resp.text()
+                    .map_err(|e| NyayaError::Config(format!("LLM response read failed: {}", e)))?;
+
+                let parsed: serde_json::Value = serde_json::from_str(&body_text)
+                    .map_err(|e| {
+                        let preview: String = body_text.chars().take(200).collect();
+                        NyayaError::Config(format!(
+                            "LLM response parse failed: {} (body preview: {})",
+                            e, preview
+                        ))
+                    })?;
 
                 let text = parsed["choices"][0]["message"]["content"]
                     .as_str()
@@ -614,9 +633,16 @@ impl LlmProvider {
                     )));
                 }
 
-                let json: serde_json::Value = resp
-                    .json()
-                    .map_err(|e| NyayaError::Config(format!("LLM response parse failed: {}", e)))?;
+                let body_text = resp.text()
+                    .map_err(|e| NyayaError::Config(format!("LLM response read failed: {}", e)))?;
+                let json: serde_json::Value = serde_json::from_str(&body_text)
+                    .map_err(|e| {
+                        let preview: String = body_text.chars().take(200).collect();
+                        NyayaError::Config(format!(
+                            "LLM response parse failed: {} (body preview: {})",
+                            e, preview
+                        ))
+                    })?;
 
                 let mut text = None;
                 let mut tool_calls = Vec::new();
@@ -695,9 +721,16 @@ impl LlmProvider {
                     )));
                 }
 
-                let json: serde_json::Value = resp
-                    .json()
-                    .map_err(|e| NyayaError::Config(format!("LLM response parse failed: {}", e)))?;
+                let body_text = resp.text()
+                    .map_err(|e| NyayaError::Config(format!("LLM response read failed: {}", e)))?;
+                let json: serde_json::Value = serde_json::from_str(&body_text)
+                    .map_err(|e| {
+                        let preview: String = body_text.chars().take(200).collect();
+                        NyayaError::Config(format!(
+                            "LLM response parse failed: {} (body preview: {})",
+                            e, preview
+                        ))
+                    })?;
 
                 let text = json["choices"][0]["message"]["content"]
                     .as_str()
@@ -800,9 +833,16 @@ impl LlmProvider {
                     )));
                 }
 
-                let json: serde_json::Value = resp
-                    .json()
-                    .map_err(|e| NyayaError::Config(format!("LLM response parse failed: {}", e)))?;
+                let body_text = resp.text()
+                    .map_err(|e| NyayaError::Config(format!("LLM response read failed: {}", e)))?;
+                let json: serde_json::Value = serde_json::from_str(&body_text)
+                    .map_err(|e| {
+                        let preview: String = body_text.chars().take(200).collect();
+                        NyayaError::Config(format!(
+                            "LLM response parse failed: {} (body preview: {})",
+                            e, preview
+                        ))
+                    })?;
 
                 let text = json["content"][0]["text"]
                     .as_str()
@@ -865,9 +905,16 @@ impl LlmProvider {
                     )));
                 }
 
-                let json: serde_json::Value = resp
-                    .json()
-                    .map_err(|e| NyayaError::Config(format!("LLM response parse failed: {}", e)))?;
+                let body_text = resp.text()
+                    .map_err(|e| NyayaError::Config(format!("LLM response read failed: {}", e)))?;
+                let json: serde_json::Value = serde_json::from_str(&body_text)
+                    .map_err(|e| {
+                        let preview: String = body_text.chars().take(200).collect();
+                        NyayaError::Config(format!(
+                            "LLM response parse failed: {} (body preview: {})",
+                            e, preview
+                        ))
+                    })?;
 
                 let text = json["choices"][0]["message"]["content"]
                     .as_str()
