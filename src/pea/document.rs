@@ -2181,6 +2181,7 @@ pub struct BarEntry {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WaypointEntry {
+    #[serde(deserialize_with = "string_or_number")]
     pub year: String,
     pub label: String,
 }
