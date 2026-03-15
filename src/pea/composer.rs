@@ -495,7 +495,7 @@ impl<'a> DocumentComposer<'a> {
             review_notes: all_notes,
         };
 
-        let result = self.assemble_output(&doc, &all_images, style, output_dir, output_mode);
+        let result = self.assemble_output(&doc, &all_images, style, output_dir, output_mode, kg);
         self.tokens.log_summary(pipeline_start.elapsed());
         result
     }
@@ -2736,6 +2736,130 @@ plt.close()
         notes
     }
 
+    // -- Video Storyboard Design ----------------------------------------------
+
+    /// Use the LLM to design a video storyboard from composed content.
+    fn design_video_storyboard(
+        &self,
+        objective: &str,
+        doc: &ComposedDocument,
+        kg: Option<&KnowledgeGraph>,
+        images: &[ImageEntry],
+    ) -> Result<Vec<document::SlideContent>> {
+        // Build section content summary
+        let section_summaries: String = doc.sections.iter()
+            .map(|s| format!("### {}\n{}", s.title, crate::pea::research::safe_slice(&s.content, 800)))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        // Build KG summary (compact entity/relationship list)
+        let kg_summary = if let Some(kg) = kg {
+            let entities: String = kg.entities.iter().take(30)
+                .map(|e| format!("- {} ({:?}, {} mentions)", e.name, e.entity_type, e.mention_count))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let rels: String = kg.relationships.iter().take(20)
+                .map(|r| format!("- {} → {} → {}", r.subject, r.predicate, r.object))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("\n## Knowledge Graph\nEntities:\n{}\n\nRelationships:\n{}\n", entities, rels)
+        } else {
+            String::new()
+        };
+
+        // Build available images list (filter to renderable files)
+        let image_extensions = ["jpg", "jpeg", "png", "gif", "webp", "svg"];
+        let available_images: String = images.iter()
+            .filter(|(_, path, _)| {
+                path.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| image_extensions.contains(&e.to_lowercase().as_str()))
+                    .unwrap_or(false)
+            })
+            .filter_map(|(caption, path, _)| {
+                path.file_name().map(|f| format!("- {} ({})", caption, f.to_string_lossy()))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let system = "You are a YouTube documentary video director. Design a compelling storyboard \
+            for a documentary-style video. Output ONLY a valid JSON array of slides.";
+
+        let prompt = format!(
+            r#"Design a YouTube documentary storyboard for: "{objective}"
+
+## Available Visual Components
+
+1. **Title** — Opening title card
+   Fields: title (string), subtitle (string), kind: "title"
+   Default duration: 210 frames (7s at 30fps)
+
+2. **Content** — Key points with bullet list
+   Fields: title (string), bullets (array of strings, max 5 items, max 12 words each), kind: "content"
+   Default duration: 180 frames (6s)
+
+3. **Timeline** — Chronological events
+   Fields: title (string), events (array of {{date, desc}}), kind: "timeline"
+   Default duration: 240 frames (8s)
+
+4. **Stats** — Key numbers/statistics
+   Fields: title (string), stats (array of {{label, value}}), kind: "stats"
+   Default duration: 180 frames (6s)
+
+5. **Quote** — Notable quote
+   Fields: text (string), attribution (string), kind: "quote"
+   Default duration: 150 frames (5s)
+
+6. **Image** — Image with caption
+   Fields: caption (string), filename (string — must match available images below), attribution (string), kind: "image"
+   Default duration: 150 frames (5s)
+
+7. **Closing** — End card
+   Fields: title (string), subtitle (string), kind: "closing"
+   Default duration: 180 frames (6s)
+
+## Section Content
+{section_summaries}
+{kg_summary}
+## Available Images
+{available_images}
+
+## Rules
+- Start with a Title slide, end with a Closing slide
+- Design 10-20 slides total
+- Vary slide types for visual interest — don't use only Content slides
+- Keep bullets concise: max 12 words per bullet, max 5 bullets per slide
+- Only reference filenames from the Available Images list above
+- Create a narrative arc: introduce topic, build context, present key findings, conclude
+- Use Timeline slides for historical/chronological content
+- Use Stats slides when you have concrete numbers
+- Use Quote slides for impactful statements from the research
+- You may omit durationFrames to use defaults
+
+Output ONLY a valid JSON array. No markdown, no explanation."#,
+        );
+
+        let input = serde_json::json!({
+            "system": system,
+            "prompt": prompt,
+            "max_tokens": 4096,
+            "thinking": false,
+        });
+
+        let res = self.exec_ability("llm.chat", &input.to_string())
+            .map_err(|e| NyayaError::Config(format!("storyboard LLM call failed: {}", e)))?;
+
+        let raw = String::from_utf8_lossy(&res.output);
+        self.tokens.track(&res.facts);
+
+        let json_str = extract_json(&raw);
+        let mut slides: Vec<document::SlideContent> = serde_json::from_str(json_str)
+            .map_err(|e| NyayaError::Config(format!("storyboard JSON parse failed: {}", e)))?;
+
+        validate_storyboard(&mut slides, objective, images);
+        Ok(slides)
+    }
+
     fn assemble_output(
         &self,
         doc: &ComposedDocument,
@@ -2743,7 +2867,28 @@ plt.close()
         style: &StyleConfig,
         output_dir: &Path,
         output_mode: &crate::pea::objective::OutputMode,
+        kg: Option<&KnowledgeGraph>,
     ) -> Result<PathBuf> {
+        // For Video mode, use LLM storyboard design instead of regex extraction
+        if *output_mode == crate::pea::objective::OutputMode::Video {
+            let slides = match self.design_video_storyboard(&doc.title, doc, kg, images) {
+                Ok(s) => {
+                    eprintln!("[composer] storyboard designed: {} slides", s.len());
+                    s
+                }
+                Err(e) => {
+                    eprintln!("[composer] storyboard failed: {} — fallback to legacy", e);
+                    let sections = reorder_final_sections(&doc.sections);
+                    let task_results: Vec<(String, String)> = sections
+                        .iter()
+                        .map(|s| (s.title.clone(), s.content.clone()))
+                        .collect();
+                    document::build_slides(&doc.title, &task_results)
+                }
+            };
+            return document::generate_video_from_slides(&slides, images, Some(style), output_dir);
+        }
+
         // Enforce final chapter ordering: front-matter first, appendix/methodology last
         let sections = reorder_final_sections(&doc.sections);
 
@@ -4061,6 +4206,74 @@ fn apply_apa_citations(
 }
 
 // ---------------------------------------------------------------------------
+// Storyboard validation
+// ---------------------------------------------------------------------------
+
+/// Post-process LLM-generated storyboard: fix missing Title/Closing, remove
+/// bad image refs, clamp slide count, and enforce duration range.
+fn validate_storyboard(
+    slides: &mut Vec<document::SlideContent>,
+    objective: &str,
+    images: &[ImageEntry],
+) {
+    // Collect valid filenames from available images
+    let valid_filenames: std::collections::HashSet<String> = images.iter()
+        .filter_map(|(_, path, _)| path.file_name().map(|f| f.to_string_lossy().to_string()))
+        .collect();
+
+    // Remove Image slides referencing non-existent files
+    slides.retain(|slide| {
+        if let document::SlideContent::Image { filename, .. } = slide {
+            valid_filenames.contains(filename)
+        } else {
+            true
+        }
+    });
+
+    // Ensure Title slide first
+    let has_title = matches!(slides.first(), Some(document::SlideContent::Title { .. }));
+    if !has_title {
+        slides.insert(0, document::SlideContent::Title {
+            title: objective.to_string(),
+            subtitle: "A comprehensive exploration".to_string(),
+            duration_frames: 210,
+        });
+    }
+
+    // Ensure Closing slide last
+    let has_closing = matches!(slides.last(), Some(document::SlideContent::Closing { .. }));
+    if !has_closing {
+        slides.push(document::SlideContent::Closing {
+            title: "Thank You".to_string(),
+            subtitle: "Generated by NabaOS PEA".to_string(),
+            duration_frames: 180,
+        });
+    }
+
+    // Clamp to 8-25 slides (keep Title at 0 and Closing at end)
+    if slides.len() > 25 {
+        // Keep first slide (Title), truncate middle, keep Closing
+        let closing = slides.pop().unwrap();
+        slides.truncate(24);
+        slides.push(closing);
+    }
+
+    // Ensure duration_frames in sensible range (90-360)
+    for slide in slides.iter_mut() {
+        let df = match slide {
+            document::SlideContent::Title { duration_frames, .. }
+            | document::SlideContent::Content { duration_frames, .. }
+            | document::SlideContent::Timeline { duration_frames, .. }
+            | document::SlideContent::Stats { duration_frames, .. }
+            | document::SlideContent::Quote { duration_frames, .. }
+            | document::SlideContent::Image { duration_frames, .. }
+            | document::SlideContent::Closing { duration_frames, .. } => duration_frames,
+        };
+        *df = (*df).clamp(90, 360);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -5034,5 +5247,98 @@ plt.savefig('chart.png')
         assert_eq!(format_apa_author_list(&["A".into()]), "A");
         assert_eq!(format_apa_author_list(&["A".into(), "B".into()]), "A, & B");
         assert_eq!(format_apa_author_list(&["A".into(), "B".into(), "C".into()]), "A, B, & C");
+    }
+
+    #[test]
+    fn test_validate_storyboard_ensures_title_closing() {
+        let images: Vec<ImageEntry> = vec![];
+        let mut slides = vec![
+            document::SlideContent::Content {
+                title: "Some content".into(),
+                bullets: vec!["point".into()],
+                footnotes: vec![],
+                duration_frames: 180,
+            },
+        ];
+        validate_storyboard(&mut slides, "Test Topic", &images);
+        assert!(matches!(slides.first(), Some(document::SlideContent::Title { .. })));
+        assert!(matches!(slides.last(), Some(document::SlideContent::Closing { .. })));
+        assert_eq!(slides.len(), 3); // Title + Content + Closing
+    }
+
+    #[test]
+    fn test_validate_storyboard_removes_bad_image_refs() {
+        let images: Vec<ImageEntry> = vec![
+            ("Photo".into(), std::path::PathBuf::from("real.jpg"), None),
+        ];
+        let mut slides = vec![
+            document::SlideContent::Title {
+                title: "Test".into(), subtitle: "Sub".into(), duration_frames: 210,
+            },
+            document::SlideContent::Image {
+                caption: "Good".into(), filename: "real.jpg".into(),
+                attribution: "".into(), duration_frames: 150,
+            },
+            document::SlideContent::Image {
+                caption: "Bad".into(), filename: "nonexistent.png".into(),
+                attribution: "".into(), duration_frames: 150,
+            },
+            document::SlideContent::Closing {
+                title: "End".into(), subtitle: "Done".into(), duration_frames: 180,
+            },
+        ];
+        validate_storyboard(&mut slides, "Test", &images);
+        // Bad image ref should be removed
+        assert_eq!(slides.len(), 3);
+        assert!(matches!(&slides[1], document::SlideContent::Image { filename, .. } if filename == "real.jpg"));
+    }
+
+    #[test]
+    fn test_validate_storyboard_clamps_count() {
+        let images: Vec<ImageEntry> = vec![];
+        let mut slides: Vec<document::SlideContent> = Vec::new();
+        slides.push(document::SlideContent::Title {
+            title: "T".into(), subtitle: "S".into(), duration_frames: 210,
+        });
+        for i in 0..30 {
+            slides.push(document::SlideContent::Content {
+                title: format!("Section {}", i),
+                bullets: vec!["point".into()],
+                footnotes: vec![],
+                duration_frames: 180,
+            });
+        }
+        slides.push(document::SlideContent::Closing {
+            title: "End".into(), subtitle: "Done".into(), duration_frames: 180,
+        });
+        validate_storyboard(&mut slides, "Test", &images);
+        assert!(slides.len() <= 25);
+        assert!(matches!(slides.first(), Some(document::SlideContent::Title { .. })));
+        assert!(matches!(slides.last(), Some(document::SlideContent::Closing { .. })));
+    }
+
+    #[test]
+    fn test_validate_storyboard_clamps_duration() {
+        let images: Vec<ImageEntry> = vec![];
+        let mut slides = vec![
+            document::SlideContent::Title {
+                title: "T".into(), subtitle: "S".into(), duration_frames: 50, // too low
+            },
+            document::SlideContent::Content {
+                title: "C".into(), bullets: vec!["x".into()], footnotes: vec![],
+                duration_frames: 500, // too high
+            },
+            document::SlideContent::Closing {
+                title: "End".into(), subtitle: "Done".into(), duration_frames: 180,
+            },
+        ];
+        validate_storyboard(&mut slides, "Test", &images);
+        // Check clamped values
+        if let document::SlideContent::Title { duration_frames, .. } = &slides[0] {
+            assert_eq!(*duration_frames, 90);
+        }
+        if let document::SlideContent::Content { duration_frames, .. } = &slides[1] {
+            assert_eq!(*duration_frames, 360);
+        }
     }
 }

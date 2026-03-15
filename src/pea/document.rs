@@ -2048,66 +2048,73 @@ fn measure_audio_duration_ffprobe(path: &Path) -> Option<f32> {
 // ---------------------------------------------------------------------------
 
 /// Rich slide content for documentary-style video output.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SlideContent {
     Title {
         title: String,
         subtitle: String,
-        #[serde(rename = "durationFrames")]
+        #[serde(rename = "durationFrames", default = "default_duration_title")]
         duration_frames: u32,
     },
     Content {
         title: String,
         bullets: Vec<String>,
+        #[serde(default)]
         footnotes: Vec<String>,
-        #[serde(rename = "durationFrames")]
+        #[serde(rename = "durationFrames", default = "default_duration_content")]
         duration_frames: u32,
     },
     Timeline {
         title: String,
         events: Vec<TimelineEvent>,
-        #[serde(rename = "durationFrames")]
+        #[serde(rename = "durationFrames", default = "default_duration_timeline")]
         duration_frames: u32,
     },
     Stats {
         title: String,
         stats: Vec<StatEntry>,
-        #[serde(rename = "durationFrames")]
+        #[serde(rename = "durationFrames", default = "default_duration_content")]
         duration_frames: u32,
     },
     Quote {
         text: String,
         attribution: String,
-        #[serde(rename = "durationFrames")]
+        #[serde(rename = "durationFrames", default = "default_duration_quote")]
         duration_frames: u32,
     },
     Image {
         caption: String,
         filename: String,
+        #[serde(default)]
         attribution: String,
-        #[serde(rename = "durationFrames")]
+        #[serde(rename = "durationFrames", default = "default_duration_quote")]
         duration_frames: u32,
     },
     Closing {
         title: String,
         subtitle: String,
-        #[serde(rename = "durationFrames")]
+        #[serde(rename = "durationFrames", default = "default_duration_content")]
         duration_frames: u32,
     },
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TimelineEvent {
     pub date: String,
     pub desc: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StatEntry {
     pub label: String,
     pub value: String,
 }
+
+fn default_duration_title() -> u32 { 210 }
+fn default_duration_content() -> u32 { 180 }
+fn default_duration_timeline() -> u32 { 240 }
+fn default_duration_quote() -> u32 { 150 }
 
 impl SlideContent {
     #[allow(dead_code)]
@@ -2569,7 +2576,7 @@ fn extract_key_sources(ref_text: &str) -> Vec<String> {
 ///
 /// Produces a varied sequence: Title → Content/Timeline/Stats slides → Quote → Closing.
 /// Reference sections are folded into per-slide footnotes instead of a standalone slide.
-fn build_slides(
+pub(crate) fn build_slides(
     objective_desc: &str,
     task_results: &[(String, String)],
 ) -> Vec<SlideContent> {
@@ -2679,10 +2686,20 @@ fn generate_video(
     style: Option<&StyleConfig>,
     output_dir: &Path,
 ) -> Result<PathBuf> {
+    let slides = build_slides(objective_desc, task_results);
+    generate_video_from_slides(&slides, images, style, output_dir)
+}
+
+/// Render a pre-built slide deck to video (Remotion → ffmpeg → HTML fallback).
+pub fn generate_video_from_slides(
+    slides: &[SlideContent],
+    images: &[ImageEntry],
+    style: Option<&StyleConfig>,
+    output_dir: &Path,
+) -> Result<PathBuf> {
     let s = style.cloned().unwrap_or_default();
     let primary = &s.primary_color;
     let accent = &s.accent_color;
-    let slides = build_slides(objective_desc, task_results);
 
     // -----------------------------------------------------------------------
     // Path 1: Remotion (highest quality — animated transitions, spring text)
@@ -2786,7 +2803,12 @@ ul li::before {{ content: "→ "; color: rgba(255,255,255,0.7); }}
     // -----------------------------------------------------------------------
     // Path 3: Interactive slideshow HTML fallback
     // -----------------------------------------------------------------------
-    generate_slideshow_html_fallback(objective_desc, &slides, primary, accent, output_dir)
+    // Extract title from first slide for fallback
+    let fallback_title = match slides.first() {
+        Some(SlideContent::Title { title, .. }) => title.as_str(),
+        _ => "Video",
+    };
+    generate_slideshow_html_fallback(fallback_title, slides, primary, accent, output_dir)
 }
 
 /// Flatten a SlideContent into (title, bullets) for fallback renderers.
@@ -5353,6 +5375,69 @@ mod tests {
         // Check for variety — should have more than just Title/Content/Closing
         let kinds: Vec<&str> = slides.iter().map(|s| s.kind_str()).collect();
         assert!(kinds.contains(&"content"), "Should have content slides: {:?}", kinds);
+    }
+
+    #[test]
+    fn test_slide_content_deserialize_roundtrip() {
+        let slides = vec![
+            SlideContent::Title {
+                title: "Test".into(),
+                subtitle: "Sub".into(),
+                duration_frames: 210,
+            },
+            SlideContent::Content {
+                title: "Key Points".into(),
+                bullets: vec!["Point 1".into(), "Point 2".into()],
+                footnotes: vec![],
+                duration_frames: 180,
+            },
+            SlideContent::Timeline {
+                title: "History".into(),
+                events: vec![TimelineEvent { date: "2020".into(), desc: "Event".into() }],
+                duration_frames: 240,
+            },
+            SlideContent::Stats {
+                title: "Numbers".into(),
+                stats: vec![StatEntry { label: "Users".into(), value: "1M".into() }],
+                duration_frames: 180,
+            },
+            SlideContent::Quote {
+                text: "Quote text".into(),
+                attribution: "Author".into(),
+                duration_frames: 150,
+            },
+            SlideContent::Image {
+                caption: "Photo".into(),
+                filename: "photo.jpg".into(),
+                attribution: "CC".into(),
+                duration_frames: 150,
+            },
+            SlideContent::Closing {
+                title: "Thanks".into(),
+                subtitle: "End".into(),
+                duration_frames: 180,
+            },
+        ];
+
+        let json = serde_json::to_string(&slides).unwrap();
+        let parsed: Vec<SlideContent> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.len(), 7);
+        assert_eq!(parsed[0].kind_str(), "title");
+        assert_eq!(parsed[1].kind_str(), "content");
+        assert_eq!(parsed[2].kind_str(), "timeline");
+        assert_eq!(parsed[3].kind_str(), "stats");
+        assert_eq!(parsed[4].kind_str(), "quote");
+        assert_eq!(parsed[5].kind_str(), "image");
+        assert_eq!(parsed[6].kind_str(), "closing");
+    }
+
+    #[test]
+    fn test_slide_content_deserialize_without_duration() {
+        // LLM might omit durationFrames — defaults should kick in
+        let json = r#"[{"kind":"title","title":"Test","subtitle":"Sub"}]"#;
+        let parsed: Vec<SlideContent> = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].duration_frames(), 210); // default_duration_title
     }
 
     #[test]
