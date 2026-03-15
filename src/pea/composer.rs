@@ -475,16 +475,21 @@ impl<'a> DocumentComposer<'a> {
             all_notes.push(format!("Generated {} data visualization charts", chart_images.len()));
         }
 
-        // Merge stock images + generated charts (skip stock for analytical themes)
-        let mut all_images: Vec<ImageEntry> = if style.should_skip_stock_images()
-            && *output_mode != crate::pea::objective::OutputMode::Video
-        {
+        // Merge stock images + generated charts
+        // Video mode: skip both stock images and charts (PixiJS renders its own visuals)
+        // Other modes: skip stock images for analytical themes only
+        let mut all_images: Vec<ImageEntry> = if *output_mode == crate::pea::objective::OutputMode::Video {
+            eprintln!("[composer] skipping images for video mode (PixiJS renders visuals)");
+            Vec::new()
+        } else if style.should_skip_stock_images() {
             eprintln!("[composer] skipping stock images (theme={})", style.theme);
             Vec::new()
         } else {
             images.to_vec()
         };
-        all_images.extend(chart_images);
+        if *output_mode != crate::pea::objective::OutputMode::Video {
+            all_images.extend(chart_images);
+        }
 
         // Phase 5: Assemble final output
         eprintln!("[composer] assembling final document...");
@@ -2738,6 +2743,165 @@ plt.close()
 
     // -- Video Storyboard Design ----------------------------------------------
 
+    /// Phase 1: Free-form creative ideation for motion graphics video.
+    fn generate_video_concept(
+        &self,
+        objective: &str,
+        doc: &ComposedDocument,
+        kg: Option<&KnowledgeGraph>,
+    ) -> Result<String> {
+        let section_summaries: String = doc.sections.iter()
+            .map(|s| format!("### {}\n{}", s.title, crate::pea::research::safe_slice(&s.content, 800)))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let kg_summary = if let Some(kg) = kg {
+            let entities: String = kg.entities.iter().take(30)
+                .map(|e| format!("- {} ({:?}, {} mentions)", e.name, e.entity_type, e.mention_count))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let rels: String = kg.relationships.iter().take(20)
+                .map(|r| format!("- {} → {} → {}", r.subject, r.predicate, r.object))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("\n## Knowledge Graph\nEntities:\n{}\n\nRelationships:\n{}\n", entities, rels)
+        } else {
+            String::new()
+        };
+
+        let system = "You are a YouTube motion graphics director. You specialize in creating \
+            visually compelling, data-driven explainer videos with kinetic typography, animated \
+            counters, particle effects, and timeline visualizations.";
+
+        let prompt = format!(
+            r#"Imagine a 60-90 second motion graphics video for: "{objective}"
+
+## Source Material
+{section_summaries}
+{kg_summary}
+
+## Creative Brief Questions
+Think through each of these and write a creative concept (400-600 words):
+
+1. **Hook** — What grabs attention in the first 5 seconds? A shocking number? A provocative question? A visual metaphor?
+2. **Visual Metaphor** — What single visual idea ties the whole video together? (e.g., a timeline unfolding, data raining down, ideas converging)
+3. **Key Numbers** — Which 3-5 statistics would be most impactful as animated counters? What makes them dramatic?
+4. **Kinetic Typography** — What 2-3 key phrases deserve to be animated as kinetic text? What words should be bold/emphasized?
+5. **Comparisons** — What before/after or side-by-side comparisons would be visually striking?
+6. **Emotional Arc** — Map the journey: curiosity → understanding → insight. Where are the peaks?
+7. **Closing Impact** — What's the takeaway that lingers? What final image/phrase stays with the viewer?
+
+Write your creative concept as flowing prose, not bullet points. Be specific about visual moments."#,
+        );
+
+        let input = serde_json::json!({
+            "system": system,
+            "prompt": prompt,
+            "max_tokens": 2048,
+            "thinking": false,
+        });
+
+        let res = self.exec_ability("llm.chat", &input.to_string())
+            .map_err(|e| NyayaError::Config(format!("video concept LLM call failed: {}", e)))?;
+
+        let concept = String::from_utf8_lossy(&res.output).to_string();
+        self.tokens.track(&res.facts);
+        eprintln!("[composer] video concept: {} chars", concept.len());
+        Ok(concept)
+    }
+
+    /// Phase 2: Structure creative concept into renderable VideoScene JSON.
+    fn structure_video_scenes(
+        &self,
+        concept: &str,
+        doc: &ComposedDocument,
+    ) -> Result<Vec<document::VideoScene>> {
+        let section_data: String = doc.sections.iter()
+            .map(|s| format!("### {}\n{}", s.title, crate::pea::research::safe_slice(&s.content, 600)))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let system = "You are a motion graphics scene architect. You convert creative concepts \
+            into structured scene data for a PixiJS rendering engine. Output ONLY a valid JSON array.";
+
+        let prompt = format!(
+            r#"Convert this creative concept into structured scenes.
+
+## Creative Concept
+{concept}
+
+## Section Data (for extracting real numbers/facts)
+{section_data}
+
+## Available Scene Types
+
+1. **opener** — Opening with particle burst + title spring animation
+   Fields: title (string), subtitle (string), mood (string), kind: "opener"
+   Default: 240 frames (8s)
+
+2. **kineticText** — Animated words with **bold** markers for emphasis
+   Fields: text (string, use **word** for emphasis), layout ("cascade"|"converge"|"wave"|"typewriter"), kind: "kineticText"
+   Default: 180 frames (6s)
+
+3. **dataCounter** — Animated number counters with arc sweeps
+   Fields: title (string), counters (array of {{label, value, unit}}), kind: "dataCounter"
+   Default: 210 frames (7s)
+
+4. **barRace** — Horizontal bars that grow with staggered animation
+   Fields: title (string), bars (array of {{label, value}}), kind: "barRace"
+   value must be a number. Default: 210 frames (7s)
+
+5. **particleMood** — Particle field with text overlay
+   Fields: text (string), preset ("stars"|"rain"|"fireflies"|"snow"|"nebula"), kind: "particleMood"
+   Default: 150 frames (5s)
+
+6. **timelinePath** — Progressive timeline with waypoints
+   Fields: title (string), waypoints (array of {{year, label}}), kind: "timelinePath"
+   Default: 270 frames (9s)
+
+7. **comparisonSplit** — Side-by-side comparison with vertical divider
+   Fields: title (string), leftLabel (string), rightLabel (string), points (array of {{left, right}}), kind: "comparisonSplit"
+   Default: 240 frames (8s)
+
+8. **closing** — Closing card with converging particles
+   Fields: title (string), subtitle (string), kind: "closing"
+   Default: 210 frames (7s)
+
+## Rules
+- Output 8-15 scenes as a JSON array
+- First scene MUST be "opener", last MUST be "closing"
+- Vary scene types — don't repeat the same type consecutively
+- Use REAL data from the section content (real numbers, real facts)
+- For kineticText, wrap 2-4 key words in **bold** markers
+- For dataCounter, extract actual statistics and use numeric values
+- For barRace, use actual comparative data with numeric values
+- You may include durationFrames or omit for defaults
+
+Output ONLY a valid JSON array. No markdown fences, no explanation."#,
+        );
+
+        let input = serde_json::json!({
+            "system": system,
+            "prompt": prompt,
+            "max_tokens": 4096,
+            "thinking": false,
+        });
+
+        let res = self.exec_ability("llm.chat", &input.to_string())
+            .map_err(|e| NyayaError::Config(format!("video scenes LLM call failed: {}", e)))?;
+
+        let raw = String::from_utf8_lossy(&res.output);
+        self.tokens.track(&res.facts);
+
+        let json_str = extract_json(&raw);
+        let mut scenes: Vec<document::VideoScene> = serde_json::from_str(json_str)
+            .map_err(|e| NyayaError::Config(format!("video scenes JSON parse failed: {}", e)))?;
+
+        document::validate_video_scenes(&mut scenes, &doc.title);
+        eprintln!("[composer] video scenes designed: {} scenes", scenes.len());
+        Ok(scenes)
+    }
+
     /// Use the LLM to design a video storyboard from composed content.
     fn design_video_storyboard(
         &self,
@@ -2869,8 +3033,22 @@ Output ONLY a valid JSON array. No markdown, no explanation."#,
         output_mode: &crate::pea::objective::OutputMode,
         kg: Option<&KnowledgeGraph>,
     ) -> Result<PathBuf> {
-        // For Video mode, use LLM storyboard design instead of regex extraction
+        // For Video mode: try PixiJS motion graphics pipeline first, fall back to slideshow
         if *output_mode == crate::pea::objective::OutputMode::Video {
+            // Phase 1: Try two-phase PixiJS motion graphics pipeline
+            let pixi_result = self.generate_video_concept(&doc.title, doc, kg)
+                .and_then(|concept| self.structure_video_scenes(&concept, doc));
+
+            match pixi_result {
+                Ok(scenes) => {
+                    return document::generate_pixi_video(&scenes, images, Some(style), output_dir);
+                }
+                Err(e) => {
+                    eprintln!("[composer] pixi pipeline failed: {} — fallback to slides", e);
+                }
+            }
+
+            // Phase 2: Fall back to LLM-designed slideshow
             let slides = match self.design_video_storyboard(&doc.title, doc, kg, images) {
                 Ok(s) => {
                     eprintln!("[composer] storyboard designed: {} slides", s.len());

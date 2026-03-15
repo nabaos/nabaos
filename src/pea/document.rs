@@ -2144,6 +2144,206 @@ impl SlideContent {
     }
 }
 
+// ── PixiJS Motion Graphics Scene Types ──────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CounterEntry {
+    pub label: String,
+    pub value: String,
+    #[serde(default)]
+    pub unit: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BarEntry {
+    pub label: String,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WaypointEntry {
+    pub year: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ComparisonPoint {
+    pub left: String,
+    pub right: String,
+}
+
+fn default_opener_duration() -> u32 { 240 }
+fn default_kinetic_duration() -> u32 { 180 }
+fn default_counter_duration() -> u32 { 210 }
+fn default_bar_race_duration() -> u32 { 210 }
+fn default_particle_duration() -> u32 { 150 }
+fn default_timeline_path_duration() -> u32 { 270 }
+fn default_comparison_duration() -> u32 { 240 }
+fn default_closing_motion_duration() -> u32 { 210 }
+fn default_layout() -> String { "cascade".to_string() }
+fn default_preset() -> String { "stars".to_string() }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum VideoScene {
+    Opener {
+        title: String,
+        #[serde(default)]
+        subtitle: String,
+        #[serde(default)]
+        mood: String,
+        #[serde(rename = "durationFrames", default = "default_opener_duration")]
+        duration_frames: u32,
+    },
+    KineticText {
+        text: String,
+        #[serde(default = "default_layout")]
+        layout: String,
+        #[serde(rename = "durationFrames", default = "default_kinetic_duration")]
+        duration_frames: u32,
+    },
+    DataCounter {
+        title: String,
+        counters: Vec<CounterEntry>,
+        #[serde(rename = "durationFrames", default = "default_counter_duration")]
+        duration_frames: u32,
+    },
+    BarRace {
+        title: String,
+        bars: Vec<BarEntry>,
+        #[serde(rename = "durationFrames", default = "default_bar_race_duration")]
+        duration_frames: u32,
+    },
+    ParticleMood {
+        text: String,
+        #[serde(default = "default_preset")]
+        preset: String,
+        #[serde(rename = "durationFrames", default = "default_particle_duration")]
+        duration_frames: u32,
+    },
+    TimelinePath {
+        title: String,
+        waypoints: Vec<WaypointEntry>,
+        #[serde(rename = "durationFrames", default = "default_timeline_path_duration")]
+        duration_frames: u32,
+    },
+    ComparisonSplit {
+        title: String,
+        #[serde(default)]
+        left_label: String,
+        #[serde(default)]
+        right_label: String,
+        points: Vec<ComparisonPoint>,
+        #[serde(rename = "durationFrames", default = "default_comparison_duration")]
+        duration_frames: u32,
+    },
+    Closing {
+        title: String,
+        #[serde(default)]
+        subtitle: String,
+        #[serde(rename = "durationFrames", default = "default_closing_motion_duration")]
+        duration_frames: u32,
+    },
+}
+
+impl VideoScene {
+    pub fn duration_frames(&self) -> u32 {
+        match self {
+            VideoScene::Opener { duration_frames, .. }
+            | VideoScene::KineticText { duration_frames, .. }
+            | VideoScene::DataCounter { duration_frames, .. }
+            | VideoScene::BarRace { duration_frames, .. }
+            | VideoScene::ParticleMood { duration_frames, .. }
+            | VideoScene::TimelinePath { duration_frames, .. }
+            | VideoScene::ComparisonSplit { duration_frames, .. }
+            | VideoScene::Closing { duration_frames, .. } => *duration_frames,
+        }
+    }
+
+    #[cfg(test)]
+    fn kind_str(&self) -> &'static str {
+        match self {
+            VideoScene::Opener { .. } => "opener",
+            VideoScene::KineticText { .. } => "kineticText",
+            VideoScene::DataCounter { .. } => "dataCounter",
+            VideoScene::BarRace { .. } => "barRace",
+            VideoScene::ParticleMood { .. } => "particleMood",
+            VideoScene::TimelinePath { .. } => "timelinePath",
+            VideoScene::ComparisonSplit { .. } => "comparisonSplit",
+            VideoScene::Closing { .. } => "closing",
+        }
+    }
+
+    fn duration_frames_mut(&mut self) -> &mut u32 {
+        match self {
+            VideoScene::Opener { duration_frames, .. }
+            | VideoScene::KineticText { duration_frames, .. }
+            | VideoScene::DataCounter { duration_frames, .. }
+            | VideoScene::BarRace { duration_frames, .. }
+            | VideoScene::ParticleMood { duration_frames, .. }
+            | VideoScene::TimelinePath { duration_frames, .. }
+            | VideoScene::ComparisonSplit { duration_frames, .. }
+            | VideoScene::Closing { duration_frames, .. } => duration_frames,
+        }
+    }
+}
+
+/// Validate and fix video scenes: ensure Opener first, Closing last, clamp counts/durations,
+/// fix invalid layout/preset values.
+pub fn validate_video_scenes(scenes: &mut Vec<VideoScene>, title: &str) {
+    // Fix invalid layout values
+    let valid_layouts = ["cascade", "converge", "wave", "typewriter"];
+    let valid_presets = ["stars", "rain", "fireflies", "snow", "nebula"];
+
+    for scene in scenes.iter_mut() {
+        match scene {
+            VideoScene::KineticText { layout, .. } => {
+                if !valid_layouts.contains(&layout.as_str()) {
+                    *layout = "cascade".to_string();
+                }
+            }
+            VideoScene::ParticleMood { preset, .. } => {
+                if !valid_presets.contains(&preset.as_str()) {
+                    *preset = "stars".to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Ensure Opener first
+    if !matches!(scenes.first(), Some(VideoScene::Opener { .. })) {
+        scenes.insert(0, VideoScene::Opener {
+            title: title.to_string(),
+            subtitle: String::new(),
+            mood: "dramatic".to_string(),
+            duration_frames: 240,
+        });
+    }
+
+    // Ensure Closing last
+    if !matches!(scenes.last(), Some(VideoScene::Closing { .. })) {
+        scenes.push(VideoScene::Closing {
+            title: "Thank You".to_string(),
+            subtitle: "Generated by NabaOS PEA".to_string(),
+            duration_frames: 210,
+        });
+    }
+
+    // Clamp to 8-20 scenes
+    if scenes.len() > 20 {
+        let closing = scenes.pop().unwrap();
+        scenes.truncate(19);
+        scenes.push(closing);
+    }
+
+    // Clamp duration_frames to 90-360
+    for scene in scenes.iter_mut() {
+        let df = scene.duration_frames_mut();
+        *df = (*df).clamp(90, 360);
+    }
+}
+
 /// Extract timeline events: scan for year patterns followed by descriptions.
 fn extract_timeline_events(text: &str) -> Vec<(String, String)> {
     let mut events: Vec<(String, String)> = Vec::new();
@@ -4639,6 +4839,921 @@ export const LowerThird: React.FC<{
     )))
 }
 
+// ── PixiJS Motion Graphics Video Generator ─────────────────────────────────
+
+/// Generate a PixiJS + Remotion motion graphics video from VideoScene data.
+pub fn generate_pixi_video(
+    scenes: &[VideoScene],
+    _images: &[ImageEntry],
+    style: Option<&StyleConfig>,
+    output_dir: &Path,
+) -> Result<PathBuf> {
+    let s = style.cloned().unwrap_or_default();
+    let primary = &s.primary_color;
+    let accent = &s.accent_color;
+
+    // Check for Node.js + npm
+    let has_node = std::process::Command::new("node").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+    let has_npm = std::process::Command::new("npm").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+    if !has_node || !has_npm {
+        return Err(NyayaError::Config("PixiJS video requires Node.js and npm".to_string()));
+    }
+
+    let total_scenes = scenes.len();
+    eprintln!("[pea/doc] PixiJS + Remotion: rendering {} scenes", total_scenes);
+
+    let remotion_dir = output_dir.join("remotion");
+    let src_dir = remotion_dir.join("src");
+    let scenes_dir = src_dir.join("scenes");
+    std::fs::create_dir_all(&scenes_dir)
+        .map_err(|e| NyayaError::Config(format!("create scenes dir: {}", e)))?;
+
+    // --- Write scenes-data.json ---
+    let scenes_json = serde_json::to_string_pretty(scenes)
+        .map_err(|e| NyayaError::Config(format!("serialize scenes: {}", e)))?;
+    let props_path = remotion_dir.join("scenes-data.json");
+    std::fs::write(&props_path, &scenes_json)
+        .map_err(|e| NyayaError::Config(format!("write scenes-data.json: {}", e)))?;
+
+    // --- package.json ---
+    let package_json = format!(r#"{{
+  "name": "pixi-motion-video",
+  "private": true,
+  "scripts": {{ "build": "remotion render" }},
+  "dependencies": {{
+    "@remotion/cli": "4.0.248",
+    "@remotion/bundler": "4.0.248",
+    "remotion": "4.0.248",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "pixi.js": "8.6.6"
+  }},
+  "devDependencies": {{
+    "typescript": "5.7.3",
+    "@types/react": "19.0.1"
+  }}
+}}"#);
+    std::fs::write(remotion_dir.join("package.json"), &package_json)
+        .map_err(|e| NyayaError::Config(format!("write package.json: {}", e)))?;
+
+    // --- tsconfig.json ---
+    let tsconfig = r#"{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "baseUrl": "."
+  },
+  "include": ["src"]
+}"#;
+    std::fs::write(remotion_dir.join("tsconfig.json"), tsconfig)
+        .map_err(|e| NyayaError::Config(format!("write tsconfig.json: {}", e)))?;
+
+    // --- src/types.ts ---
+    let types_ts = r#"export interface CounterEntry { label: string; value: string; unit?: string; }
+export interface BarEntry { label: string; value: number; }
+export interface WaypointEntry { year: string; label: string; }
+export interface ComparisonPoint { left: string; right: string; }
+
+export type VideoScene =
+  | { kind: "opener"; title: string; subtitle?: string; mood?: string; durationFrames: number }
+  | { kind: "kineticText"; text: string; layout: string; durationFrames: number }
+  | { kind: "dataCounter"; title: string; counters: CounterEntry[]; durationFrames: number }
+  | { kind: "barRace"; title: string; bars: BarEntry[]; durationFrames: number }
+  | { kind: "particleMood"; text: string; preset: string; durationFrames: number }
+  | { kind: "timelinePath"; title: string; waypoints: WaypointEntry[]; durationFrames: number }
+  | { kind: "comparisonSplit"; title: string; leftLabel?: string; rightLabel?: string; points: ComparisonPoint[]; durationFrames: number }
+  | { kind: "closing"; title: string; subtitle?: string; durationFrames: number };
+
+export interface MotionVideoProps {
+  scenes: VideoScene[];
+  primaryColor: string;
+  accentColor: string;
+}
+"#;
+    std::fs::write(src_dir.join("types.ts"), types_ts)
+        .map_err(|e| NyayaError::Config(format!("write types.ts: {}", e)))?;
+
+    // --- src/easing.ts ---
+    let easing_ts = r#"export function easeOutExpo(t: number): number {
+  return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+}
+
+export function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+export function spring(t: number, damping = 0.7, freq = 4): number {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return 1 - Math.exp(-damping * freq * t) * Math.cos(freq * Math.PI * 2 * t * (1 - damping));
+}
+
+export function stagger(index: number, total: number, progress: number, overlap = 0.3): number {
+  const slotWidth = 1 / (total + (total - 1) * overlap);
+  const start = index * slotWidth * (1 - overlap);
+  const end = start + slotWidth;
+  return Math.max(0, Math.min(1, (progress - start) / (end - start)));
+}
+"#;
+    std::fs::write(src_dir.join("easing.ts"), easing_ts)
+        .map_err(|e| NyayaError::Config(format!("write easing.ts: {}", e)))?;
+
+    // --- src/pixi-canvas.tsx ---
+    let pixi_canvas = r#"import React, { useEffect, useRef } from "react";
+import { useCurrentFrame, useVideoConfig } from "remotion";
+import { Application, Container } from "pixi.js";
+
+interface PixiCanvasProps {
+  setup: (app: Application) => void;
+  update: (app: Application, progress: number) => void;
+  bg?: number;
+}
+
+export const PixiCanvas: React.FC<PixiCanvasProps> = ({ setup, update, bg = 0x16161e }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const appRef = useRef<Application | null>(null);
+  const setupDone = useRef(false);
+  const frame = useCurrentFrame();
+  const { durationInFrames } = useVideoConfig();
+  const progress = frame / durationInFrames;
+
+  useEffect(() => {
+    if (!canvasRef.current || setupDone.current) return;
+    setupDone.current = true;
+    const app = new Application();
+    app.init({
+      canvas: canvasRef.current,
+      width: 1920,
+      height: 1080,
+      backgroundColor: bg,
+      autoStart: false,
+      antialias: true,
+    }).then(() => {
+      setup(app);
+      appRef.current = app;
+    });
+    return () => { app.destroy(true); appRef.current = null; setupDone.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (appRef.current) {
+      update(appRef.current, progress);
+      appRef.current.render();
+    }
+  }, [frame]);
+
+  return <canvas ref={canvasRef} width={1920} height={1080} style={{ width: "100%", height: "100%" }} />;
+};
+"#;
+    std::fs::write(src_dir.join("pixi-canvas.tsx"), pixi_canvas)
+        .map_err(|e| NyayaError::Config(format!("write pixi-canvas.tsx: {}", e)))?;
+
+    // --- Scene components ---
+    write_pixi_scene_opener(&scenes_dir, primary, accent)?;
+    write_pixi_scene_kinetic_text(&scenes_dir, primary, accent)?;
+    write_pixi_scene_data_counter(&scenes_dir, primary, accent)?;
+    write_pixi_scene_bar_race(&scenes_dir, primary, accent)?;
+    write_pixi_scene_particle_mood(&scenes_dir, primary, accent)?;
+    write_pixi_scene_timeline_path(&scenes_dir, primary, accent)?;
+    write_pixi_scene_comparison_split(&scenes_dir, primary, accent)?;
+    write_pixi_scene_closing(&scenes_dir, primary, accent)?;
+
+    // --- src/MotionVideo.tsx ---
+    let motion_video = format!(r##"import React from "react";
+import {{ Sequence, useVideoConfig }} from "remotion";
+import {{ VideoScene }} from "./types";
+import {{ OpenerScene }} from "./scenes/opener";
+import {{ KineticTextScene }} from "./scenes/kinetic-text";
+import {{ DataCounterScene }} from "./scenes/data-counter";
+import {{ BarRaceScene }} from "./scenes/bar-race";
+import {{ ParticleMoodScene }} from "./scenes/particle-mood";
+import {{ TimelinePathScene }} from "./scenes/timeline-path";
+import {{ ComparisonSplitScene }} from "./scenes/comparison-split";
+import {{ ClosingScene }} from "./scenes/closing";
+
+const CROSSFADE = 15;
+
+function renderScene(scene: VideoScene) {{
+  switch (scene.kind) {{
+    case "opener": return <OpenerScene title={{scene.title}} subtitle={{scene.subtitle || ""}} mood={{scene.mood || "dramatic"}} />;
+    case "kineticText": return <KineticTextScene text={{scene.text}} layout={{scene.layout}} />;
+    case "dataCounter": return <DataCounterScene title={{scene.title}} counters={{scene.counters}} />;
+    case "barRace": return <BarRaceScene title={{scene.title}} bars={{scene.bars}} />;
+    case "particleMood": return <ParticleMoodScene text={{scene.text}} preset={{scene.preset}} />;
+    case "timelinePath": return <TimelinePathScene title={{scene.title}} waypoints={{scene.waypoints}} />;
+    case "comparisonSplit": return <ComparisonSplitScene title={{scene.title}} leftLabel={{scene.leftLabel || "Before"}} rightLabel={{scene.rightLabel || "After"}} points={{scene.points}} />;
+    case "closing": return <ClosingScene title={{scene.title}} subtitle={{scene.subtitle || ""}} />;
+  }}
+}}
+
+export const MotionVideo: React.FC<{{ scenes: VideoScene[] }}> = ({{ scenes }}) => {{
+  const {{ fps }} = useVideoConfig();
+  let offset = 0;
+
+  return (
+    <div style={{{{ width: 1920, height: 1080, backgroundColor: "#16161e" }}}}>
+      {{scenes.map((scene, i) => {{
+        const dur = scene.durationFrames;
+        const fadeIn = i > 0 ? CROSSFADE : 0;
+        const fadeOut = i < scenes.length - 1 ? CROSSFADE : 0;
+        const seq = (
+          <Sequence key={{i}} from={{offset}} durationInFrames={{dur}}>
+            <div style={{{{
+              width: "100%", height: "100%",
+              opacity: 1,
+            }}}}>
+              {{renderScene(scene)}}
+            </div>
+          </Sequence>
+        );
+        offset += dur - (i < scenes.length - 1 ? CROSSFADE : 0);
+        return seq;
+      }})}}
+    </div>
+  );
+}};
+"##);
+    std::fs::write(src_dir.join("MotionVideo.tsx"), &motion_video)
+        .map_err(|e| NyayaError::Config(format!("write MotionVideo.tsx: {}", e)))?;
+
+    // --- src/Root.tsx ---
+    let root_tsx = format!(r##"import {{ Composition }} from "remotion";
+import {{ MotionVideo }} from "./MotionVideo";
+import {{ VideoScene }} from "./types";
+import scenesData from "../scenes-data.json";
+
+const CROSSFADE = 15;
+
+export const RemotionRoot: React.FC = () => {{
+  const scenes = scenesData as VideoScene[];
+  const totalFrames = scenes.reduce((acc, s, i) =>
+    acc + s.durationFrames - (i < scenes.length - 1 ? CROSSFADE : 0), 0);
+
+  return (
+    <Composition
+      id="MotionVideo"
+      component={{MotionVideo}}
+      durationInFrames={{totalFrames}}
+      fps={{30}}
+      width={{1920}}
+      height={{1080}}
+      defaultProps={{{{ scenes }}}}
+    />
+  );
+}};
+"##);
+    std::fs::write(src_dir.join("Root.tsx"), &root_tsx)
+        .map_err(|e| NyayaError::Config(format!("write Root.tsx: {}", e)))?;
+
+    // --- src/index.ts ---
+    let index_ts = r#"import { registerRoot } from "remotion";
+import { RemotionRoot } from "./Root";
+registerRoot(RemotionRoot);
+"#;
+    std::fs::write(src_dir.join("index.ts"), index_ts)
+        .map_err(|e| NyayaError::Config(format!("write index.ts: {}", e)))?;
+
+    // --- Install and render ---
+    eprintln!("[pea/doc] installing PixiJS + Remotion dependencies...");
+    let install = std::process::Command::new("npm")
+        .arg("install")
+        .current_dir(&remotion_dir)
+        .output()
+        .map_err(|e| NyayaError::Config(format!("npm install: {}", e)))?;
+
+    if !install.status.success() {
+        let stderr = String::from_utf8_lossy(&install.stderr);
+        return Err(NyayaError::Config(format!("npm install failed: {}", stderr)));
+    }
+
+    std::fs::create_dir_all(remotion_dir.join("out"))
+        .map_err(|e| NyayaError::Config(format!("create out dir: {}", e)))?;
+
+    let output_mp4 = output_dir.join("output.mp4");
+
+    eprintln!("[pea/doc] rendering PixiJS motion graphics video...");
+    let render = std::process::Command::new("npx")
+        .args([
+            "remotion", "render",
+            "--codec=h264",
+            "--crf=17",
+            "--jpeg-quality=95",
+            "--color-space=bt709",
+            "--gl=angle",
+        ])
+        .arg(format!("--props={}", props_path.display()))
+        .args(["src/index.ts", "MotionVideo"])
+        .arg(&output_mp4)
+        .current_dir(&remotion_dir)
+        .output()
+        .map_err(|e| NyayaError::Config(format!("remotion render: {}", e)))?;
+
+    if render.status.success() && output_mp4.exists() {
+        eprintln!("[pea/doc] PixiJS render complete: {}", output_mp4.display());
+        let _ = std::fs::remove_dir_all(remotion_dir.join("node_modules"));
+        return Ok(output_mp4);
+    }
+
+    let stderr = String::from_utf8_lossy(&render.stderr);
+    let stdout = String::from_utf8_lossy(&render.stdout);
+    Err(NyayaError::Config(format!(
+        "PixiJS Remotion render failed:\nstdout: {}\nstderr: {}",
+        &stdout[..stdout.len().min(500)],
+        &stderr[..stderr.len().min(500)],
+    )))
+}
+
+// ── PixiJS Scene Component Writers ─────────────────────────────────────────
+
+fn css_to_hex_int(css: &str) -> String {
+    let hex = css.trim_start_matches('#');
+    format!("0x{}", hex)
+}
+
+fn write_pixi_scene_opener(dir: &Path, primary: &str, accent: &str) -> Result<()> {
+    let pc = css_to_hex_int(primary);
+    let ac = css_to_hex_int(accent);
+    let code = format!(r##"import React, {{ useCallback }} from "react";
+import {{ PixiCanvas }} from "../pixi-canvas";
+import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
+import {{ spring }} from "../easing";
+
+interface Props {{ title: string; subtitle: string; mood: string; }}
+
+export const OpenerScene: React.FC<Props> = ({{ title, subtitle }}) => {{
+  const particles: {{ x: number; y: number; vx: number; vy: number; r: number }}[] = [];
+
+  const setup = useCallback((app: Application) => {{
+    // Create 200 particles for radial burst
+    const g = new Graphics();
+    app.stage.addChild(g);
+    for (let i = 0; i < 200; i++) {{
+      const angle = (Math.PI * 2 * i) / 200 + Math.random() * 0.3;
+      particles.push({{
+        x: 960, y: 540,
+        vx: Math.cos(angle) * (2 + Math.random() * 4),
+        vy: Math.sin(angle) * (2 + Math.random() * 4),
+        r: 1 + Math.random() * 3,
+      }});
+    }}
+    // Title
+    const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 72, fontWeight: "bold", fill: {ac}, wordWrap: true, wordWrapWidth: 1600, align: "center" }});
+    const t = new Text({{ text: title, style: titleStyle }});
+    t.anchor.set(0.5); t.x = 960; t.y = 480; t.label = "title";
+    app.stage.addChild(t);
+    // Subtitle
+    const subStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 36, fill: 0xc8c8d2, wordWrap: true, wordWrapWidth: 1400, align: "center" }});
+    const s = new Text({{ text: subtitle, style: subStyle }});
+    s.anchor.set(0.5); s.x = 960; s.y = 620; s.label = "subtitle"; s.alpha = 0;
+    app.stage.addChild(s);
+  }}, [title, subtitle]);
+
+  const update = useCallback((app: Application, progress: number) => {{
+    // Particles: radial burst with friction
+    const g = app.stage.children[0] as Graphics;
+    g.clear();
+    for (const p of particles) {{
+      p.x += p.vx; p.y += p.vy;
+      p.vx *= 0.97; p.vy *= 0.97;
+      g.circle(p.x, p.y, p.r * (1 - progress * 0.5));
+      g.fill({{ color: {pc}, alpha: 0.6 * (1 - progress * 0.7) }});
+    }}
+    // Title spring scale
+    const titleEl = app.stage.children.find((c: any) => c.label === "title");
+    if (titleEl) {{
+      const s = 0.3 + 0.7 * spring(progress * 2);
+      titleEl.scale.set(Math.min(s, 1));
+    }}
+    // Subtitle fade in at 40%
+    const subEl = app.stage.children.find((c: any) => c.label === "subtitle");
+    if (subEl) {{
+      subEl.alpha = Math.max(0, Math.min(1, (progress - 0.4) * 3));
+    }}
+  }}, []);
+
+  return <PixiCanvas setup={{setup}} update={{update}} />;
+}};
+"##);
+    std::fs::write(dir.join("opener.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write opener.tsx: {}", e)))
+}
+
+fn write_pixi_scene_kinetic_text(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+    let ac = css_to_hex_int(accent);
+    let code = format!(r##"import React, {{ useCallback, useRef }} from "react";
+import {{ PixiCanvas }} from "../pixi-canvas";
+import {{ Application, Text, TextStyle }} from "pixi.js";
+import {{ spring, stagger }} from "../easing";
+
+interface Props {{ text: string; layout: string; }}
+
+export const KineticTextScene: React.FC<Props> = ({{ text, layout }}) => {{
+  const wordsRef = useRef<string[]>([]);
+
+  const setup = useCallback((app: Application) => {{
+    // Parse words, detecting **bold** markers
+    const raw = text.split(/\s+/);
+    wordsRef.current = raw;
+    const cols = Math.ceil(Math.sqrt(raw.length * 1.5));
+    raw.forEach((word, i) => {{
+      const isBold = word.startsWith("**") && word.endsWith("**");
+      const clean = isBold ? word.slice(2, -2) : word;
+      const style = new TextStyle({{
+        fontFamily: "Arial",
+        fontSize: isBold ? 56 : 40,
+        fontWeight: isBold ? "bold" : "normal",
+        fill: isBold ? {ac} : 0xc8c8d2,
+      }});
+      const t = new Text({{ text: clean, style }});
+      t.anchor.set(0.5);
+      // Target grid position
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const targetX = 200 + col * (1520 / cols);
+      const targetY = 200 + row * 80;
+      t.x = targetX; t.y = targetY;
+      (t as any).targetX = targetX;
+      (t as any).targetY = targetY;
+      (t as any).wordIndex = i;
+
+      // Initial position based on layout
+      if (layout === "cascade") {{ t.y = -100; }}
+      else if (layout === "converge") {{
+        const edge = i % 4;
+        t.x = edge === 0 ? -200 : edge === 1 ? 2120 : targetX;
+        t.y = edge === 2 ? -200 : edge === 3 ? 1280 : targetY;
+      }}
+      else if (layout === "typewriter") {{ t.alpha = 0; }}
+
+      app.stage.addChild(t);
+    }});
+  }}, [text, layout]);
+
+  const update = useCallback((app: Application, progress: number) => {{
+    const total = wordsRef.current.length;
+    app.stage.children.forEach((child: any) => {{
+      if (child.wordIndex === undefined) return;
+      const i = child.wordIndex;
+      const p = stagger(i, total, progress, 0.4);
+      const s = spring(p);
+
+      if (layout === "cascade") {{
+        child.y = -100 + ((child as any).targetY + 100) * s;
+      }} else if (layout === "converge") {{
+        child.x = child.x + ((child as any).targetX - child.x) * s * 0.3;
+        child.y = child.y + ((child as any).targetY - child.y) * s * 0.3;
+      }} else if (layout === "wave") {{
+        child.scale.set(0.8 + 0.4 * Math.sin(progress * Math.PI * 4 + i * 0.5));
+      }} else if (layout === "typewriter") {{
+        child.alpha = p > 0.1 ? 1 : 0;
+      }}
+    }});
+  }}, [layout]);
+
+  return <PixiCanvas setup={{setup}} update={{update}} />;
+}};
+"##);
+    std::fs::write(dir.join("kinetic-text.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write kinetic-text.tsx: {}", e)))
+}
+
+fn write_pixi_scene_data_counter(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+    let ac = css_to_hex_int(accent);
+    let code = format!(r##"import React, {{ useCallback }} from "react";
+import {{ PixiCanvas }} from "../pixi-canvas";
+import {{ Application, Text, TextStyle, Graphics }} from "pixi.js";
+import {{ easeOutExpo }} from "../easing";
+import {{ CounterEntry }} from "../types";
+
+interface Props {{ title: string; counters: CounterEntry[]; }}
+
+export const DataCounterScene: React.FC<Props> = ({{ title, counters }}) => {{
+  const setup = useCallback((app: Application) => {{
+    // Title
+    const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 48, fontWeight: "bold", fill: 0xc8c8d2 }});
+    const t = new Text({{ text: title, style: titleStyle }});
+    t.anchor.set(0.5, 0); t.x = 960; t.y = 60;
+    app.stage.addChild(t);
+
+    const spacing = 1920 / (counters.length + 1);
+    counters.forEach((c, i) => {{
+      const x = spacing * (i + 1);
+      // Arc background
+      const g = new Graphics(); g.label = `arc_${{i}}`;
+      app.stage.addChild(g);
+      (g as any).cx = x; (g as any).cy = 450; (g as any).radius = 120;
+      // Value text
+      const valStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 64, fontWeight: "bold", fill: {ac} }});
+      const vt = new Text({{ text: "0", style: valStyle }});
+      vt.anchor.set(0.5); vt.x = x; vt.y = 450; vt.label = `val_${{i}}`;
+      (vt as any).target = parseFloat(c.value.replace(/[^0-9.]/g, "")) || 0;
+      (vt as any).unit = c.unit || "";
+      (vt as any).rawValue = c.value;
+      app.stage.addChild(vt);
+      // Label
+      const lblStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 28, fill: 0xc8c8d2, wordWrap: true, wordWrapWidth: 300, align: "center" }});
+      const lt = new Text({{ text: c.label, style: lblStyle }});
+      lt.anchor.set(0.5); lt.x = x; lt.y = 600;
+      app.stage.addChild(lt);
+    }});
+  }}, [title, counters]);
+
+  const update = useCallback((app: Application, progress: number) => {{
+    const ease = easeOutExpo(Math.min(progress * 1.5, 1));
+    app.stage.children.forEach((child: any) => {{
+      // Update arcs
+      if (child.label?.startsWith("arc_")) {{
+        const g = child as Graphics;
+        g.clear();
+        g.arc(child.cx, child.cy, child.radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ease);
+        g.stroke({{ color: {ac}, width: 6, alpha: 0.4 }});
+      }}
+      // Update counter values
+      if (child.label?.startsWith("val_")) {{
+        const target = child.target;
+        const current = Math.floor(ease * target);
+        child.text = `${{current.toLocaleString()}}${{child.unit}}`;
+      }}
+    }});
+  }}, []);
+
+  return <PixiCanvas setup={{setup}} update={{update}} />;
+}};
+"##);
+    std::fs::write(dir.join("data-counter.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write data-counter.tsx: {}", e)))
+}
+
+fn write_pixi_scene_bar_race(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+    let ac = css_to_hex_int(accent);
+    let code = format!(r##"import React, {{ useCallback }} from "react";
+import {{ PixiCanvas }} from "../pixi-canvas";
+import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
+import {{ easeOutCubic, stagger }} from "../easing";
+import {{ BarEntry }} from "../types";
+
+interface Props {{ title: string; bars: BarEntry[]; }}
+
+export const BarRaceScene: React.FC<Props> = ({{ title, bars }}) => {{
+  const setup = useCallback((app: Application) => {{
+    const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 44, fontWeight: "bold", fill: 0xc8c8d2 }});
+    const t = new Text({{ text: title, style: titleStyle }});
+    t.anchor.set(0.5, 0); t.x = 960; t.y = 40;
+    app.stage.addChild(t);
+
+    const maxVal = Math.max(...bars.map(b => b.value), 1);
+    const barHeight = Math.min(60, 800 / bars.length);
+    const gap = 10;
+    const startY = 140;
+
+    bars.forEach((b, i) => {{
+      const y = startY + i * (barHeight + gap);
+      // Label
+      const lblStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 22, fill: 0xc8c8d2 }});
+      const lbl = new Text({{ text: b.label, style: lblStyle }});
+      lbl.anchor.set(1, 0.5); lbl.x = 280; lbl.y = y + barHeight / 2;
+      app.stage.addChild(lbl);
+      // Bar graphic
+      const g = new Graphics(); g.label = `bar_${{i}}`;
+      (g as any).barY = y; (g as any).barH = barHeight;
+      (g as any).maxWidth = 1500 * (b.value / maxVal);
+      (g as any).barIndex = i;
+      app.stage.addChild(g);
+      // Value label
+      const valStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 20, fontWeight: "bold", fill: 0xc8c8d2 }});
+      const vt = new Text({{ text: b.value.toLocaleString(), style: valStyle }});
+      vt.anchor.set(0, 0.5); vt.y = y + barHeight / 2;
+      vt.label = `bval_${{i}}`; (vt as any).barIndex = i;
+      app.stage.addChild(vt);
+    }});
+  }}, [title, bars]);
+
+  const update = useCallback((app: Application, progress: number) => {{
+    const total = bars.length;
+    app.stage.children.forEach((child: any) => {{
+      if (child.label?.startsWith("bar_")) {{
+        const g = child as Graphics;
+        const p = easeOutCubic(stagger(child.barIndex, total, progress));
+        const w = child.maxWidth * p;
+        g.clear();
+        g.roundRect(300, child.barY, w, child.barH, 4);
+        g.fill({{ color: {ac}, alpha: 0.85 }});
+      }}
+      if (child.label?.startsWith("bval_")) {{
+        const p = easeOutCubic(stagger(child.barIndex, total, progress));
+        const barChild = app.stage.children.find((c: any) => c.label === `bar_${{child.barIndex}}`);
+        if (barChild) child.x = 310 + (barChild as any).maxWidth * p;
+      }}
+    }});
+  }}, [bars]);
+
+  return <PixiCanvas setup={{setup}} update={{update}} />;
+}};
+"##);
+    std::fs::write(dir.join("bar-race.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write bar-race.tsx: {}", e)))
+}
+
+fn write_pixi_scene_particle_mood(dir: &Path, primary: &str, _accent: &str) -> Result<()> {
+    let pc = css_to_hex_int(primary);
+    let code = format!(r##"import React, {{ useCallback, useRef }} from "react";
+import {{ PixiCanvas }} from "../pixi-canvas";
+import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
+
+interface Props {{ text: string; preset: string; }}
+
+interface Particle {{ x: number; y: number; vx: number; vy: number; r: number; alpha: number; }}
+
+export const ParticleMoodScene: React.FC<Props> = ({{ text, preset }}) => {{
+  const particlesRef = useRef<Particle[]>([]);
+
+  const setup = useCallback((app: Application) => {{
+    const count = preset === "nebula" ? 300 : preset === "fireflies" ? 80 : 150;
+    const parts: Particle[] = [];
+    for (let i = 0; i < count; i++) {{
+      parts.push({{
+        x: Math.random() * 1920,
+        y: Math.random() * 1080,
+        vx: (Math.random() - 0.5) * (preset === "rain" ? 0.5 : 2),
+        vy: preset === "rain" ? 2 + Math.random() * 3 : preset === "snow" ? 0.5 + Math.random() : (Math.random() - 0.5) * 2,
+        r: preset === "nebula" ? 1 + Math.random() * 6 : 1 + Math.random() * 3,
+        alpha: 0.3 + Math.random() * 0.7,
+      }});
+    }}
+    particlesRef.current = parts;
+
+    const g = new Graphics(); g.label = "particles";
+    app.stage.addChild(g);
+
+    const textStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 52, fontWeight: "bold", fill: 0xffffff, wordWrap: true, wordWrapWidth: 1400, align: "center" }});
+    const t = new Text({{ text, style: textStyle }});
+    t.anchor.set(0.5); t.x = 960; t.y = 540; t.label = "text";
+    app.stage.addChild(t);
+  }}, [text, preset]);
+
+  const update = useCallback((app: Application, progress: number) => {{
+    const g = app.stage.children.find((c: any) => c.label === "particles") as Graphics;
+    if (!g) return;
+    g.clear();
+    for (const p of particlesRef.current) {{
+      p.x += p.vx; p.y += p.vy;
+      if (preset === "fireflies") {{
+        p.x += Math.sin(progress * 20 + p.y * 0.01) * 0.5;
+        p.alpha = 0.3 + 0.7 * Math.abs(Math.sin(progress * 8 + p.x * 0.01));
+      }}
+      // Wrap around
+      if (p.x < -10) p.x = 1930; if (p.x > 1930) p.x = -10;
+      if (p.y < -10) p.y = 1090; if (p.y > 1090) p.y = -10;
+      g.circle(p.x, p.y, p.r);
+      g.fill({{ color: {pc}, alpha: p.alpha * (preset === "nebula" ? 0.4 : 0.7) }});
+    }}
+    // Text pulse
+    const t = app.stage.children.find((c: any) => c.label === "text");
+    if (t) {{ t.alpha = 0.7 + 0.3 * Math.sin(progress * Math.PI * 2); }}
+  }}, [preset]);
+
+  return <PixiCanvas setup={{setup}} update={{update}} />;
+}};
+"##);
+    std::fs::write(dir.join("particle-mood.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write particle-mood.tsx: {}", e)))
+}
+
+fn write_pixi_scene_timeline_path(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+    let ac = css_to_hex_int(accent);
+    let code = format!(r##"import React, {{ useCallback }} from "react";
+import {{ PixiCanvas }} from "../pixi-canvas";
+import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
+import {{ spring }} from "../easing";
+import {{ WaypointEntry }} from "../types";
+
+interface Props {{ title: string; waypoints: WaypointEntry[]; }}
+
+export const TimelinePathScene: React.FC<Props> = ({{ title, waypoints }}) => {{
+  const setup = useCallback((app: Application) => {{
+    const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 44, fontWeight: "bold", fill: 0xc8c8d2 }});
+    const t = new Text({{ text: title, style: titleStyle }});
+    t.anchor.set(0.5, 0); t.x = 960; t.y = 40;
+    app.stage.addChild(t);
+
+    // Timeline line
+    const line = new Graphics(); line.label = "line";
+    app.stage.addChild(line);
+
+    // Waypoints
+    const spacing = 1600 / (waypoints.length + 1);
+    waypoints.forEach((wp, i) => {{
+      const x = 160 + spacing * (i + 1);
+      // Dot
+      const dot = new Graphics(); dot.label = `dot_${{i}}`;
+      (dot as any).wpX = x; (dot as any).wpIndex = i;
+      app.stage.addChild(dot);
+      // Year label
+      const yearStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 24, fontWeight: "bold", fill: {ac} }});
+      const yt = new Text({{ text: wp.year, style: yearStyle }});
+      yt.anchor.set(0.5); yt.x = x; yt.y = 510; yt.alpha = 0;
+      yt.label = `year_${{i}}`; (yt as any).wpIndex = i;
+      app.stage.addChild(yt);
+      // Description
+      const descStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 20, fill: 0xc8c8d2, wordWrap: true, wordWrapWidth: spacing - 20, align: "center" }});
+      const dt = new Text({{ text: wp.label, style: descStyle }});
+      dt.anchor.set(0.5, 0); dt.x = x; dt.y = 560; dt.alpha = 0;
+      dt.label = `desc_${{i}}`; (dt as any).wpIndex = i;
+      app.stage.addChild(dt);
+    }});
+  }}, [title, waypoints]);
+
+  const update = useCallback((app: Application, progress: number) => {{
+    const total = waypoints.length;
+    // Draw progressive line
+    const line = app.stage.children.find((c: any) => c.label === "line") as Graphics;
+    if (line) {{
+      line.clear();
+      const lineProgress = Math.min(progress * 1.3, 1);
+      const endX = 160 + 1600 * lineProgress;
+      line.moveTo(160, 480); line.lineTo(endX, 480);
+      line.stroke({{ color: 0x555577, width: 3 }});
+    }}
+
+    app.stage.children.forEach((child: any) => {{
+      if (child.label?.startsWith("dot_")) {{
+        const g = child as Graphics;
+        const i = child.wpIndex;
+        const wpProgress = Math.min(progress * 1.3, 1);
+        const threshold = (i + 1) / (total + 1);
+        const visible = wpProgress >= threshold;
+        g.clear();
+        if (visible) {{
+          const s = spring(Math.min((wpProgress - threshold) * (total + 1) * 2, 1));
+          g.circle(child.wpX, 480, 8 * s);
+          g.fill({{ color: {ac} }});
+        }}
+      }}
+      if (child.label?.startsWith("year_") || child.label?.startsWith("desc_")) {{
+        const i = child.wpIndex;
+        const wpProgress = Math.min(progress * 1.3, 1);
+        const threshold = (i + 1) / (total + 1);
+        child.alpha = wpProgress >= threshold ? spring(Math.min((wpProgress - threshold) * (total + 1) * 2, 1)) : 0;
+      }}
+    }});
+  }}, [waypoints]);
+
+  return <PixiCanvas setup={{setup}} update={{update}} />;
+}};
+"##);
+    std::fs::write(dir.join("timeline-path.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write timeline-path.tsx: {}", e)))
+}
+
+fn write_pixi_scene_comparison_split(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+    let ac = css_to_hex_int(accent);
+    let code = format!(r##"import React, {{ useCallback }} from "react";
+import {{ PixiCanvas }} from "../pixi-canvas";
+import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
+import {{ spring, stagger }} from "../easing";
+import {{ ComparisonPoint }} from "../types";
+
+interface Props {{ title: string; leftLabel: string; rightLabel: string; points: ComparisonPoint[]; }}
+
+export const ComparisonSplitScene: React.FC<Props> = ({{ title, leftLabel, rightLabel, points }}) => {{
+  const setup = useCallback((app: Application) => {{
+    const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 44, fontWeight: "bold", fill: 0xc8c8d2 }});
+    const t = new Text({{ text: title, style: titleStyle }});
+    t.anchor.set(0.5, 0); t.x = 960; t.y = 40;
+    app.stage.addChild(t);
+
+    // Divider
+    const div = new Graphics(); div.label = "divider";
+    app.stage.addChild(div);
+
+    // Column headers
+    const headerStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 32, fontWeight: "bold", fill: {ac} }});
+    const lh = new Text({{ text: leftLabel, style: headerStyle }});
+    lh.anchor.set(0.5); lh.x = 480; lh.y = 140; lh.label = "leftHeader";
+    app.stage.addChild(lh);
+    const rh = new Text({{ text: rightLabel, style: headerStyle }});
+    rh.anchor.set(0.5); rh.x = 1440; rh.y = 140; rh.label = "rightHeader";
+    app.stage.addChild(rh);
+
+    // Points
+    points.forEach((p, i) => {{
+      const y = 220 + i * 80;
+      const leftStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 24, fill: 0xc8c8d2, wordWrap: true, wordWrapWidth: 400, align: "center" }});
+      const lt = new Text({{ text: p.left, style: leftStyle }});
+      lt.anchor.set(0.5, 0); lt.x = 480; lt.y = y; lt.alpha = 0;
+      lt.label = `left_${{i}}`; (lt as any).pointIndex = i; (lt as any).side = "left";
+      app.stage.addChild(lt);
+      const rt = new Text({{ text: p.right, style: leftStyle }});
+      rt.anchor.set(0.5, 0); rt.x = 1440; rt.y = y; rt.alpha = 0;
+      rt.label = `right_${{i}}`; (rt as any).pointIndex = i; (rt as any).side = "right";
+      app.stage.addChild(rt);
+    }});
+  }}, [title, leftLabel, rightLabel, points]);
+
+  const update = useCallback((app: Application, progress: number) => {{
+    // Divider slide in
+    const div = app.stage.children.find((c: any) => c.label === "divider") as Graphics;
+    if (div) {{
+      div.clear();
+      const h = 900 * spring(Math.min(progress * 3, 1));
+      div.moveTo(960, 120); div.lineTo(960, 120 + h);
+      div.stroke({{ color: {ac}, width: 2, alpha: 0.5 }});
+    }}
+
+    const total = points.length;
+    app.stage.children.forEach((child: any) => {{
+      if (child.pointIndex !== undefined) {{
+        const i = child.pointIndex;
+        const p = stagger(i, total, Math.max(0, progress - 0.15), 0.3);
+        const s = spring(p);
+        child.alpha = s;
+        const offset = child.side === "left" ? -100 * (1 - s) : 100 * (1 - s);
+        child.x = (child.side === "left" ? 480 : 1440) + offset;
+      }}
+    }});
+  }}, [points]);
+
+  return <PixiCanvas setup={{setup}} update={{update}} />;
+}};
+"##);
+    std::fs::write(dir.join("comparison-split.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write comparison-split.tsx: {}", e)))
+}
+
+fn write_pixi_scene_closing(dir: &Path, primary: &str, accent: &str) -> Result<()> {
+    let pc = css_to_hex_int(primary);
+    let ac = css_to_hex_int(accent);
+    let code = format!(r##"import React, {{ useCallback, useRef }} from "react";
+import {{ PixiCanvas }} from "../pixi-canvas";
+import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
+import {{ spring }} from "../easing";
+
+interface Props {{ title: string; subtitle: string; }}
+
+export const ClosingScene: React.FC<Props> = ({{ title, subtitle }}) => {{
+  const particlesRef = useRef<{{ x: number; y: number; vx: number; vy: number; r: number }}[]>([]);
+
+  const setup = useCallback((app: Application) => {{
+    // Particles that drift toward center (reverse of opener)
+    const parts: {{ x: number; y: number; vx: number; vy: number; r: number }}[] = [];
+    for (let i = 0; i < 150; i++) {{
+      parts.push({{
+        x: Math.random() * 1920, y: Math.random() * 1080,
+        vx: (960 - Math.random() * 1920) * 0.002,
+        vy: (540 - Math.random() * 1080) * 0.002,
+        r: 1 + Math.random() * 3,
+      }});
+    }}
+    particlesRef.current = parts;
+
+    const g = new Graphics(); g.label = "particles";
+    app.stage.addChild(g);
+
+    const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 64, fontWeight: "bold", fill: {ac}, wordWrap: true, wordWrapWidth: 1600, align: "center" }});
+    const t = new Text({{ text: title, style: titleStyle }});
+    t.anchor.set(0.5); t.x = 960; t.y = 460; t.label = "title";
+    app.stage.addChild(t);
+
+    const subStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 32, fill: 0xc8c8d2, wordWrap: true, wordWrapWidth: 1400, align: "center" }});
+    const s = new Text({{ text: subtitle, style: subStyle }});
+    s.anchor.set(0.5); s.x = 960; s.y = 600; s.label = "subtitle"; s.alpha = 0;
+    app.stage.addChild(s);
+  }}, [title, subtitle]);
+
+  const update = useCallback((app: Application, progress: number) => {{
+    const g = app.stage.children.find((c: any) => c.label === "particles") as Graphics;
+    if (g) {{
+      g.clear();
+      for (const p of particlesRef.current) {{
+        p.x += p.vx; p.y += p.vy;
+        g.circle(p.x, p.y, p.r);
+        g.fill({{ color: {pc}, alpha: 0.4 + 0.3 * progress }});
+      }}
+    }}
+    // Title spring up
+    const t = app.stage.children.find((c: any) => c.label === "title");
+    if (t) {{
+      const s = 0.5 + 0.5 * spring(Math.min(progress * 2, 1));
+      t.scale.set(s);
+    }}
+    // Subtitle fade
+    const sub = app.stage.children.find((c: any) => c.label === "subtitle");
+    if (sub) {{ sub.alpha = Math.max(0, Math.min(1, (progress - 0.3) * 3)); }}
+  }}, []);
+
+  return <PixiCanvas setup={{setup}} update={{update}} />;
+}};
+"##);
+    std::fs::write(dir.join("closing.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write closing.tsx: {}", e)))
+}
+
 /// Interactive slideshow HTML with keyboard navigation + auto-play.
 fn generate_slideshow_html_fallback(
     objective_desc: &str,
@@ -5448,5 +6563,115 @@ mod tests {
         assert!(looks_like_slide_noise("Smith et al. (2023)"));
         assert!(looks_like_slide_noise("Vol. 42, pp. 100-115"));
         assert!(!looks_like_slide_noise("Climate change affects global temperatures significantly"));
+    }
+
+    // ── VideoScene Tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_video_scene_deserialize_roundtrip() {
+        let json = r#"[
+            {"kind":"opener","title":"Rise of EVs","subtitle":"A visual journey","mood":"dramatic","durationFrames":240},
+            {"kind":"kineticText","text":"Electric vehicles are **transforming** the **automotive** industry","layout":"cascade","durationFrames":180},
+            {"kind":"dataCounter","title":"Key Numbers","counters":[{"label":"Global EV Sales","value":"14000000","unit":" units"}],"durationFrames":210},
+            {"kind":"barRace","title":"Top Markets","bars":[{"label":"China","value":8100000},{"label":"Europe","value":3200000}],"durationFrames":210},
+            {"kind":"particleMood","text":"A cleaner future awaits","preset":"nebula","durationFrames":150},
+            {"kind":"timelinePath","title":"EV Timeline","waypoints":[{"year":"1996","label":"GM EV1"},{"year":"2008","label":"Tesla Roadster"}],"durationFrames":270},
+            {"kind":"comparisonSplit","title":"ICE vs EV","leftLabel":"Gasoline","rightLabel":"Electric","points":[{"left":"$3000/yr fuel","right":"$500/yr charging"}],"durationFrames":240},
+            {"kind":"closing","title":"The Future is Electric","subtitle":"Generated by NabaOS","durationFrames":210}
+        ]"#;
+        let scenes: Vec<VideoScene> = serde_json::from_str(json).unwrap();
+        assert_eq!(scenes.len(), 8);
+        assert_eq!(scenes[0].kind_str(), "opener");
+        assert_eq!(scenes[1].kind_str(), "kineticText");
+        assert_eq!(scenes[2].kind_str(), "dataCounter");
+        assert_eq!(scenes[3].kind_str(), "barRace");
+        assert_eq!(scenes[4].kind_str(), "particleMood");
+        assert_eq!(scenes[5].kind_str(), "timelinePath");
+        assert_eq!(scenes[6].kind_str(), "comparisonSplit");
+        assert_eq!(scenes[7].kind_str(), "closing");
+
+        // Roundtrip
+        let serialized = serde_json::to_string(&scenes).unwrap();
+        let roundtrip: Vec<VideoScene> = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(roundtrip.len(), 8);
+    }
+
+    #[test]
+    fn test_video_scene_defaults() {
+        // Omitting durationFrames should use defaults
+        let json = r#"[
+            {"kind":"opener","title":"Test","subtitle":"Sub"},
+            {"kind":"kineticText","text":"Hello world"},
+            {"kind":"dataCounter","title":"Stats","counters":[]},
+            {"kind":"closing","title":"End"}
+        ]"#;
+        let scenes: Vec<VideoScene> = serde_json::from_str(json).unwrap();
+        assert_eq!(scenes[0].duration_frames(), 240); // default_opener_duration
+        assert_eq!(scenes[1].duration_frames(), 180); // default_kinetic_duration
+        assert_eq!(scenes[2].duration_frames(), 210); // default_counter_duration
+        assert_eq!(scenes[3].duration_frames(), 210); // default_closing_motion_duration
+
+        // Default layout and preset
+        if let VideoScene::KineticText { layout, .. } = &scenes[1] {
+            assert_eq!(layout, "cascade");
+        }
+    }
+
+    #[test]
+    fn test_validate_video_scenes_opener_closing() {
+        // Missing Opener and Closing — should be inserted
+        let mut scenes = vec![
+            VideoScene::KineticText {
+                text: "Hello".into(), layout: "wave".into(), duration_frames: 180,
+            },
+        ];
+        validate_video_scenes(&mut scenes, "Test Topic");
+        assert!(matches!(scenes.first(), Some(VideoScene::Opener { .. })));
+        assert!(matches!(scenes.last(), Some(VideoScene::Closing { .. })));
+        assert_eq!(scenes.len(), 3);
+    }
+
+    #[test]
+    fn test_validate_video_scenes_clamps_count() {
+        let mut scenes: Vec<VideoScene> = (0..25).map(|i| {
+            VideoScene::KineticText {
+                text: format!("Scene {}", i), layout: "cascade".into(), duration_frames: 180,
+            }
+        }).collect();
+        validate_video_scenes(&mut scenes, "Test");
+        assert!(scenes.len() <= 20);
+        assert!(matches!(scenes.first(), Some(VideoScene::Opener { .. })));
+        assert!(matches!(scenes.last(), Some(VideoScene::Closing { .. })));
+    }
+
+    #[test]
+    fn test_validate_video_scenes_fixes_invalid_presets() {
+        let mut scenes = vec![
+            VideoScene::Opener { title: "T".into(), subtitle: "S".into(), mood: "epic".into(), duration_frames: 240 },
+            VideoScene::KineticText { text: "Hello".into(), layout: "invalid_layout".into(), duration_frames: 180 },
+            VideoScene::ParticleMood { text: "Mood".into(), preset: "invalid_preset".into(), duration_frames: 150 },
+            VideoScene::Closing { title: "End".into(), subtitle: "Done".into(), duration_frames: 210 },
+        ];
+        validate_video_scenes(&mut scenes, "Test");
+
+        if let VideoScene::KineticText { layout, .. } = &scenes[1] {
+            assert_eq!(layout, "cascade"); // defaulted from invalid
+        }
+        if let VideoScene::ParticleMood { preset, .. } = &scenes[2] {
+            assert_eq!(preset, "stars"); // defaulted from invalid
+        }
+    }
+
+    #[test]
+    fn test_validate_video_scenes_clamps_duration() {
+        let mut scenes = vec![
+            VideoScene::Opener { title: "T".into(), subtitle: "S".into(), mood: "".into(), duration_frames: 30 }, // too low
+            VideoScene::KineticText { text: "X".into(), layout: "cascade".into(), duration_frames: 600 }, // too high
+            VideoScene::Closing { title: "End".into(), subtitle: "".into(), duration_frames: 210 },
+        ];
+        validate_video_scenes(&mut scenes, "Test");
+
+        assert_eq!(scenes[0].duration_frames(), 90);  // clamped up
+        assert_eq!(scenes[1].duration_frames(), 360); // clamped down
     }
 }
