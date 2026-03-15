@@ -2192,73 +2192,47 @@ pub struct ComparisonPoint {
     pub right: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct IconEntry {
-    pub name: String,
-    #[serde(default)]
-    pub label: String,
-}
-
-fn default_opener_duration() -> u32 { 240 }
-fn default_kinetic_duration() -> u32 { 180 }
-fn default_counter_duration() -> u32 { 210 }
+fn default_title_card_duration() -> u32 { 240 }
+fn default_explainer_duration() -> u32 { 180 }
+fn default_data_reveal_duration() -> u32 { 210 }
 fn default_bar_race_duration() -> u32 { 210 }
-fn default_particle_duration() -> u32 { 150 }
 fn default_timeline_path_duration() -> u32 { 270 }
 fn default_comparison_duration() -> u32 { 240 }
-fn default_closing_motion_duration() -> u32 { 210 }
+fn default_call_to_action_duration() -> u32 { 210 }
 fn default_photo_reveal_duration() -> u32 { 180 }
-fn default_presenter_duration() -> u32 { 210 }
-fn default_icon_animation_duration() -> u32 { 180 }
+fn default_process_flow_duration() -> u32 { 240 }
+fn default_key_insight_duration() -> u32 { 210 }
 fn default_layout() -> String { "cascade".to_string() }
 fn default_preset() -> String { "stars".to_string() }
 fn default_ken_burns() -> String { "zoom_in_right".to_string() }
-fn default_pose() -> String { "neutral".to_string() }
-fn default_gesture_side() -> String { "left".to_string() }
-fn default_icon_animation_type() -> String { "grow".to_string() }
+fn default_source_type() -> String { "research".to_string() }
+fn default_highlight_color() -> String { String::new() }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum VideoScene {
-    Opener {
+    #[serde(alias = "opener")]
+    TitleCard {
         title: String,
         #[serde(default)]
         subtitle: String,
         #[serde(default)]
-        mood: String,
-        #[serde(rename = "durationFrames", default = "default_opener_duration")]
+        preset: String,
+        #[serde(default)]
+        narration: String,
+        #[serde(rename = "durationFrames", default = "default_title_card_duration")]
         duration_frames: u32,
     },
-    KineticText {
+    #[serde(alias = "kineticText")]
+    ExplainerText {
         text: String,
         #[serde(default = "default_layout")]
         layout: String,
-        #[serde(rename = "durationFrames", default = "default_kinetic_duration")]
-        duration_frames: u32,
-    },
-    DataCounter {
-        title: String,
-        counters: Vec<CounterEntry>,
-        #[serde(rename = "durationFrames", default = "default_counter_duration")]
-        duration_frames: u32,
-    },
-    BarRace {
-        title: String,
-        bars: Vec<BarEntry>,
-        #[serde(rename = "durationFrames", default = "default_bar_race_duration")]
-        duration_frames: u32,
-    },
-    ParticleMood {
-        text: String,
         #[serde(default = "default_preset")]
         preset: String,
-        #[serde(rename = "durationFrames", default = "default_particle_duration")]
-        duration_frames: u32,
-    },
-    TimelinePath {
-        title: String,
-        waypoints: Vec<WaypointEntry>,
-        #[serde(rename = "durationFrames", default = "default_timeline_path_duration")]
+        #[serde(default)]
+        narration: String,
+        #[serde(rename = "durationFrames", default = "default_explainer_duration")]
         duration_frames: u32,
     },
     ComparisonSplit {
@@ -2268,14 +2242,36 @@ pub enum VideoScene {
         #[serde(default)]
         right_label: String,
         points: Vec<ComparisonPoint>,
+        #[serde(default)]
+        narration: String,
         #[serde(rename = "durationFrames", default = "default_comparison_duration")]
         duration_frames: u32,
     },
-    Closing {
-        title: String,
+    #[serde(alias = "dataCounter")]
+    DataReveal {
+        #[serde(alias = "title")]
+        label: String,
         #[serde(default)]
-        subtitle: String,
-        #[serde(rename = "durationFrames", default = "default_closing_motion_duration")]
+        value: String,
+        #[serde(default)]
+        suffix: String,
+        #[serde(default)]
+        context: String,
+        #[serde(default)]
+        counters: Vec<CounterEntry>,
+        #[serde(default = "default_preset")]
+        preset: String,
+        #[serde(default)]
+        narration: String,
+        #[serde(rename = "durationFrames", default = "default_data_reveal_duration")]
+        duration_frames: u32,
+    },
+    TimelinePath {
+        title: String,
+        waypoints: Vec<WaypointEntry>,
+        #[serde(default)]
+        narration: String,
+        #[serde(rename = "durationFrames", default = "default_timeline_path_duration")]
         duration_frames: u32,
     },
     PhotoReveal {
@@ -2286,24 +2282,50 @@ pub enum VideoScene {
         attribution: String,
         #[serde(rename = "kenBurnsDirection", default = "default_ken_burns")]
         ken_burns_direction: String,
+        #[serde(default)]
+        narration: String,
         #[serde(rename = "durationFrames", default = "default_photo_reveal_duration")]
         duration_frames: u32,
     },
-    PresenterNarration {
-        text: String,
-        #[serde(default = "default_pose")]
-        pose: String,
-        #[serde(rename = "gestureSide", default = "default_gesture_side")]
-        gesture_side: String,
-        #[serde(rename = "durationFrames", default = "default_presenter_duration")]
+    ProcessFlow {
+        title: String,
+        steps: Vec<String>,
+        #[serde(rename = "highlightColor", default = "default_highlight_color")]
+        highlight_color: String,
+        #[serde(default)]
+        narration: String,
+        #[serde(rename = "durationFrames", default = "default_process_flow_duration")]
         duration_frames: u32,
     },
-    IconAnimation {
+    KeyInsight {
+        insight: String,
+        #[serde(rename = "supportingEvidence", default)]
+        supporting_evidence: String,
+        #[serde(rename = "sourceType", default = "default_source_type")]
+        source_type: String,
+        #[serde(default)]
+        narration: String,
+        #[serde(rename = "durationFrames", default = "default_key_insight_duration")]
+        duration_frames: u32,
+    },
+    BarRace {
         title: String,
-        icons: Vec<IconEntry>,
-        #[serde(default = "default_icon_animation_type")]
-        animation: String,
-        #[serde(rename = "durationFrames", default = "default_icon_animation_duration")]
+        bars: Vec<BarEntry>,
+        #[serde(default)]
+        narration: String,
+        #[serde(rename = "durationFrames", default = "default_bar_race_duration")]
+        duration_frames: u32,
+    },
+    #[serde(alias = "closing")]
+    CallToAction {
+        title: String,
+        #[serde(default)]
+        subtitle: String,
+        #[serde(default = "default_preset")]
+        preset: String,
+        #[serde(default)]
+        narration: String,
+        #[serde(rename = "durationFrames", default = "default_call_to_action_duration")]
         duration_frames: u32,
     },
 }
@@ -2311,75 +2333,79 @@ pub enum VideoScene {
 impl VideoScene {
     pub fn duration_frames(&self) -> u32 {
         match self {
-            VideoScene::Opener { duration_frames, .. }
-            | VideoScene::KineticText { duration_frames, .. }
-            | VideoScene::DataCounter { duration_frames, .. }
-            | VideoScene::BarRace { duration_frames, .. }
-            | VideoScene::ParticleMood { duration_frames, .. }
-            | VideoScene::TimelinePath { duration_frames, .. }
+            VideoScene::TitleCard { duration_frames, .. }
+            | VideoScene::ExplainerText { duration_frames, .. }
             | VideoScene::ComparisonSplit { duration_frames, .. }
-            | VideoScene::Closing { duration_frames, .. }
+            | VideoScene::DataReveal { duration_frames, .. }
+            | VideoScene::TimelinePath { duration_frames, .. }
             | VideoScene::PhotoReveal { duration_frames, .. }
-            | VideoScene::PresenterNarration { duration_frames, .. }
-            | VideoScene::IconAnimation { duration_frames, .. } => *duration_frames,
+            | VideoScene::ProcessFlow { duration_frames, .. }
+            | VideoScene::KeyInsight { duration_frames, .. }
+            | VideoScene::BarRace { duration_frames, .. }
+            | VideoScene::CallToAction { duration_frames, .. } => *duration_frames,
         }
     }
 
     #[cfg(test)]
     fn kind_str(&self) -> &'static str {
         match self {
-            VideoScene::Opener { .. } => "opener",
-            VideoScene::KineticText { .. } => "kineticText",
-            VideoScene::DataCounter { .. } => "dataCounter",
-            VideoScene::BarRace { .. } => "barRace",
-            VideoScene::ParticleMood { .. } => "particleMood",
-            VideoScene::TimelinePath { .. } => "timelinePath",
+            VideoScene::TitleCard { .. } => "titleCard",
+            VideoScene::ExplainerText { .. } => "explainerText",
             VideoScene::ComparisonSplit { .. } => "comparisonSplit",
-            VideoScene::Closing { .. } => "closing",
+            VideoScene::DataReveal { .. } => "dataReveal",
+            VideoScene::TimelinePath { .. } => "timelinePath",
             VideoScene::PhotoReveal { .. } => "photoReveal",
-            VideoScene::PresenterNarration { .. } => "presenterNarration",
-            VideoScene::IconAnimation { .. } => "iconAnimation",
+            VideoScene::ProcessFlow { .. } => "processFlow",
+            VideoScene::KeyInsight { .. } => "keyInsight",
+            VideoScene::BarRace { .. } => "barRace",
+            VideoScene::CallToAction { .. } => "callToAction",
+        }
+    }
+
+    /// Get narration text for this scene (used by NarrationOverlay).
+    pub fn narration(&self) -> &str {
+        match self {
+            VideoScene::TitleCard { narration, .. }
+            | VideoScene::ExplainerText { narration, .. }
+            | VideoScene::ComparisonSplit { narration, .. }
+            | VideoScene::DataReveal { narration, .. }
+            | VideoScene::TimelinePath { narration, .. }
+            | VideoScene::PhotoReveal { narration, .. }
+            | VideoScene::ProcessFlow { narration, .. }
+            | VideoScene::KeyInsight { narration, .. }
+            | VideoScene::BarRace { narration, .. }
+            | VideoScene::CallToAction { narration, .. } => narration,
         }
     }
 
     fn duration_frames_mut(&mut self) -> &mut u32 {
         match self {
-            VideoScene::Opener { duration_frames, .. }
-            | VideoScene::KineticText { duration_frames, .. }
-            | VideoScene::DataCounter { duration_frames, .. }
-            | VideoScene::BarRace { duration_frames, .. }
-            | VideoScene::ParticleMood { duration_frames, .. }
-            | VideoScene::TimelinePath { duration_frames, .. }
+            VideoScene::TitleCard { duration_frames, .. }
+            | VideoScene::ExplainerText { duration_frames, .. }
             | VideoScene::ComparisonSplit { duration_frames, .. }
-            | VideoScene::Closing { duration_frames, .. }
+            | VideoScene::DataReveal { duration_frames, .. }
+            | VideoScene::TimelinePath { duration_frames, .. }
             | VideoScene::PhotoReveal { duration_frames, .. }
-            | VideoScene::PresenterNarration { duration_frames, .. }
-            | VideoScene::IconAnimation { duration_frames, .. } => duration_frames,
+            | VideoScene::ProcessFlow { duration_frames, .. }
+            | VideoScene::KeyInsight { duration_frames, .. }
+            | VideoScene::BarRace { duration_frames, .. }
+            | VideoScene::CallToAction { duration_frames, .. } => duration_frames,
         }
     }
 }
 
-/// Validate and fix video scenes: ensure Opener first, Closing last, clamp counts/durations,
-/// fix invalid layout/preset values.
+/// Validate and fix video scenes: ensure TitleCard first, CallToAction last,
+/// clamp counts/durations, fix invalid field values, convert deleted scene kinds.
 pub fn validate_video_scenes(scenes: &mut Vec<VideoScene>, title: &str) {
-    // Fix invalid layout/preset/direction/pose/animation values
     let valid_layouts = ["cascade", "converge", "wave", "typewriter"];
-    let valid_presets = ["stars", "rain", "fireflies", "snow", "nebula"];
     let valid_ken_burns = ["zoom_in_right", "zoom_in_left", "zoom_out_center", "pan_left", "pan_right"];
-    let valid_poses = ["neutral", "pointing", "thinking", "excited"];
-    let valid_gesture_sides = ["left", "right"];
-    let valid_animations = ["grow", "orbit", "flow", "transform"];
+    let valid_source_types = ["observation", "inference", "analogy", "testimony", "research"];
 
     for scene in scenes.iter_mut() {
         match scene {
-            VideoScene::KineticText { layout, .. } => {
+            VideoScene::ExplainerText { layout, .. } => {
                 if !valid_layouts.contains(&layout.as_str()) {
                     *layout = "cascade".to_string();
-                }
-            }
-            VideoScene::ParticleMood { preset, .. } => {
-                if !valid_presets.contains(&preset.as_str()) {
-                    *preset = "stars".to_string();
                 }
             }
             VideoScene::PhotoReveal { ken_burns_direction, .. } => {
@@ -2387,47 +2413,44 @@ pub fn validate_video_scenes(scenes: &mut Vec<VideoScene>, title: &str) {
                     *ken_burns_direction = "zoom_in_right".to_string();
                 }
             }
-            VideoScene::PresenterNarration { pose, gesture_side, .. } => {
-                if !valid_poses.contains(&pose.as_str()) {
-                    *pose = "neutral".to_string();
-                }
-                if !valid_gesture_sides.contains(&gesture_side.as_str()) {
-                    *gesture_side = "left".to_string();
-                }
+            VideoScene::ProcessFlow { steps, .. } => {
+                steps.truncate(8);
             }
-            VideoScene::IconAnimation { animation, icons, .. } => {
-                if !valid_animations.contains(&animation.as_str()) {
-                    *animation = "grow".to_string();
+            VideoScene::KeyInsight { source_type, .. } => {
+                if !valid_source_types.contains(&source_type.as_str()) {
+                    *source_type = "research".to_string();
                 }
-                icons.truncate(8);
             }
             _ => {}
         }
     }
 
-    // Ensure Opener first
-    if !matches!(scenes.first(), Some(VideoScene::Opener { .. })) {
-        scenes.insert(0, VideoScene::Opener {
+    // Ensure TitleCard first
+    if !matches!(scenes.first(), Some(VideoScene::TitleCard { .. })) {
+        scenes.insert(0, VideoScene::TitleCard {
             title: title.to_string(),
             subtitle: String::new(),
-            mood: "dramatic".to_string(),
+            preset: "stars".to_string(),
+            narration: String::new(),
             duration_frames: 240,
         });
     }
 
-    // Ensure Closing last
-    if !matches!(scenes.last(), Some(VideoScene::Closing { .. })) {
-        scenes.push(VideoScene::Closing {
+    // Ensure CallToAction last
+    if !matches!(scenes.last(), Some(VideoScene::CallToAction { .. })) {
+        scenes.push(VideoScene::CallToAction {
             title: "Thank You".to_string(),
             subtitle: "Generated by NabaOS PEA".to_string(),
+            preset: "stars".to_string(),
+            narration: String::new(),
             duration_frames: 210,
         });
     }
 
-    // Clamp to 8-60 scenes
-    if scenes.len() > 60 {
+    // Clamp to 8-30 scenes (quality over quantity)
+    if scenes.len() > 30 {
         let closing = scenes.pop().unwrap();
-        scenes.truncate(59);
+        scenes.truncate(29);
         scenes.push(closing);
     }
 
@@ -4982,15 +5005,17 @@ pub fn generate_pixi_video(
     }
     eprintln!("[pea/doc] copied {} images to public/", copied_files.len());
 
-    // Convert PhotoReveal scenes with missing filenames to ParticleMood fallback
+    // Convert PhotoReveal scenes with missing filenames to ExplainerText fallback
     let mut scenes = scenes.to_vec();
     for scene in scenes.iter_mut() {
-        if let VideoScene::PhotoReveal { filename, caption, duration_frames, .. } = scene {
+        if let VideoScene::PhotoReveal { filename, caption, narration, duration_frames, .. } = scene {
             if !copied_files.contains(filename.as_str()) {
-                eprintln!("[pea/doc] PhotoReveal fallback: {} not found, converting to ParticleMood", filename);
-                *scene = VideoScene::ParticleMood {
+                eprintln!("[pea/doc] PhotoReveal fallback: {} not found, converting to ExplainerText", filename);
+                *scene = VideoScene::ExplainerText {
                     text: caption.clone(),
-                    preset: "nebula".to_string(),
+                    layout: "cascade".to_string(),
+                    preset: "stars".to_string(),
+                    narration: narration.clone(),
                     duration_frames: *duration_frames,
                 };
             }
@@ -5049,20 +5074,18 @@ pub fn generate_pixi_video(
 export interface BarEntry { label: string; value: number; }
 export interface WaypointEntry { year: string; label: string; }
 export interface ComparisonPoint { left: string; right: string; }
-export interface IconEntry { name: string; label: string; }
 
 export type VideoScene =
-  | { kind: "opener"; title: string; subtitle?: string; mood?: string; durationFrames: number }
-  | { kind: "kineticText"; text: string; layout: string; durationFrames: number }
-  | { kind: "dataCounter"; title: string; counters: CounterEntry[]; durationFrames: number }
-  | { kind: "barRace"; title: string; bars: BarEntry[]; durationFrames: number }
-  | { kind: "particleMood"; text: string; preset: string; durationFrames: number }
-  | { kind: "timelinePath"; title: string; waypoints: WaypointEntry[]; durationFrames: number }
-  | { kind: "comparisonSplit"; title: string; leftLabel?: string; rightLabel?: string; points: ComparisonPoint[]; durationFrames: number }
-  | { kind: "closing"; title: string; subtitle?: string; durationFrames: number }
-  | { kind: "photoReveal"; caption?: string; filename: string; attribution?: string; kenBurnsDirection: string; durationFrames: number }
-  | { kind: "presenterNarration"; text: string; pose: string; gestureSide: string; durationFrames: number }
-  | { kind: "iconAnimation"; title: string; icons: IconEntry[]; animation: string; durationFrames: number };
+  | { kind: "titleCard"; title: string; subtitle?: string; preset?: string; narration?: string; durationFrames: number }
+  | { kind: "explainerText"; text: string; layout: string; preset?: string; narration?: string; durationFrames: number }
+  | { kind: "comparisonSplit"; title: string; leftLabel?: string; rightLabel?: string; points: ComparisonPoint[]; narration?: string; durationFrames: number }
+  | { kind: "dataReveal"; label: string; value?: string; suffix?: string; context?: string; counters?: CounterEntry[]; preset?: string; narration?: string; durationFrames: number }
+  | { kind: "timelinePath"; title: string; waypoints: WaypointEntry[]; narration?: string; durationFrames: number }
+  | { kind: "photoReveal"; caption?: string; filename: string; attribution?: string; kenBurnsDirection: string; narration?: string; durationFrames: number }
+  | { kind: "processFlow"; title: string; steps: string[]; highlightColor?: string; narration?: string; durationFrames: number }
+  | { kind: "keyInsight"; insight: string; supportingEvidence?: string; sourceType?: string; narration?: string; durationFrames: number }
+  | { kind: "barRace"; title: string; bars: BarEntry[]; narration?: string; durationFrames: number }
+  | { kind: "callToAction"; title: string; subtitle?: string; preset?: string; narration?: string; durationFrames: number };
 
 export interface MotionVideoProps {
   scenes: VideoScene[];
@@ -5149,49 +5172,50 @@ export const PixiCanvas: React.FC<PixiCanvasProps> = ({ setup, update, bg = 0x16
         .map_err(|e| NyayaError::Config(format!("write pixi-canvas.tsx: {}", e)))?;
 
     // --- Scene components ---
-    write_pixi_scene_opener(&scenes_dir, primary, accent)?;
-    write_pixi_scene_kinetic_text(&scenes_dir, primary, accent)?;
-    write_pixi_scene_data_counter(&scenes_dir, primary, accent)?;
+    write_pixi_scene_title_card(&scenes_dir, primary, accent)?;
+    write_pixi_scene_explainer_text(&scenes_dir, primary, accent)?;
+    write_pixi_scene_data_reveal(&scenes_dir, primary, accent)?;
     write_pixi_scene_bar_race(&scenes_dir, primary, accent)?;
-    write_pixi_scene_particle_mood(&scenes_dir, primary, accent)?;
     write_pixi_scene_timeline_path(&scenes_dir, primary, accent)?;
     write_pixi_scene_comparison_split(&scenes_dir, primary, accent)?;
-    write_pixi_scene_closing(&scenes_dir, primary, accent)?;
+    write_pixi_scene_call_to_action(&scenes_dir, primary, accent)?;
     write_pixi_scene_photo_reveal(&scenes_dir, primary, accent)?;
-    write_pixi_scene_presenter_narration(&scenes_dir, primary, accent)?;
-    write_pixi_scene_icon_animation(&scenes_dir, primary, accent)?;
+    write_pixi_scene_process_flow(&scenes_dir, primary, accent)?;
+    write_pixi_scene_key_insight(&scenes_dir, primary, accent)?;
+
+    // --- NarrationOverlay component ---
+    write_narration_overlay(&scenes_dir)?;
 
     // --- src/MotionVideo.tsx ---
     let motion_video = format!(r##"import React from "react";
 import {{ Sequence, useVideoConfig }} from "remotion";
 import {{ VideoScene }} from "./types";
-import {{ OpenerScene }} from "./scenes/opener";
-import {{ KineticTextScene }} from "./scenes/kinetic-text";
-import {{ DataCounterScene }} from "./scenes/data-counter";
+import {{ TitleCardScene }} from "./scenes/title-card";
+import {{ ExplainerTextScene }} from "./scenes/explainer-text";
+import {{ DataRevealScene }} from "./scenes/data-reveal";
 import {{ BarRaceScene }} from "./scenes/bar-race";
-import {{ ParticleMoodScene }} from "./scenes/particle-mood";
 import {{ TimelinePathScene }} from "./scenes/timeline-path";
 import {{ ComparisonSplitScene }} from "./scenes/comparison-split";
-import {{ ClosingScene }} from "./scenes/closing";
+import {{ CallToActionScene }} from "./scenes/call-to-action";
 import {{ PhotoRevealScene }} from "./scenes/photo-reveal";
-import {{ PresenterNarrationScene }} from "./scenes/presenter-narration";
-import {{ IconAnimationScene }} from "./scenes/icon-animation";
+import {{ ProcessFlowScene }} from "./scenes/process-flow";
+import {{ KeyInsightScene }} from "./scenes/key-insight";
+import {{ NarrationOverlay }} from "./scenes/narration-overlay";
 
 const CROSSFADE = 15;
 
 function renderScene(scene: VideoScene) {{
   switch (scene.kind) {{
-    case "opener": return <OpenerScene title={{scene.title}} subtitle={{scene.subtitle || ""}} mood={{scene.mood || "dramatic"}} />;
-    case "kineticText": return <KineticTextScene text={{scene.text}} layout={{scene.layout}} />;
-    case "dataCounter": return <DataCounterScene title={{scene.title}} counters={{scene.counters}} />;
+    case "titleCard": return <TitleCardScene title={{scene.title}} subtitle={{scene.subtitle || ""}} />;
+    case "explainerText": return <ExplainerTextScene text={{scene.text}} layout={{scene.layout}} />;
+    case "dataReveal": return <DataRevealScene label={{scene.label}} value={{scene.value || ""}} suffix={{scene.suffix || ""}} context={{scene.context || ""}} counters={{scene.counters || []}} />;
     case "barRace": return <BarRaceScene title={{scene.title}} bars={{scene.bars}} />;
-    case "particleMood": return <ParticleMoodScene text={{scene.text}} preset={{scene.preset}} />;
     case "timelinePath": return <TimelinePathScene title={{scene.title}} waypoints={{scene.waypoints}} />;
     case "comparisonSplit": return <ComparisonSplitScene title={{scene.title}} leftLabel={{scene.leftLabel || "Before"}} rightLabel={{scene.rightLabel || "After"}} points={{scene.points}} />;
-    case "closing": return <ClosingScene title={{scene.title}} subtitle={{scene.subtitle || ""}} />;
+    case "callToAction": return <CallToActionScene title={{scene.title}} subtitle={{scene.subtitle || ""}} />;
     case "photoReveal": return <PhotoRevealScene caption={{scene.caption || ""}} filename={{scene.filename}} attribution={{scene.attribution || ""}} kenBurnsDirection={{scene.kenBurnsDirection}} accentColor="__ACCENT__" />;
-    case "presenterNarration": return <PresenterNarrationScene text={{scene.text}} pose={{scene.pose}} gestureSide={{scene.gestureSide}} />;
-    case "iconAnimation": return <IconAnimationScene title={{scene.title}} icons={{scene.icons}} animation={{scene.animation}} />;
+    case "processFlow": return <ProcessFlowScene title={{scene.title}} steps={{scene.steps}} highlightColor={{scene.highlightColor || "__ACCENT__"}} />;
+    case "keyInsight": return <KeyInsightScene insight={{scene.insight}} supportingEvidence={{scene.supportingEvidence || ""}} sourceType={{scene.sourceType || "research"}} />;
   }}
 }}
 
@@ -5203,15 +5227,12 @@ export const MotionVideo: React.FC<{{ scenes: VideoScene[] }}> = ({{ scenes }}) 
     <div style={{{{ width: 1920, height: 1080, backgroundColor: "#16161e" }}}}>
       {{scenes.map((scene, i) => {{
         const dur = scene.durationFrames;
-        const fadeIn = i > 0 ? CROSSFADE : 0;
-        const fadeOut = i < scenes.length - 1 ? CROSSFADE : 0;
+        const narration = (scene as any).narration || "";
         const seq = (
           <Sequence key={{i}} from={{offset}} durationInFrames={{dur}}>
-            <div style={{{{
-              width: "100%", height: "100%",
-              opacity: 1,
-            }}}}>
+            <div style={{{{ width: "100%", height: "100%", position: "relative" }}}}>
               {{renderScene(scene)}}
+              {{narration && <NarrationOverlay text={{narration}} durationInFrames={{dur}} />}}
             </div>
           </Sequence>
         );
@@ -5320,7 +5341,7 @@ fn css_to_hex_int(css: &str) -> String {
     format!("0x{}", hex)
 }
 
-fn write_pixi_scene_opener(dir: &Path, primary: &str, accent: &str) -> Result<()> {
+fn write_pixi_scene_title_card(dir: &Path, primary: &str, accent: &str) -> Result<()> {
     let pc = css_to_hex_int(primary);
     let ac = css_to_hex_int(accent);
     let code = format!(r##"import React, {{ useCallback }} from "react";
@@ -5328,13 +5349,12 @@ import {{ PixiCanvas }} from "../pixi-canvas";
 import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
 import {{ spring }} from "../easing";
 
-interface Props {{ title: string; subtitle: string; mood: string; }}
+interface Props {{ title: string; subtitle: string; }}
 
-export const OpenerScene: React.FC<Props> = ({{ title, subtitle }}) => {{
+export const TitleCardScene: React.FC<Props> = ({{ title, subtitle }}) => {{
   const particles: {{ x: number; y: number; vx: number; vy: number; r: number }}[] = [];
 
   const setup = useCallback((app: Application) => {{
-    // Create 200 particles for radial burst
     const g = new Graphics();
     app.stage.addChild(g);
     for (let i = 0; i < 200; i++) {{
@@ -5346,12 +5366,10 @@ export const OpenerScene: React.FC<Props> = ({{ title, subtitle }}) => {{
         r: 1 + Math.random() * 3,
       }});
     }}
-    // Title
     const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 72, fontWeight: "bold", fill: {ac}, wordWrap: true, wordWrapWidth: 1600, align: "center" }});
     const t = new Text({{ text: title, style: titleStyle }});
     t.anchor.set(0.5); t.x = 960; t.y = 480; t.label = "title";
     app.stage.addChild(t);
-    // Subtitle
     const subStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 36, fill: 0xc8c8d2, wordWrap: true, wordWrapWidth: 1400, align: "center" }});
     const s = new Text({{ text: subtitle, style: subStyle }});
     s.anchor.set(0.5); s.x = 960; s.y = 620; s.label = "subtitle"; s.alpha = 0;
@@ -5359,7 +5377,6 @@ export const OpenerScene: React.FC<Props> = ({{ title, subtitle }}) => {{
   }}, [title, subtitle]);
 
   const update = useCallback((app: Application, progress: number) => {{
-    // Particles: radial burst with friction
     const g = app.stage.children[0] as Graphics;
     g.clear();
     for (const p of particles) {{
@@ -5368,13 +5385,11 @@ export const OpenerScene: React.FC<Props> = ({{ title, subtitle }}) => {{
       g.circle(p.x, p.y, p.r * (1 - progress * 0.5));
       g.fill({{ color: {pc}, alpha: 0.6 * (1 - progress * 0.7) }});
     }}
-    // Title spring scale
     const titleEl = app.stage.children.find((c: any) => c.label === "title");
     if (titleEl) {{
       const s = 0.3 + 0.7 * spring(progress * 2);
       titleEl.scale.set(Math.min(s, 1));
     }}
-    // Subtitle fade in at 40%
     const subEl = app.stage.children.find((c: any) => c.label === "subtitle");
     if (subEl) {{
       subEl.alpha = Math.max(0, Math.min(1, (progress - 0.4) * 3));
@@ -5384,11 +5399,11 @@ export const OpenerScene: React.FC<Props> = ({{ title, subtitle }}) => {{
   return <PixiCanvas setup={{setup}} update={{update}} />;
 }};
 "##);
-    std::fs::write(dir.join("opener.tsx"), &code)
-        .map_err(|e| NyayaError::Config(format!("write opener.tsx: {}", e)))
+    std::fs::write(dir.join("title-card.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write title-card.tsx: {}", e)))
 }
 
-fn write_pixi_scene_kinetic_text(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+fn write_pixi_scene_explainer_text(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
     let ac = css_to_hex_int(accent);
     let code = format!(r##"import React, {{ useCallback, useRef }} from "react";
 import {{ PixiCanvas }} from "../pixi-canvas";
@@ -5397,26 +5412,40 @@ import {{ spring, stagger }} from "../easing";
 
 interface Props {{ text: string; layout: string; }}
 
-export const KineticTextScene: React.FC<Props> = ({{ text, layout }}) => {{
-  const wordsRef = useRef<string[]>([]);
+interface WordEntry {{ word: string; bold: boolean; }}
+
+export const ExplainerTextScene: React.FC<Props> = ({{ text, layout }}) => {{
+  const wordsRef = useRef<WordEntry[]>([]);
 
   const setup = useCallback((app: Application) => {{
-    // Parse words, detecting **bold** markers
-    const raw = text.split(/\s+/);
-    wordsRef.current = raw;
-    const cols = Math.ceil(Math.sqrt(raw.length * 1.5));
-    raw.forEach((word, i) => {{
-      const isBold = word.startsWith("**") && word.endsWith("**");
-      const clean = isBold ? word.slice(2, -2) : word;
+    // Parse segments: split by <b> and </b> tags for reliable multi-word bold
+    const segments: Array<{{text: string, bold: boolean}}> = [];
+    let remaining = text;
+    while (remaining.length > 0) {{
+      const bStart = remaining.indexOf("<b>");
+      if (bStart === -1) {{ segments.push({{text: remaining, bold: false}}); break; }}
+      if (bStart > 0) segments.push({{text: remaining.slice(0, bStart), bold: false}});
+      const bEnd = remaining.indexOf("</b>", bStart);
+      if (bEnd === -1) {{ segments.push({{text: remaining.slice(bStart + 3), bold: true}}); break; }}
+      segments.push({{text: remaining.slice(bStart + 3, bEnd), bold: true}});
+      remaining = remaining.slice(bEnd + 4);
+    }}
+    // Flatten to words with bold flags
+    const allWords: WordEntry[] = segments.flatMap(seg =>
+      seg.text.split(/\s+/).filter(w => w).map(w => ({{word: w, bold: seg.bold}}))
+    );
+    wordsRef.current = allWords;
+
+    const cols = Math.ceil(Math.sqrt(allWords.length * 1.5));
+    allWords.forEach((entry, i) => {{
       const style = new TextStyle({{
         fontFamily: "Arial",
-        fontSize: isBold ? 56 : 40,
-        fontWeight: isBold ? "bold" : "normal",
-        fill: isBold ? {ac} : 0xc8c8d2,
+        fontSize: entry.bold ? 56 : 40,
+        fontWeight: entry.bold ? "bold" : "normal",
+        fill: entry.bold ? {ac} : 0xc8c8d2,
       }});
-      const t = new Text({{ text: clean, style }});
+      const t = new Text({{ text: entry.word, style }});
       t.anchor.set(0.5);
-      // Target grid position
       const col = i % cols;
       const row = Math.floor(i / cols);
       const targetX = 200 + col * (1520 / cols);
@@ -5426,7 +5455,6 @@ export const KineticTextScene: React.FC<Props> = ({{ text, layout }}) => {{
       (t as any).targetY = targetY;
       (t as any).wordIndex = i;
 
-      // Initial position based on layout
       if (layout === "cascade") {{ t.y = -100; }}
       else if (layout === "converge") {{
         const edge = i % 4;
@@ -5463,11 +5491,11 @@ export const KineticTextScene: React.FC<Props> = ({{ text, layout }}) => {{
   return <PixiCanvas setup={{setup}} update={{update}} />;
 }};
 "##);
-    std::fs::write(dir.join("kinetic-text.tsx"), &code)
-        .map_err(|e| NyayaError::Config(format!("write kinetic-text.tsx: {}", e)))
+    std::fs::write(dir.join("explainer-text.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write explainer-text.tsx: {}", e)))
 }
 
-fn write_pixi_scene_data_counter(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+fn write_pixi_scene_data_reveal(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
     let ac = css_to_hex_int(accent);
     let code = format!(r##"import React, {{ useCallback }} from "react";
 import {{ PixiCanvas }} from "../pixi-canvas";
@@ -5475,50 +5503,47 @@ import {{ Application, Text, TextStyle, Graphics }} from "pixi.js";
 import {{ easeOutExpo }} from "../easing";
 import {{ CounterEntry }} from "../types";
 
-interface Props {{ title: string; counters: CounterEntry[]; }}
+interface Props {{ label: string; value: string; suffix: string; context: string; counters: CounterEntry[]; }}
 
-export const DataCounterScene: React.FC<Props> = ({{ title, counters }}) => {{
+export const DataRevealScene: React.FC<Props> = ({{ label, value, suffix, context, counters }}) => {{
   const setup = useCallback((app: Application) => {{
-    // Title
+    // Title / label
     const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 48, fontWeight: "bold", fill: 0xc8c8d2 }});
-    const t = new Text({{ text: title, style: titleStyle }});
+    const t = new Text({{ text: label, style: titleStyle }});
     t.anchor.set(0.5, 0); t.x = 960; t.y = 60;
     app.stage.addChild(t);
 
-    const spacing = 1920 / (counters.length + 1);
-    counters.forEach((c, i) => {{
+    // If we have legacy counters array, use it; otherwise use single value
+    const items = counters && counters.length > 0 ? counters : [{{ label: context || label, value: value || "0", unit: suffix }}];
+
+    const spacing = 1920 / (items.length + 1);
+    items.forEach((c, i) => {{
       const x = spacing * (i + 1);
-      // Arc background
       const g = new Graphics(); g.label = `arc_${{i}}`;
       app.stage.addChild(g);
       (g as any).cx = x; (g as any).cy = 450; (g as any).radius = 120;
-      // Value text
       const valStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 64, fontWeight: "bold", fill: {ac} }});
       const vt = new Text({{ text: "0", style: valStyle }});
       vt.anchor.set(0.5); vt.x = x; vt.y = 450; vt.label = `val_${{i}}`;
       (vt as any).target = parseFloat(c.value.replace(/[^0-9.]/g, "")) || 0;
       (vt as any).unit = c.unit || "";
-      (vt as any).rawValue = c.value;
       app.stage.addChild(vt);
-      // Label
       const lblStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 28, fill: 0xc8c8d2, wordWrap: true, wordWrapWidth: 300, align: "center" }});
       const lt = new Text({{ text: c.label, style: lblStyle }});
       lt.anchor.set(0.5); lt.x = x; lt.y = 600;
       app.stage.addChild(lt);
     }});
-  }}, [title, counters]);
+  }}, [label, value, suffix, context, counters]);
 
   const update = useCallback((app: Application, progress: number) => {{
     const ease = easeOutExpo(Math.min(progress * 1.5, 1));
     app.stage.children.forEach((child: any) => {{
-      // Update arcs
       if (child.label?.startsWith("arc_")) {{
         const g = child as Graphics;
         g.clear();
         g.arc(child.cx, child.cy, child.radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ease);
         g.stroke({{ color: {ac}, width: 6, alpha: 0.4 }});
       }}
-      // Update counter values
       if (child.label?.startsWith("val_")) {{
         const target = child.target;
         const current = Math.floor(ease * target);
@@ -5530,8 +5555,8 @@ export const DataCounterScene: React.FC<Props> = ({{ title, counters }}) => {{
   return <PixiCanvas setup={{setup}} update={{update}} />;
 }};
 "##);
-    std::fs::write(dir.join("data-counter.tsx"), &code)
-        .map_err(|e| NyayaError::Config(format!("write data-counter.tsx: {}", e)))
+    std::fs::write(dir.join("data-reveal.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write data-reveal.tsx: {}", e)))
 }
 
 fn write_pixi_scene_bar_race(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
@@ -5604,70 +5629,7 @@ export const BarRaceScene: React.FC<Props> = ({{ title, bars }}) => {{
         .map_err(|e| NyayaError::Config(format!("write bar-race.tsx: {}", e)))
 }
 
-fn write_pixi_scene_particle_mood(dir: &Path, primary: &str, _accent: &str) -> Result<()> {
-    let pc = css_to_hex_int(primary);
-    let code = format!(r##"import React, {{ useCallback, useRef }} from "react";
-import {{ PixiCanvas }} from "../pixi-canvas";
-import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
-
-interface Props {{ text: string; preset: string; }}
-
-interface Particle {{ x: number; y: number; vx: number; vy: number; r: number; alpha: number; }}
-
-export const ParticleMoodScene: React.FC<Props> = ({{ text, preset }}) => {{
-  const particlesRef = useRef<Particle[]>([]);
-
-  const setup = useCallback((app: Application) => {{
-    const count = preset === "nebula" ? 300 : preset === "fireflies" ? 80 : 150;
-    const parts: Particle[] = [];
-    for (let i = 0; i < count; i++) {{
-      parts.push({{
-        x: Math.random() * 1920,
-        y: Math.random() * 1080,
-        vx: (Math.random() - 0.5) * (preset === "rain" ? 0.5 : 2),
-        vy: preset === "rain" ? 2 + Math.random() * 3 : preset === "snow" ? 0.5 + Math.random() : (Math.random() - 0.5) * 2,
-        r: preset === "nebula" ? 1 + Math.random() * 6 : 1 + Math.random() * 3,
-        alpha: 0.3 + Math.random() * 0.7,
-      }});
-    }}
-    particlesRef.current = parts;
-
-    const g = new Graphics(); g.label = "particles";
-    app.stage.addChild(g);
-
-    const textStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 52, fontWeight: "bold", fill: 0xffffff, wordWrap: true, wordWrapWidth: 1400, align: "center" }});
-    const t = new Text({{ text, style: textStyle }});
-    t.anchor.set(0.5); t.x = 960; t.y = 540; t.label = "text";
-    app.stage.addChild(t);
-  }}, [text, preset]);
-
-  const update = useCallback((app: Application, progress: number) => {{
-    const g = app.stage.children.find((c: any) => c.label === "particles") as Graphics;
-    if (!g) return;
-    g.clear();
-    for (const p of particlesRef.current) {{
-      p.x += p.vx; p.y += p.vy;
-      if (preset === "fireflies") {{
-        p.x += Math.sin(progress * 20 + p.y * 0.01) * 0.5;
-        p.alpha = 0.3 + 0.7 * Math.abs(Math.sin(progress * 8 + p.x * 0.01));
-      }}
-      // Wrap around
-      if (p.x < -10) p.x = 1930; if (p.x > 1930) p.x = -10;
-      if (p.y < -10) p.y = 1090; if (p.y > 1090) p.y = -10;
-      g.circle(p.x, p.y, p.r);
-      g.fill({{ color: {pc}, alpha: p.alpha * (preset === "nebula" ? 0.4 : 0.7) }});
-    }}
-    // Text pulse
-    const t = app.stage.children.find((c: any) => c.label === "text");
-    if (t) {{ t.alpha = 0.7 + 0.3 * Math.sin(progress * Math.PI * 2); }}
-  }}, [preset]);
-
-  return <PixiCanvas setup={{setup}} update={{update}} />;
-}};
-"##);
-    std::fs::write(dir.join("particle-mood.tsx"), &code)
-        .map_err(|e| NyayaError::Config(format!("write particle-mood.tsx: {}", e)))
-}
+// Deleted: write_pixi_scene_particle_mood (decorative, no explanation)
 
 fn write_pixi_scene_timeline_path(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
     let ac = css_to_hex_int(accent);
@@ -5830,7 +5792,7 @@ export const ComparisonSplitScene: React.FC<Props> = ({{ title, leftLabel, right
         .map_err(|e| NyayaError::Config(format!("write comparison-split.tsx: {}", e)))
 }
 
-fn write_pixi_scene_closing(dir: &Path, primary: &str, accent: &str) -> Result<()> {
+fn write_pixi_scene_call_to_action(dir: &Path, primary: &str, accent: &str) -> Result<()> {
     let pc = css_to_hex_int(primary);
     let ac = css_to_hex_int(accent);
     let code = format!(r##"import React, {{ useCallback, useRef }} from "react";
@@ -5840,11 +5802,10 @@ import {{ spring }} from "../easing";
 
 interface Props {{ title: string; subtitle: string; }}
 
-export const ClosingScene: React.FC<Props> = ({{ title, subtitle }}) => {{
+export const CallToActionScene: React.FC<Props> = ({{ title, subtitle }}) => {{
   const particlesRef = useRef<{{ x: number; y: number; vx: number; vy: number; r: number }}[]>([]);
 
   const setup = useCallback((app: Application) => {{
-    // Particles that drift toward center (reverse of opener)
     const parts: {{ x: number; y: number; vx: number; vy: number; r: number }}[] = [];
     for (let i = 0; i < 150; i++) {{
       parts.push({{
@@ -5855,15 +5816,12 @@ export const ClosingScene: React.FC<Props> = ({{ title, subtitle }}) => {{
       }});
     }}
     particlesRef.current = parts;
-
     const g = new Graphics(); g.label = "particles";
     app.stage.addChild(g);
-
     const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 64, fontWeight: "bold", fill: {ac}, wordWrap: true, wordWrapWidth: 1600, align: "center" }});
     const t = new Text({{ text: title, style: titleStyle }});
     t.anchor.set(0.5); t.x = 960; t.y = 460; t.label = "title";
     app.stage.addChild(t);
-
     const subStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 32, fill: 0xc8c8d2, wordWrap: true, wordWrapWidth: 1400, align: "center" }});
     const s = new Text({{ text: subtitle, style: subStyle }});
     s.anchor.set(0.5); s.x = 960; s.y = 600; s.label = "subtitle"; s.alpha = 0;
@@ -5880,13 +5838,11 @@ export const ClosingScene: React.FC<Props> = ({{ title, subtitle }}) => {{
         g.fill({{ color: {pc}, alpha: 0.4 + 0.3 * progress }});
       }}
     }}
-    // Title spring up
     const t = app.stage.children.find((c: any) => c.label === "title");
     if (t) {{
       const s = 0.5 + 0.5 * spring(Math.min(progress * 2, 1));
       t.scale.set(s);
     }}
-    // Subtitle fade
     const sub = app.stage.children.find((c: any) => c.label === "subtitle");
     if (sub) {{ sub.alpha = Math.max(0, Math.min(1, (progress - 0.3) * 3)); }}
   }}, []);
@@ -5894,8 +5850,8 @@ export const ClosingScene: React.FC<Props> = ({{ title, subtitle }}) => {{
   return <PixiCanvas setup={{setup}} update={{update}} />;
 }};
 "##);
-    std::fs::write(dir.join("closing.tsx"), &code)
-        .map_err(|e| NyayaError::Config(format!("write closing.tsx: {}", e)))
+    std::fs::write(dir.join("call-to-action.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write call-to-action.tsx: {}", e)))
 }
 
 fn write_pixi_scene_photo_reveal(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
@@ -5979,311 +5935,241 @@ export const PhotoRevealScene: React.FC<Props> = ({ caption, filename, attributi
         .map_err(|e| NyayaError::Config(format!("write photo-reveal.tsx: {}", e)))
 }
 
-fn write_pixi_scene_presenter_narration(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
-    let ac = css_to_hex_int(accent);
-    let code = format!(r##"import React, {{ useCallback, useRef }} from "react";
-import {{ PixiCanvas }} from "../pixi-canvas";
-import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
-import {{ easeOutCubic, spring }} from "../easing";
-
-interface Props {{ text: string; pose: string; gestureSide: string; }}
-
-export const PresenterNarrationScene: React.FC<Props> = ({{ text, pose, gestureSide }}) => {{
-  const wordsRef = useRef<string[]>([]);
-
-  const setup = useCallback((app: Application) => {{
-    wordsRef.current = text.split(/\s+/);
-    const charX = gestureSide === "left" ? 480 : 1440;
-    const bubbleX = gestureSide === "left" ? 1100 : 820;
-
-    // Head
-    const head = new Graphics();
-    head.circle(0, 0, 40);
-    head.fill({{ color: 0xe8d5b7 }});
-    head.circle(0, 0, 40);
-    head.stroke({{ color: {ac}, width: 3 }});
-    head.x = charX; head.y = 340; head.label = "head";
-    app.stage.addChild(head);
-
-    // Eyes
-    const eyes = new Graphics();
-    eyes.label = "eyes";
-    eyes.circle(-14, -5, 5); eyes.circle(14, -5, 5);
-    eyes.fill(0x333333);
-    eyes.x = charX; eyes.y = 340;
-    app.stage.addChild(eyes);
-
-    // Smile
-    const smile = new Graphics();
-    smile.arc(0, 5, 15, 0, Math.PI);
-    smile.stroke({{ color: 0x333333, width: 2 }});
-    smile.x = charX; smile.y = 340; smile.label = "smile";
-    app.stage.addChild(smile);
-
-    // Torso
-    const torso = new Graphics();
-    torso.roundRect(-30, 0, 60, 80, 10);
-    torso.fill({{ color: {ac}, alpha: 0.8 }});
-    torso.x = charX; torso.y = 385; torso.label = "torso";
-    app.stage.addChild(torso);
-
-    // Left arm
-    const lArm = new Graphics(); lArm.label = "lArm";
-    lArm.x = charX; lArm.y = 400;
-    app.stage.addChild(lArm);
-
-    // Right arm
-    const rArm = new Graphics(); rArm.label = "rArm";
-    rArm.x = charX; rArm.y = 400;
-    app.stage.addChild(rArm);
-
-    // Speech bubble background
-    const bubble = new Graphics();
-    bubble.roundRect(0, 0, 600, 300, 16);
-    bubble.fill({{ color: 0xffffff, alpha: 0.95 }});
-    bubble.stroke({{ color: {ac}, width: 2 }});
-    bubble.x = bubbleX - 300; bubble.y = 280; bubble.label = "bubble"; bubble.alpha = 0;
-    app.stage.addChild(bubble);
-
-    // Speech text
-    const style = new TextStyle({{ fontFamily: "Arial", fontSize: 28, fill: 0x222222, wordWrap: true, wordWrapWidth: 560, lineHeight: 38 }});
-    const t = new Text({{ text: "", style }}); t.label = "speechText";
-    t.x = bubbleX - 280; t.y = 300; t.alpha = 0;
-    app.stage.addChild(t);
-  }}, [text, gestureSide]);
-
-  const update = useCallback((app: Application, progress: number) => {{
-    const charX = gestureSide === "left" ? 480 : 1440;
-
-    // Idle bob
-    const head = app.stage.children.find((c: any) => c.label === "head");
-    if (head) {{ head.y = 340 + Math.sin(progress * Math.PI * 6) * 3; }}
-
-    // Blink every ~90 frames
-    const eyes = app.stage.children.find((c: any) => c.label === "eyes") as Graphics | undefined;
-    if (eyes) {{
-      const blinkPhase = (progress * 210) % 90;
-      eyes.alpha = blinkPhase < 3 ? 0.1 : 1;
-    }}
-
-    // Arms based on pose
-    const lArm = app.stage.children.find((c: any) => c.label === "lArm") as Graphics | undefined;
-    const rArm = app.stage.children.find((c: any) => c.label === "rArm") as Graphics | undefined;
-    if (lArm && rArm) {{
-      lArm.clear(); rArm.clear();
-      const armProgress = easeOutCubic(Math.min(progress * 3, 1));
-      switch (pose) {{
-        case "pointing": {{
-          // One arm points toward text
-          const dir = gestureSide === "left" ? 1 : -1;
-          lArm.moveTo(-30, 0); lArm.lineTo(-30 + dir * 80 * armProgress, -40 * armProgress);
-          lArm.stroke({{ color: {ac}, width: 4 }});
-          rArm.moveTo(30, 0); rArm.lineTo(30, 60);
-          rArm.stroke({{ color: {ac}, width: 4 }});
-          break;
-        }}
-        case "thinking": {{
-          // Hand on chin
-          lArm.moveTo(-30, 0); lArm.lineTo(-20, -50 * armProgress);
-          lArm.stroke({{ color: {ac}, width: 4 }});
-          rArm.moveTo(30, 0); rArm.lineTo(30, 60);
-          rArm.stroke({{ color: {ac}, width: 4 }});
-          break;
-        }}
-        case "excited": {{
-          // Arms up
-          lArm.moveTo(-30, 0); lArm.lineTo(-60, -70 * armProgress);
-          lArm.stroke({{ color: {ac}, width: 4 }});
-          rArm.moveTo(30, 0); rArm.lineTo(60, -70 * armProgress);
-          rArm.stroke({{ color: {ac}, width: 4 }});
-          break;
-        }}
-        default: {{
-          // Neutral — arms at sides with slight idle bob
-          const bob = Math.sin(progress * Math.PI * 4) * 5;
-          lArm.moveTo(-30, 0); lArm.lineTo(-35, 60 + bob);
-          lArm.stroke({{ color: {ac}, width: 4 }});
-          rArm.moveTo(30, 0); rArm.lineTo(35, 60 + bob);
-          rArm.stroke({{ color: {ac}, width: 4 }});
-        }}
-      }}
-    }}
-
-    // Speech bubble + progressive word reveal
-    const bubble = app.stage.children.find((c: any) => c.label === "bubble");
-    if (bubble) {{ bubble.alpha = spring(Math.min(progress * 4, 1)); }}
-
-    const speechText = app.stage.children.find((c: any) => c.label === "speechText") as Text | undefined;
-    if (speechText) {{
-      speechText.alpha = Math.min(progress * 4, 1);
-      const wordCount = Math.floor(wordsRef.current.length * Math.min(progress * 1.5, 1));
-      speechText.text = wordsRef.current.slice(0, wordCount).join(" ");
-    }}
-  }}, [pose, gestureSide]);
-
-  return <PixiCanvas setup={{setup}} update={{update}} />;
-}};
-"##);
-    std::fs::write(dir.join("presenter-narration.tsx"), &code)
-        .map_err(|e| NyayaError::Config(format!("write presenter-narration.tsx: {}", e)))
-}
-
-fn write_pixi_scene_icon_animation(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+fn write_pixi_scene_process_flow(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
     let ac = css_to_hex_int(accent);
     let code = format!(r##"import React, {{ useCallback }} from "react";
 import {{ PixiCanvas }} from "../pixi-canvas";
-import {{ Application, Graphics, Text, TextStyle, Container }} from "pixi.js";
-import {{ spring, stagger, easeOutCubic }} from "../easing";
+import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
+import {{ spring, stagger }} from "../easing";
 
-interface IconEntry {{ name: string; label: string; }}
-interface Props {{ title: string; icons: IconEntry[]; animation: string; }}
+interface Props {{ title: string; steps: string[]; highlightColor: string; }}
 
-function drawIcon(g: Graphics, name: string, size: number, color: number) {{
-  const s = size;
-  switch (name) {{
-    case "car":
-      g.roundRect(-s * 0.6, -s * 0.2, s * 1.2, s * 0.4, 6); g.fill({{ color }});
-      g.circle(-s * 0.3, s * 0.25, s * 0.12); g.fill(0x333333);
-      g.circle(s * 0.3, s * 0.25, s * 0.12); g.fill(0x333333);
-      g.rect(-s * 0.15, -s * 0.35, s * 0.4, s * 0.2); g.fill({{ color, alpha: 0.6 }});
-      break;
-    case "battery":
-      g.roundRect(-s * 0.3, -s * 0.4, s * 0.6, s * 0.8, 4); g.stroke({{ color, width: 3 }});
-      g.rect(-s * 0.1, -s * 0.5, s * 0.2, s * 0.1); g.fill({{ color }});
-      g.rect(-s * 0.2, -s * 0.1, s * 0.4, s * 0.4); g.fill({{ color, alpha: 0.7 }});
-      break;
-    case "factory":
-      g.rect(-s * 0.4, -s * 0.1, s * 0.8, s * 0.5); g.fill({{ color, alpha: 0.8 }});
-      g.rect(-s * 0.3, -s * 0.45, s * 0.1, s * 0.35); g.fill({{ color }});
-      g.rect(-s * 0.05, -s * 0.55, s * 0.1, s * 0.45); g.fill({{ color }});
-      g.circle(-s * 0.25, -s * 0.5, s * 0.06); g.fill({{ color: 0xcccccc, alpha: 0.5 }});
-      break;
-    case "solar":
-      g.rect(-s * 0.4, -s * 0.05, s * 0.8, s * 0.4); g.fill({{ color, alpha: 0.7 }});
-      for (let i = 0; i < 3; i++) {{ g.moveTo(-s * 0.35, s * 0.05 + i * s * 0.12); g.lineTo(s * 0.35, s * 0.05 + i * s * 0.12); }}
-      g.stroke({{ color, width: 1 }});
-      g.circle(s * 0.25, -s * 0.35, s * 0.12); g.fill({{ color: 0xffcc00 }});
-      for (let a = 0; a < 8; a++) {{
-        const angle = a * Math.PI / 4;
-        g.moveTo(s * 0.25 + Math.cos(angle) * s * 0.15, -s * 0.35 + Math.sin(angle) * s * 0.15);
-        g.lineTo(s * 0.25 + Math.cos(angle) * s * 0.22, -s * 0.35 + Math.sin(angle) * s * 0.22);
-      }}
-      g.stroke({{ color: 0xffcc00, width: 2 }});
-      break;
-    case "wind":
-      g.rect(-s * 0.03, -s * 0.1, s * 0.06, s * 0.5); g.fill({{ color }});
-      for (let b = 0; b < 3; b++) {{
-        const angle = b * Math.PI * 2 / 3;
-        g.moveTo(0, -s * 0.1);
-        g.lineTo(Math.cos(angle) * s * 0.35, -s * 0.1 + Math.sin(angle) * s * 0.35);
-      }}
-      g.stroke({{ color, width: 3 }});
-      break;
-    case "dollar":
-      g.circle(0, 0, s * 0.35); g.stroke({{ color, width: 3 }});
-      break;
-    case "graph":
-      g.moveTo(-s * 0.35, s * 0.35); g.lineTo(-s * 0.35, -s * 0.35); g.lineTo(s * 0.35, -s * 0.35);
-      g.stroke({{ color, width: 2 }});
-      g.moveTo(-s * 0.25, s * 0.2); g.lineTo(-s * 0.05, -s * 0.1); g.lineTo(s * 0.1, s * 0.05); g.lineTo(s * 0.3, -s * 0.25);
-      g.stroke({{ color, width: 3 }});
-      break;
-    case "globe":
-      g.circle(0, 0, s * 0.35); g.stroke({{ color, width: 2 }});
-      g.ellipse(0, 0, s * 0.15, s * 0.35); g.stroke({{ color, width: 1 }});
-      g.moveTo(-s * 0.35, 0); g.lineTo(s * 0.35, 0); g.stroke({{ color, width: 1 }});
-      break;
-    default:
-      // Generic circle for unknown icons
-      g.circle(0, 0, s * 0.3); g.fill({{ color, alpha: 0.6 }});
-      g.circle(0, 0, s * 0.3); g.stroke({{ color, width: 2 }});
-  }}
-}}
-
-export const IconAnimationScene: React.FC<Props> = ({{ title, icons, animation }}) => {{
+export const ProcessFlowScene: React.FC<Props> = ({{ title, steps }}) => {{
   const setup = useCallback((app: Application) => {{
-    // Title
-    const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 48, fontWeight: "bold", fill: {ac}, wordWrap: true, wordWrapWidth: 1600, align: "center" }});
+    const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 44, fontWeight: "bold", fill: 0xc8c8d2 }});
     const t = new Text({{ text: title, style: titleStyle }});
-    t.anchor.set(0.5); t.x = 960; t.y = 120; t.label = "title";
+    t.anchor.set(0.5, 0); t.x = 960; t.y = 40;
     app.stage.addChild(t);
 
-    // Icon containers
-    const n = icons.length;
-    const spacing = Math.min(240, 1600 / (n + 1));
-    const startX = 960 - (spacing * (n - 1)) / 2;
-    for (let i = 0; i < n; i++) {{
-      const container = new Container();
-      container.x = startX + i * spacing;
-      container.y = 480;
-      container.label = `icon_${{i}}`;
-      container.scale.set(0);
-
-      const g = new Graphics();
-      drawIcon(g, icons[i].name, 60, {ac});
-      container.addChild(g);
-
-      const labelStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 22, fill: 0xc8c8d2, align: "center", wordWrap: true, wordWrapWidth: 180 }});
-      const lbl = new Text({{ text: icons[i].label, style: labelStyle }});
-      lbl.anchor.set(0.5); lbl.y = 80; lbl.alpha = 0; lbl.label = "label";
-      container.addChild(lbl);
-
-      app.stage.addChild(container);
-    }}
-  }}, [title, icons]);
+    const startY = 140;
+    const stepHeight = Math.min(100, (900 - startY) / steps.length);
+    steps.forEach((step, i) => {{
+      const y = startY + i * stepHeight;
+      // Number circle
+      const g = new Graphics(); g.label = `step_${{i}}`;
+      (g as any).stepY = y; (g as any).stepIndex = i;
+      app.stage.addChild(g);
+      // Step text
+      const stepStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 28, fill: 0xc8c8d2, wordWrap: true, wordWrapWidth: 1200 }});
+      const st = new Text({{ text: step, style: stepStyle }});
+      st.anchor.set(0, 0.5); st.x = 360; st.y = y + 20;
+      st.alpha = 0; st.label = `text_${{i}}`; (st as any).stepIndex = i;
+      app.stage.addChild(st);
+      // Connecting line (except last)
+      if (i < steps.length - 1) {{
+        const line = new Graphics(); line.label = `line_${{i}}`;
+        (line as any).stepIndex = i; (line as any).fromY = y + 40; (line as any).toY = y + stepHeight;
+        app.stage.addChild(line);
+      }}
+    }});
+  }}, [title, steps]);
 
   const update = useCallback((app: Application, progress: number) => {{
-    // Title fade in
-    const t = app.stage.children.find((c: any) => c.label === "title");
-    if (t) {{ t.alpha = Math.min(1, progress * 4); }}
-
-    const n = icons.length;
-    for (let i = 0; i < n; i++) {{
-      const container = app.stage.children.find((c: any) => c.label === `icon_${{i}}`);
-      if (!container) continue;
-      const p = stagger(i, n, Math.max(0, (progress - 0.1) / 0.7));
-
-      switch (animation) {{
-        case "grow": {{
-          const s = spring(p);
-          container.scale.set(s);
-          break;
-        }}
-        case "orbit": {{
-          const s = spring(Math.min(p * 2, 1));
-          container.scale.set(s);
-          const angle = p * Math.PI * 2 + (i * Math.PI * 2) / n;
-          const radius = 200;
-          const baseX = 960;
-          container.x = baseX + Math.cos(angle) * radius * easeOutCubic(Math.min(p, 1));
-          container.y = 480 + Math.sin(angle) * radius * 0.4 * easeOutCubic(Math.min(p, 1));
-          break;
-        }}
-        case "flow": {{
-          const s = spring(Math.min(p * 2, 1));
-          container.scale.set(s);
-          container.x = -100 + (960 - (240 * (n - 1)) / 2 + i * 240 + 100) * easeOutCubic(Math.min(p, 1));
-          break;
-        }}
-        default: {{
-          // "transform" — scale sequence
-          const phase = (p * 3) % 1;
-          const s = 0.8 + 0.4 * Math.sin(phase * Math.PI);
-          container.scale.set(spring(Math.min(p * 2, 1)) * s);
+    const n = steps.length;
+    app.stage.children.forEach((child: any) => {{
+      if (child.label?.startsWith("step_")) {{
+        const i = child.stepIndex;
+        const p = stagger(i, n, Math.min(progress * 1.2, 1));
+        const s = spring(p);
+        const g = child as Graphics;
+        g.clear();
+        const isActive = Math.floor(progress * n * 1.2) >= i;
+        const isCurrent = Math.floor(progress * n * 1.2) === i;
+        g.circle(280, child.stepY + 20, 22 * s);
+        g.fill({{ color: isCurrent ? {ac} : (isActive ? {ac} : 0x555577), alpha: isCurrent ? 1 : 0.5 }});
+        // Number
+        if (s > 0.5) {{
+          const numStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 18, fontWeight: "bold", fill: 0xffffff }});
+          const nt = new Text({{ text: `${{i + 1}}`, style: numStyle }});
+          nt.anchor.set(0.5); nt.x = 280; nt.y = child.stepY + 20;
+          // This is a fresh draw each frame, so we add and remove — but for PixiJS it's ok
         }}
       }}
-
-      // Label fade in
-      const label = container.children?.find((c: any) => c.label === "label");
-      if (label) {{ label.alpha = Math.max(0, Math.min(1, (p - 0.5) * 3)); }}
-    }}
-  }}, [icons, animation]);
+      if (child.label?.startsWith("text_")) {{
+        const i = child.stepIndex;
+        const p = stagger(i, n, Math.min(progress * 1.2, 1));
+        child.alpha = spring(p);
+      }}
+      if (child.label?.startsWith("line_")) {{
+        const i = child.stepIndex;
+        const p = stagger(i, n, Math.min(progress * 1.2, 1));
+        const g = child as Graphics;
+        g.clear();
+        if (p > 0.3) {{
+          const lineP = Math.min((p - 0.3) / 0.7, 1);
+          g.moveTo(280, child.fromY);
+          g.lineTo(280, child.fromY + (child.toY - child.fromY) * lineP);
+          g.stroke({{ color: 0x555577, width: 2 }});
+        }}
+      }}
+    }});
+  }}, [steps]);
 
   return <PixiCanvas setup={{setup}} update={{update}} />;
 }};
 "##);
-    std::fs::write(dir.join("icon-animation.tsx"), &code)
-        .map_err(|e| NyayaError::Config(format!("write icon-animation.tsx: {}", e)))
+    std::fs::write(dir.join("process-flow.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write process-flow.tsx: {}", e)))
+}
+
+fn write_pixi_scene_key_insight(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
+    let ac = css_to_hex_int(accent);
+    let code = format!(r##"import React, {{ useCallback }} from "react";
+import {{ PixiCanvas }} from "../pixi-canvas";
+import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
+import {{ spring, easeOutCubic }} from "../easing";
+
+interface Props {{ insight: string; supportingEvidence: string; sourceType: string; }}
+
+export const KeyInsightScene: React.FC<Props> = ({{ insight, supportingEvidence, sourceType }}) => {{
+  const setup = useCallback((app: Application) => {{
+    // Background radial gradient effect
+    const bg = new Graphics(); bg.label = "bg";
+    app.stage.addChild(bg);
+
+    // Insight text (large, centered, accent)
+    const insightStyle = new TextStyle({{
+      fontFamily: "Arial", fontSize: 48, fontWeight: "bold", fill: {ac},
+      wordWrap: true, wordWrapWidth: 1400, align: "center", lineHeight: 64,
+    }});
+    const it = new Text({{ text: insight, style: insightStyle }});
+    it.anchor.set(0.5); it.x = 960; it.y = 400; it.alpha = 0; it.label = "insight";
+    app.stage.addChild(it);
+
+    // Supporting evidence (smaller, below)
+    const evidenceStyle = new TextStyle({{
+      fontFamily: "Arial", fontSize: 28, fill: 0xc8c8d2,
+      wordWrap: true, wordWrapWidth: 1200, align: "center", fontStyle: "italic",
+    }});
+    const et = new Text({{ text: supportingEvidence, style: evidenceStyle }});
+    et.anchor.set(0.5); et.x = 960; et.y = 600; et.alpha = 0; et.label = "evidence";
+    app.stage.addChild(et);
+
+    // Source type badge
+    const badgeLabel = sourceType === "observation" ? "Based on observation"
+      : sourceType === "inference" ? "Based on inference"
+      : sourceType === "analogy" ? "Based on analogy"
+      : sourceType === "testimony" ? "Based on testimony"
+      : "Based on research";
+    const badgeBg = new Graphics(); badgeBg.label = "badgeBg";
+    badgeBg.roundRect(0, 0, 240, 36, 18);
+    badgeBg.fill({{ color: {ac}, alpha: 0.2 }});
+    badgeBg.stroke({{ color: {ac}, width: 1, alpha: 0.4 }});
+    badgeBg.x = 1920 - 280; badgeBg.y = 1080 - 80; badgeBg.alpha = 0;
+    app.stage.addChild(badgeBg);
+
+    const badgeStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 16, fill: {ac} }});
+    const bt = new Text({{ text: badgeLabel, style: badgeStyle }});
+    bt.anchor.set(0.5); bt.x = 1920 - 160; bt.y = 1080 - 62; bt.alpha = 0; bt.label = "badge";
+    app.stage.addChild(bt);
+  }}, [insight, supportingEvidence, sourceType]);
+
+  const update = useCallback((app: Application, progress: number) => {{
+    // Background glow
+    const bg = app.stage.children.find((c: any) => c.label === "bg") as Graphics;
+    if (bg) {{
+      bg.clear();
+      const alpha = 0.15 * easeOutCubic(Math.min(progress * 2, 1));
+      bg.circle(960, 450, 400);
+      bg.fill({{ color: {ac}, alpha }});
+    }}
+
+    // Insight: fade in first (0-40%)
+    const insight = app.stage.children.find((c: any) => c.label === "insight");
+    if (insight) {{
+      insight.alpha = spring(Math.min(progress * 2.5, 1));
+      insight.scale.set(0.9 + 0.1 * spring(Math.min(progress * 2.5, 1)));
+    }}
+
+    // Evidence: fade in second (30-70%)
+    const evidence = app.stage.children.find((c: any) => c.label === "evidence");
+    if (evidence) {{
+      evidence.alpha = Math.max(0, Math.min(1, (progress - 0.3) * 3));
+    }}
+
+    // Badge: fade in third (50-80%)
+    const badgeBg = app.stage.children.find((c: any) => c.label === "badgeBg");
+    const badge = app.stage.children.find((c: any) => c.label === "badge");
+    if (badgeBg) {{ badgeBg.alpha = Math.max(0, Math.min(1, (progress - 0.5) * 3)); }}
+    if (badge) {{ badge.alpha = Math.max(0, Math.min(1, (progress - 0.5) * 3)); }}
+  }}, []);
+
+  return <PixiCanvas setup={{setup}} update={{update}} />;
+}};
+"##);
+    std::fs::write(dir.join("key-insight.tsx"), &code)
+        .map_err(|e| NyayaError::Config(format!("write key-insight.tsx: {}", e)))
+}
+
+/// NarrationOverlay component — bottom-third subtitle overlay with word-by-word reveal.
+fn write_narration_overlay(dir: &Path) -> Result<()> {
+    let code = r##"import React from "react";
+import { useCurrentFrame, useVideoConfig } from "remotion";
+
+interface Props { text: string; durationInFrames: number; }
+
+export const NarrationOverlay: React.FC<Props> = ({ text, durationInFrames }) => {
+  const frame = useCurrentFrame();
+  const progress = frame / durationInFrames;
+
+  if (!text) return null;
+
+  const words = text.split(/\s+/).filter(w => w);
+  const revealFraction = 0.4; // reveal all words in first 40% of scene
+  const wordsToShow = Math.min(
+    words.length,
+    Math.ceil(words.length * Math.min(progress / revealFraction, 1))
+  );
+  const visibleText = words.slice(0, wordsToShow).join(" ");
+
+  // Fade in at start, stay, fade out at end
+  const fadeIn = Math.min(1, frame / 15);
+  const fadeOut = Math.min(1, (durationInFrames - frame) / 15);
+  const opacity = fadeIn * fadeOut;
+
+  return (
+    <div style={{
+      position: "absolute",
+      bottom: 0,
+      left: 0,
+      right: 0,
+      height: "20%",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "rgba(0, 0, 0, 0.65)",
+      opacity,
+      zIndex: 100,
+    }}>
+      <p style={{
+        color: "#ffffff",
+        fontFamily: "'Inter', 'Helvetica Neue', Arial, sans-serif",
+        fontSize: 28,
+        lineHeight: 1.4,
+        textAlign: "center",
+        padding: "0 60px",
+        margin: 0,
+        textShadow: "0 2px 4px rgba(0,0,0,0.5)",
+        maxWidth: 1600,
+      }}>
+        {visibleText}
+      </p>
+    </div>
+  );
+};
+"##;
+    std::fs::write(dir.join("narration-overlay.tsx"), code)
+        .map_err(|e| NyayaError::Config(format!("write narration-overlay.tsx: {}", e)))
 }
 
 /// Interactive slideshow HTML with keyboard navigation + auto-play.
@@ -7102,120 +6988,140 @@ mod tests {
     #[test]
     fn test_video_scene_deserialize_roundtrip() {
         let json = r#"[
-            {"kind":"opener","title":"Rise of EVs","subtitle":"A visual journey","mood":"dramatic","durationFrames":240},
-            {"kind":"kineticText","text":"Electric vehicles are **transforming** the **automotive** industry","layout":"cascade","durationFrames":180},
-            {"kind":"dataCounter","title":"Key Numbers","counters":[{"label":"Global EV Sales","value":"14000000","unit":" units"}],"durationFrames":210},
-            {"kind":"barRace","title":"Top Markets","bars":[{"label":"China","value":8100000},{"label":"Europe","value":3200000}],"durationFrames":210},
-            {"kind":"particleMood","text":"A cleaner future awaits","preset":"nebula","durationFrames":150},
-            {"kind":"timelinePath","title":"EV Timeline","waypoints":[{"year":"1996","label":"GM EV1"},{"year":"2008","label":"Tesla Roadster"}],"durationFrames":270},
-            {"kind":"comparisonSplit","title":"ICE vs EV","leftLabel":"Gasoline","rightLabel":"Electric","points":[{"left":"$3000/yr fuel","right":"$500/yr charging"}],"durationFrames":240},
-            {"kind":"closing","title":"The Future is Electric","subtitle":"Generated by NabaOS","durationFrames":210}
+            {"kind":"titleCard","title":"Rise of EVs","subtitle":"A visual journey","narration":"Welcome to a look at electric vehicles.","durationFrames":240},
+            {"kind":"explainerText","text":"Electric vehicles are <b>transforming</b> the <b>automotive</b> industry","layout":"cascade","narration":"EVs are changing everything.","durationFrames":180},
+            {"kind":"dataReveal","label":"Key Numbers","value":"14000000","suffix":" units","context":"Global EV Sales","narration":"Fourteen million units sold globally.","durationFrames":210},
+            {"kind":"barRace","title":"Top Markets","bars":[{"label":"China","value":8100000},{"label":"Europe","value":3200000}],"narration":"China leads by a wide margin.","durationFrames":210},
+            {"kind":"timelinePath","title":"EV Timeline","waypoints":[{"year":"1996","label":"GM EV1"},{"year":"2008","label":"Tesla Roadster"}],"narration":"The timeline starts in 1996.","durationFrames":270},
+            {"kind":"comparisonSplit","title":"ICE vs EV","leftLabel":"Gasoline","rightLabel":"Electric","points":[{"left":"$3000/yr fuel","right":"$500/yr charging"}],"narration":"Fuel costs tell the story.","durationFrames":240},
+            {"kind":"processFlow","title":"How EVs Work","steps":["Battery stores energy","Motor converts to motion","Regen braking recovers energy"],"narration":"Three simple steps.","durationFrames":240},
+            {"kind":"keyInsight","insight":"EVs are cheaper to own over their lifetime","supportingEvidence":"Total cost of ownership studies show 30-40% savings","sourceType":"research","narration":"The key insight is clear.","durationFrames":210},
+            {"kind":"callToAction","title":"The Future is Electric","subtitle":"Generated by NabaOS","narration":"Consider making the switch.","durationFrames":210}
         ]"#;
         let scenes: Vec<VideoScene> = serde_json::from_str(json).unwrap();
-        assert_eq!(scenes.len(), 8);
-        assert_eq!(scenes[0].kind_str(), "opener");
-        assert_eq!(scenes[1].kind_str(), "kineticText");
-        assert_eq!(scenes[2].kind_str(), "dataCounter");
+        assert_eq!(scenes.len(), 9);
+        assert_eq!(scenes[0].kind_str(), "titleCard");
+        assert_eq!(scenes[1].kind_str(), "explainerText");
+        assert_eq!(scenes[2].kind_str(), "dataReveal");
         assert_eq!(scenes[3].kind_str(), "barRace");
-        assert_eq!(scenes[4].kind_str(), "particleMood");
-        assert_eq!(scenes[5].kind_str(), "timelinePath");
-        assert_eq!(scenes[6].kind_str(), "comparisonSplit");
-        assert_eq!(scenes[7].kind_str(), "closing");
+        assert_eq!(scenes[4].kind_str(), "timelinePath");
+        assert_eq!(scenes[5].kind_str(), "comparisonSplit");
+        assert_eq!(scenes[6].kind_str(), "processFlow");
+        assert_eq!(scenes[7].kind_str(), "keyInsight");
+        assert_eq!(scenes[8].kind_str(), "callToAction");
+
+        // Narration present on all
+        for scene in &scenes {
+            assert!(!scene.narration().is_empty(), "narration missing on {}", scene.kind_str());
+        }
 
         // Roundtrip
         let serialized = serde_json::to_string(&scenes).unwrap();
         let roundtrip: Vec<VideoScene> = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(roundtrip.len(), 8);
+        assert_eq!(roundtrip.len(), 9);
+    }
+
+    #[test]
+    fn test_video_scene_backward_compat_aliases() {
+        // Old kind names should still deserialize via serde aliases
+        let json = r#"[
+            {"kind":"opener","title":"Test","subtitle":"Sub","durationFrames":240},
+            {"kind":"kineticText","text":"Hello world","layout":"cascade","durationFrames":180},
+            {"kind":"dataCounter","title":"Stats","counters":[{"label":"X","value":"100"}],"durationFrames":210},
+            {"kind":"closing","title":"End","durationFrames":210}
+        ]"#;
+        let scenes: Vec<VideoScene> = serde_json::from_str(json).unwrap();
+        assert_eq!(scenes.len(), 4);
+        assert_eq!(scenes[0].kind_str(), "titleCard");
+        assert_eq!(scenes[1].kind_str(), "explainerText");
+        assert_eq!(scenes[2].kind_str(), "dataReveal");
+        assert_eq!(scenes[3].kind_str(), "callToAction");
     }
 
     #[test]
     fn test_video_scene_defaults() {
-        // Omitting durationFrames should use defaults
         let json = r#"[
-            {"kind":"opener","title":"Test","subtitle":"Sub"},
-            {"kind":"kineticText","text":"Hello world"},
-            {"kind":"dataCounter","title":"Stats","counters":[]},
-            {"kind":"closing","title":"End"}
+            {"kind":"titleCard","title":"Test","subtitle":"Sub"},
+            {"kind":"explainerText","text":"Hello world"},
+            {"kind":"dataReveal","label":"Stats"},
+            {"kind":"callToAction","title":"End"}
         ]"#;
         let scenes: Vec<VideoScene> = serde_json::from_str(json).unwrap();
-        assert_eq!(scenes[0].duration_frames(), 240); // default_opener_duration
-        assert_eq!(scenes[1].duration_frames(), 180); // default_kinetic_duration
-        assert_eq!(scenes[2].duration_frames(), 210); // default_counter_duration
-        assert_eq!(scenes[3].duration_frames(), 210); // default_closing_motion_duration
+        assert_eq!(scenes[0].duration_frames(), 240);
+        assert_eq!(scenes[1].duration_frames(), 180);
+        assert_eq!(scenes[2].duration_frames(), 210);
+        assert_eq!(scenes[3].duration_frames(), 210);
 
-        // Default layout and preset
-        if let VideoScene::KineticText { layout, .. } = &scenes[1] {
+        // Default layout
+        if let VideoScene::ExplainerText { layout, narration, .. } = &scenes[1] {
             assert_eq!(layout, "cascade");
+            assert_eq!(narration, ""); // default empty narration
         }
     }
 
     #[test]
     fn test_counter_entry_accepts_numeric_value() {
-        // LLMs sometimes produce numeric values instead of strings
-        let json = r#"{"kind":"dataCounter","title":"Stats","counters":[
+        let json = r#"{"kind":"dataReveal","label":"Stats","counters":[
             {"label":"Global EV Sales","value":1200000,"unit":" units"},
             {"label":"Growth Rate","value":"45%"}
         ]}"#;
         let scene: VideoScene = serde_json::from_str(json).unwrap();
-        if let VideoScene::DataCounter { counters, .. } = &scene {
+        if let VideoScene::DataReveal { counters, .. } = &scene {
             assert_eq!(counters[0].value, "1200000");
             assert_eq!(counters[1].value, "45%");
         } else {
-            panic!("expected DataCounter");
+            panic!("expected DataReveal");
         }
     }
 
     #[test]
-    fn test_validate_video_scenes_opener_closing() {
-        // Missing Opener and Closing — should be inserted
+    fn test_validate_video_scenes_title_card_call_to_action() {
         let mut scenes = vec![
-            VideoScene::KineticText {
-                text: "Hello".into(), layout: "wave".into(), duration_frames: 180,
+            VideoScene::ExplainerText {
+                text: "Hello".into(), layout: "wave".into(), preset: String::new(),
+                narration: String::new(), duration_frames: 180,
             },
         ];
         validate_video_scenes(&mut scenes, "Test Topic");
-        assert!(matches!(scenes.first(), Some(VideoScene::Opener { .. })));
-        assert!(matches!(scenes.last(), Some(VideoScene::Closing { .. })));
+        assert!(matches!(scenes.first(), Some(VideoScene::TitleCard { .. })));
+        assert!(matches!(scenes.last(), Some(VideoScene::CallToAction { .. })));
         assert_eq!(scenes.len(), 3);
     }
 
     #[test]
     fn test_validate_video_scenes_clamps_count() {
-        let mut scenes: Vec<VideoScene> = (0..70).map(|i| {
-            VideoScene::KineticText {
-                text: format!("Scene {}", i), layout: "cascade".into(), duration_frames: 180,
+        let mut scenes: Vec<VideoScene> = (0..40).map(|i| {
+            VideoScene::ExplainerText {
+                text: format!("Scene {}", i), layout: "cascade".into(), preset: String::new(),
+                narration: String::new(), duration_frames: 180,
             }
         }).collect();
         validate_video_scenes(&mut scenes, "Test");
-        assert!(scenes.len() <= 60);
-        assert!(matches!(scenes.first(), Some(VideoScene::Opener { .. })));
-        assert!(matches!(scenes.last(), Some(VideoScene::Closing { .. })));
+        assert!(scenes.len() <= 30);
+        assert!(matches!(scenes.first(), Some(VideoScene::TitleCard { .. })));
+        assert!(matches!(scenes.last(), Some(VideoScene::CallToAction { .. })));
     }
 
     #[test]
-    fn test_validate_video_scenes_fixes_invalid_presets() {
+    fn test_validate_video_scenes_fixes_invalid_layout() {
         let mut scenes = vec![
-            VideoScene::Opener { title: "T".into(), subtitle: "S".into(), mood: "epic".into(), duration_frames: 240 },
-            VideoScene::KineticText { text: "Hello".into(), layout: "invalid_layout".into(), duration_frames: 180 },
-            VideoScene::ParticleMood { text: "Mood".into(), preset: "invalid_preset".into(), duration_frames: 150 },
-            VideoScene::Closing { title: "End".into(), subtitle: "Done".into(), duration_frames: 210 },
+            VideoScene::TitleCard { title: "T".into(), subtitle: "S".into(), preset: String::new(), narration: String::new(), duration_frames: 240 },
+            VideoScene::ExplainerText { text: "Hello".into(), layout: "invalid_layout".into(), preset: String::new(), narration: String::new(), duration_frames: 180 },
+            VideoScene::CallToAction { title: "End".into(), subtitle: "Done".into(), preset: String::new(), narration: String::new(), duration_frames: 210 },
         ];
         validate_video_scenes(&mut scenes, "Test");
 
-        if let VideoScene::KineticText { layout, .. } = &scenes[1] {
-            assert_eq!(layout, "cascade"); // defaulted from invalid
-        }
-        if let VideoScene::ParticleMood { preset, .. } = &scenes[2] {
-            assert_eq!(preset, "stars"); // defaulted from invalid
+        if let VideoScene::ExplainerText { layout, .. } = &scenes[1] {
+            assert_eq!(layout, "cascade");
         }
     }
 
     #[test]
     fn test_validate_video_scenes_clamps_duration() {
         let mut scenes = vec![
-            VideoScene::Opener { title: "T".into(), subtitle: "S".into(), mood: "".into(), duration_frames: 30 }, // too low
-            VideoScene::KineticText { text: "X".into(), layout: "cascade".into(), duration_frames: 600 }, // too high
-            VideoScene::Closing { title: "End".into(), subtitle: "".into(), duration_frames: 210 },
+            VideoScene::TitleCard { title: "T".into(), subtitle: "S".into(), preset: String::new(), narration: String::new(), duration_frames: 30 },
+            VideoScene::ExplainerText { text: "X".into(), layout: "cascade".into(), preset: String::new(), narration: String::new(), duration_frames: 600 },
+            VideoScene::CallToAction { title: "End".into(), subtitle: String::new(), preset: String::new(), narration: String::new(), duration_frames: 210 },
         ];
         validate_video_scenes(&mut scenes, "Test");
 
@@ -7226,105 +7132,122 @@ mod tests {
     // ── New Scene Type Tests ─────────────────────────────────────────────
 
     #[test]
-    fn test_video_scene_new_types_roundtrip() {
-        let json = r#"[
-            {"kind":"photoReveal","caption":"Solar farm at sunrise","filename":"solar.jpg","attribution":"Unsplash","kenBurnsDirection":"zoom_in_right","durationFrames":180},
-            {"kind":"presenterNarration","text":"Let me explain how this works","pose":"pointing","gestureSide":"left","durationFrames":210},
-            {"kind":"iconAnimation","title":"Energy Sources","icons":[{"name":"solar","label":"Solar"},{"name":"wind","label":"Wind"},{"name":"battery","label":"Storage"}],"animation":"grow","durationFrames":180}
-        ]"#;
-        let scenes: Vec<VideoScene> = serde_json::from_str(json).unwrap();
-        assert_eq!(scenes.len(), 3);
-        assert_eq!(scenes[0].kind_str(), "photoReveal");
-        assert_eq!(scenes[1].kind_str(), "presenterNarration");
-        assert_eq!(scenes[2].kind_str(), "iconAnimation");
-
-        // Duration checks
-        assert_eq!(scenes[0].duration_frames(), 180);
-        assert_eq!(scenes[1].duration_frames(), 210);
-        assert_eq!(scenes[2].duration_frames(), 180);
-
-        // Roundtrip
-        let serialized = serde_json::to_string(&scenes).unwrap();
-        let roundtrip: Vec<VideoScene> = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(roundtrip.len(), 3);
-    }
-
-    #[test]
-    fn test_video_scene_new_types_defaults() {
-        let json = r#"[
-            {"kind":"photoReveal","filename":"photo.jpg"},
-            {"kind":"presenterNarration","text":"Hello"},
-            {"kind":"iconAnimation","title":"Icons","icons":[{"name":"car","label":"Car"}]}
-        ]"#;
-        let scenes: Vec<VideoScene> = serde_json::from_str(json).unwrap();
-        assert_eq!(scenes[0].duration_frames(), 180); // default_photo_reveal_duration
-        assert_eq!(scenes[1].duration_frames(), 210); // default_presenter_duration
-        assert_eq!(scenes[2].duration_frames(), 180); // default_icon_animation_duration
-
-        // Default field values
-        if let VideoScene::PhotoReveal { ken_burns_direction, caption, .. } = &scenes[0] {
-            assert_eq!(ken_burns_direction, "zoom_in_right");
-            assert_eq!(caption, "");
-        }
-        if let VideoScene::PresenterNarration { pose, gesture_side, .. } = &scenes[1] {
-            assert_eq!(pose, "neutral");
-            assert_eq!(gesture_side, "left");
-        }
-        if let VideoScene::IconAnimation { animation, .. } = &scenes[2] {
-            assert_eq!(animation, "grow");
+    fn test_process_flow_roundtrip() {
+        let json = r#"{"kind":"processFlow","title":"How It Works","steps":["Step 1","Step 2","Step 3"],"narration":"Let me explain.","durationFrames":240}"#;
+        let scene: VideoScene = serde_json::from_str(json).unwrap();
+        assert_eq!(scene.kind_str(), "processFlow");
+        assert_eq!(scene.duration_frames(), 240);
+        if let VideoScene::ProcessFlow { steps, narration, .. } = &scene {
+            assert_eq!(steps.len(), 3);
+            assert_eq!(narration, "Let me explain.");
         }
     }
 
     #[test]
-    fn test_validate_new_scene_types_fixes_invalid() {
+    fn test_key_insight_roundtrip() {
+        let json = r#"{"kind":"keyInsight","insight":"This changes everything","supportingEvidence":"Studies show 40% improvement","sourceType":"research","narration":"Here is the key takeaway.","durationFrames":210}"#;
+        let scene: VideoScene = serde_json::from_str(json).unwrap();
+        assert_eq!(scene.kind_str(), "keyInsight");
+        if let VideoScene::KeyInsight { insight, source_type, supporting_evidence, .. } = &scene {
+            assert_eq!(insight, "This changes everything");
+            assert_eq!(source_type, "research");
+            assert_eq!(supporting_evidence, "Studies show 40% improvement");
+        }
+    }
+
+    #[test]
+    fn test_process_flow_defaults() {
+        let json = r#"{"kind":"processFlow","title":"Steps","steps":[]}"#;
+        let scene: VideoScene = serde_json::from_str(json).unwrap();
+        assert_eq!(scene.duration_frames(), 240);
+        if let VideoScene::ProcessFlow { narration, highlight_color, .. } = &scene {
+            assert_eq!(narration, "");
+            assert_eq!(highlight_color, "");
+        }
+    }
+
+    #[test]
+    fn test_key_insight_defaults() {
+        let json = r#"{"kind":"keyInsight","insight":"Important finding"}"#;
+        let scene: VideoScene = serde_json::from_str(json).unwrap();
+        assert_eq!(scene.duration_frames(), 210);
+        if let VideoScene::KeyInsight { source_type, supporting_evidence, narration, .. } = &scene {
+            assert_eq!(source_type, "research");
+            assert_eq!(supporting_evidence, "");
+            assert_eq!(narration, "");
+        }
+    }
+
+    #[test]
+    fn test_validate_process_flow_truncates_steps() {
         let mut scenes = vec![
-            VideoScene::Opener { title: "T".into(), subtitle: "".into(), mood: "".into(), duration_frames: 240 },
-            VideoScene::PhotoReveal { caption: "".into(), filename: "x.jpg".into(), attribution: "".into(), ken_burns_direction: "invalid".into(), duration_frames: 180 },
-            VideoScene::PresenterNarration { text: "Hi".into(), pose: "invalid".into(), gesture_side: "invalid".into(), duration_frames: 210 },
-            VideoScene::IconAnimation {
-                title: "Icons".into(),
-                icons: (0..12).map(|i| IconEntry { name: format!("icon{}", i), label: format!("L{}", i) }).collect(),
-                animation: "invalid".into(),
-                duration_frames: 180,
+            VideoScene::TitleCard { title: "T".into(), subtitle: String::new(), preset: String::new(), narration: String::new(), duration_frames: 240 },
+            VideoScene::ProcessFlow {
+                title: "Many Steps".into(),
+                steps: (0..12).map(|i| format!("Step {}", i)).collect(),
+                highlight_color: String::new(),
+                narration: String::new(),
+                duration_frames: 240,
             },
-            VideoScene::Closing { title: "End".into(), subtitle: "".into(), duration_frames: 210 },
+            VideoScene::CallToAction { title: "End".into(), subtitle: String::new(), preset: String::new(), narration: String::new(), duration_frames: 210 },
         ];
         validate_video_scenes(&mut scenes, "Test");
-
-        if let VideoScene::PhotoReveal { ken_burns_direction, .. } = &scenes[1] {
-            assert_eq!(ken_burns_direction, "zoom_in_right"); // fixed
-        }
-        if let VideoScene::PresenterNarration { pose, gesture_side, .. } = &scenes[2] {
-            assert_eq!(pose, "neutral"); // fixed
-            assert_eq!(gesture_side, "left"); // fixed
-        }
-        if let VideoScene::IconAnimation { animation, icons, .. } = &scenes[3] {
-            assert_eq!(animation, "grow"); // fixed
-            assert!(icons.len() <= 8); // truncated
+        if let VideoScene::ProcessFlow { steps, .. } = &scenes[1] {
+            assert!(steps.len() <= 8);
         }
     }
 
     #[test]
-    fn test_validate_clamps_to_60_scenes() {
-        let mut scenes: Vec<VideoScene> = (0..65).map(|i| {
-            VideoScene::ParticleMood {
-                text: format!("Scene {}", i), preset: "stars".into(), duration_frames: 150,
+    fn test_validate_key_insight_fixes_invalid_source_type() {
+        let mut scenes = vec![
+            VideoScene::TitleCard { title: "T".into(), subtitle: String::new(), preset: String::new(), narration: String::new(), duration_frames: 240 },
+            VideoScene::KeyInsight {
+                insight: "Test".into(), supporting_evidence: String::new(),
+                source_type: "invalid_type".into(), narration: String::new(), duration_frames: 210,
+            },
+            VideoScene::CallToAction { title: "End".into(), subtitle: String::new(), preset: String::new(), narration: String::new(), duration_frames: 210 },
+        ];
+        validate_video_scenes(&mut scenes, "Test");
+        if let VideoScene::KeyInsight { source_type, .. } = &scenes[1] {
+            assert_eq!(source_type, "research");
+        }
+    }
+
+    #[test]
+    fn test_validate_photo_reveal_fixes_invalid_ken_burns() {
+        let mut scenes = vec![
+            VideoScene::TitleCard { title: "T".into(), subtitle: String::new(), preset: String::new(), narration: String::new(), duration_frames: 240 },
+            VideoScene::PhotoReveal { caption: String::new(), filename: "x.jpg".into(), attribution: String::new(), ken_burns_direction: "invalid".into(), narration: String::new(), duration_frames: 180 },
+            VideoScene::CallToAction { title: "End".into(), subtitle: String::new(), preset: String::new(), narration: String::new(), duration_frames: 210 },
+        ];
+        validate_video_scenes(&mut scenes, "Test");
+        if let VideoScene::PhotoReveal { ken_burns_direction, .. } = &scenes[1] {
+            assert_eq!(ken_burns_direction, "zoom_in_right");
+        }
+    }
+
+    #[test]
+    fn test_validate_clamps_to_30_scenes() {
+        let mut scenes: Vec<VideoScene> = (0..35).map(|i| {
+            VideoScene::ExplainerText {
+                text: format!("Scene {}", i), layout: "cascade".into(), preset: String::new(),
+                narration: String::new(), duration_frames: 150,
             }
         }).collect();
         validate_video_scenes(&mut scenes, "Test");
-        assert!(scenes.len() <= 60);
-        assert!(matches!(scenes.first(), Some(VideoScene::Opener { .. })));
-        assert!(matches!(scenes.last(), Some(VideoScene::Closing { .. })));
+        assert!(scenes.len() <= 30);
+        assert!(matches!(scenes.first(), Some(VideoScene::TitleCard { .. })));
+        assert!(matches!(scenes.last(), Some(VideoScene::CallToAction { .. })));
     }
 
     #[test]
     fn test_validate_clamps_duration_to_450() {
         let mut scenes = vec![
-            VideoScene::Opener { title: "T".into(), subtitle: "".into(), mood: "".into(), duration_frames: 240 },
-            VideoScene::PhotoReveal { caption: "".into(), filename: "x.jpg".into(), attribution: "".into(), ken_burns_direction: "pan_left".into(), duration_frames: 500 },
-            VideoScene::Closing { title: "End".into(), subtitle: "".into(), duration_frames: 210 },
+            VideoScene::TitleCard { title: "T".into(), subtitle: String::new(), preset: String::new(), narration: String::new(), duration_frames: 240 },
+            VideoScene::PhotoReveal { caption: String::new(), filename: "x.jpg".into(), attribution: String::new(), ken_burns_direction: "pan_left".into(), narration: String::new(), duration_frames: 500 },
+            VideoScene::CallToAction { title: "End".into(), subtitle: String::new(), preset: String::new(), narration: String::new(), duration_frames: 210 },
         ];
         validate_video_scenes(&mut scenes, "Test");
-        assert_eq!(scenes[1].duration_frames(), 450); // clamped down from 500
+        assert_eq!(scenes[1].duration_frames(), 450);
     }
 }

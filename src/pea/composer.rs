@@ -2764,32 +2764,37 @@ plt.close()
             String::new()
         };
 
-        let system = "You are a YouTube motion graphics director. You specialize in creating \
-            visually compelling, data-driven explainer videos with kinetic typography, animated \
-            counters, particle effects, and timeline visualizations.";
+        let system = "You are a YouTube video creator planning a 3-5 minute explainer video. \
+            You think like the best educators on YouTube: Kurzgesagt, Wendover Productions, \
+            3Blue1Brown. Every frame must teach something.";
 
         let prompt = format!(
-            r#"Imagine a 3-5 minute motion graphics video for: "{objective}"
+            r#"You are planning a 3-5 minute explainer video for: "{objective}"
 
 ## Source Material
 {section_summaries}
 {kg_summary}
 
-## Creative Brief Questions
-Think through each of these and write a creative concept (600-900 words):
+## Video Concept Questions
+Think through each and write a video concept (600-900 words):
 
-1. **Hook** — What grabs attention in the first 5 seconds? A shocking number? A provocative question? A visual metaphor?
-2. **Visual Metaphor** — What single visual idea ties the whole video together? (e.g., a timeline unfolding, data raining down, ideas converging)
-3. **Key Numbers** — Which 3-5 statistics would be most impactful as animated counters? What makes them dramatic?
-4. **Kinetic Typography** — What 2-3 key phrases deserve to be animated as kinetic text? What words should be bold/emphasized?
-5. **Comparisons** — What before/after or side-by-side comparisons would be visually striking?
-6. **Emotional Arc** — Map the journey: curiosity → understanding → insight. Where are the peaks?
-7. **Closing Impact** — What's the takeaway that lingers? What final image/phrase stays with the viewer?
-8. **Photo Moments** — Identify 5-8 moments where a full-screen photo would be powerful. What should each photo show? What Ken Burns motion (zoom in, pan left/right) would enhance each?
-9. **Presenter Beats** — Where should an animated presenter character appear to explain complex points? What pose/gesture would they use (pointing at data, thinking, excited)?
-10. **Visual Icons** — What 3-4 groups of animated symbols/icons would help illustrate key concepts? (e.g., for energy: solar panel, wind turbine, battery, factory)
+1. **HOOK** — What surprising fact or question opens the video? (First 10 seconds must grab attention)
+2. **PROMISE** — What will the viewer learn by the end? (State it clearly)
+3. **NARRATIVE ARC** — What is the story structure? (Problem → Exploration → Key Insights → Conclusion)
+4. **KEY EXPLANATIONS** — What are the 3-5 core concepts that must be explained? For each:
+   - What is it?
+   - Why does it matter?
+   - What evidence supports it? (data, examples, comparisons, expert quotes)
+5. **VISUAL MOMENTS** — For each key explanation, how would you show it visually?
+   - Charts/data that reveal something
+   - Before/after comparisons
+   - Step-by-step processes
+   - Real photos that ground the abstract in reality
+6. **EMOTIONAL BEAT** — Where is the "aha moment" — the insight that changes how you see the topic?
+7. **CALL TO ACTION** — What should the viewer do or think differently after watching?
+8. **TONE** — Conversational but authoritative (like Kurzgesagt, Wendover, or 3Blue1Brown)
 
-Write your creative concept as flowing prose, not bullet points. Be specific about visual moments."#,
+Write your concept as flowing prose, not bullet points. Be specific about what each visual moment teaches."#,
         );
 
         let input = serde_json::json!({
@@ -2831,13 +2836,14 @@ Write your creative concept as flowing prose, not bullet points. Be specific abo
                 .join("\n")
         };
 
-        let system = "You are a motion graphics scene architect. You convert creative concepts \
-            into structured scene data for a PixiJS rendering engine. Output ONLY a valid JSON array.";
+        let system = "You are a YouTube explainer video scene architect. You convert video concepts \
+            into structured scene data. Every scene must explain something — no decorative filler. \
+            Output ONLY a valid JSON array.";
 
         let prompt = format!(
-            r#"Convert this creative concept into structured scenes.
+            r#"Convert this video concept into a frame-by-frame production script.
 
-## Creative Concept
+## Video Concept
 {concept}
 
 ## Section Data (for extracting real numbers/facts)
@@ -2846,66 +2852,65 @@ Write your creative concept as flowing prose, not bullet points. Be specific abo
 ## Available Photos
 {available_photos}
 
-## Available Scene Types
+## Scene Types (10 types — every scene must explain something)
 
-1. **opener** — Opening with particle burst + title spring animation
-   Fields: title (string), subtitle (string), mood (string), kind: "opener"
+1. **titleCard** — Opening title with hook text
+   Fields: title, subtitle, preset, narration, kind: "titleCard"
    Default: 240 frames (8s)
 
-2. **kineticText** — Animated words with **bold** markers for emphasis
-   Fields: text (string, use **word** for emphasis), layout ("cascade"|"converge"|"wave"|"typewriter"), kind: "kineticText"
+2. **explainerText** — Key explanation with highlighted words
+   Fields: text (use <b>word</b> for emphasis), layout ("cascade"|"converge"|"wave"|"typewriter"), preset, narration, kind: "explainerText"
    Default: 180 frames (6s)
 
-3. **dataCounter** — Animated number counters with arc sweeps
-   Fields: title (string), counters (array of {{label, value, unit}}), kind: "dataCounter"
+3. **comparisonSplit** — Side-by-side comparison
+   Fields: title, leftLabel, rightLabel, points (array of {{left, right}}), narration, kind: "comparisonSplit"
+   Default: 240 frames (8s)
+
+4. **dataReveal** — Animated number/statistic
+   Fields: label, value, suffix, context, preset, narration, kind: "dataReveal"
    Default: 210 frames (7s)
 
-4. **barRace** — Horizontal bars that grow with staggered animation
-   Fields: title (string), bars (array of {{label, value}}), kind: "barRace"
-   value must be a number. Default: 210 frames (7s)
-
-5. **particleMood** — Particle field with text overlay
-   Fields: text (string), preset ("stars"|"rain"|"fireflies"|"snow"|"nebula"), kind: "particleMood"
-   Default: 150 frames (5s)
-
-6. **timelinePath** — Progressive timeline with waypoints
-   Fields: title (string), waypoints (array of {{year, label}}), kind: "timelinePath"
+5. **timelinePath** — Chronological events
+   Fields: title, waypoints (array of {{year, label}}), narration, kind: "timelinePath"
    Default: 270 frames (9s)
 
-7. **comparisonSplit** — Side-by-side comparison with vertical divider
-   Fields: title (string), leftLabel (string), rightLabel (string), points (array of {{left, right}}), kind: "comparisonSplit"
-   Default: 240 frames (8s)
-
-8. **closing** — Closing card with converging particles
-   Fields: title (string), subtitle (string), kind: "closing"
-   Default: 210 frames (7s)
-
-9. **photoReveal** — Full-screen photo with Ken Burns pan/zoom effect
-   Fields: caption (string), filename (string, from Available Photos), attribution (string), kenBurnsDirection ("zoom_in_right"|"zoom_in_left"|"zoom_out_center"|"pan_left"|"pan_right"), kind: "photoReveal"
+6. **photoReveal** — Full-screen photo with Ken Burns effect
+   Fields: caption, filename (from Available Photos), attribution, kenBurnsDirection ("zoom_in_right"|"zoom_in_left"|"zoom_out_center"|"pan_left"|"pan_right"), narration, kind: "photoReveal"
    Default: 180 frames (6s)
 
-10. **presenterNarration** — Animated 2D presenter character with speech bubble
-    Fields: text (string), pose ("neutral"|"pointing"|"thinking"|"excited"), gestureSide ("left"|"right"), kind: "presenterNarration"
+7. **processFlow** — Step-by-step process diagram
+   Fields: title, steps (array of strings, max 8), highlightColor, narration, kind: "processFlow"
+   Default: 240 frames (8s)
+
+8. **keyInsight** — Highlighted takeaway with evidence
+   Fields: insight, supportingEvidence, sourceType ("observation"|"inference"|"analogy"|"testimony"|"research"), narration, kind: "keyInsight"
+   Default: 210 frames (7s)
+
+9. **barRace** — Horizontal bars comparing values
+   Fields: title, bars (array of {{label, value}}), narration, kind: "barRace"
+   value must be a number. Default: 210 frames (7s)
+
+10. **callToAction** — Closing with takeaway
+    Fields: title, subtitle, preset, narration, kind: "callToAction"
     Default: 210 frames (7s)
 
-11. **iconAnimation** — Animated contextual icons/symbols
-    Fields: title (string), icons (array of {{name, label}}, max 8), animation ("grow"|"orbit"|"flow"|"transform"), kind: "iconAnimation"
-    Icon names: car, battery, factory, solar, wind, dollar, graph, globe, book, lightbulb, rocket, heart, shield, gear, leaf, chart
-    Default: 180 frames (6s)
-
 ## Rules
-- Output 30-50 scenes as a JSON array
+- Output 15-25 scenes as a JSON array (quality over quantity, each scene ~8-15 seconds)
 - Total duration target: 5400-9000 frames (3-5 minutes at 30fps)
-- First scene MUST be "opener", last MUST be "closing"
-- Vary scene types — don't repeat the same type consecutively
-- Use REAL data from the section content (real numbers, real facts)
-- For kineticText, wrap 2-4 key words in **bold** markers
-- For dataCounter, extract actual statistics and use numeric values
-- For barRace, use actual comparative data with numeric values
-- Place photoReveal every 4-6 scenes (use filenames from Available Photos)
-- Include presenterNarration 3-5 times for complex explanations
-- Include iconAnimation 3-4 times for concept groups
-- You may include durationFrames or omit for defaults
+- First scene MUST be "titleCard", last MUST be "callToAction"
+- EVERY scene MUST have a "narration" field: 1-2 sentences of what the narrator would say
+- The narration IS the video — visuals support the narration, not the other way around
+- Follow the narrative arc: Hook → Promise → Explanations → Insight → CTA
+- Use explainerText for core explanations (~40% of scenes)
+- Use dataReveal when a specific number tells the story
+- Use comparisonSplit for "vs" moments or before/after
+- Use processFlow for "how it works" explanations
+- Use keyInsight for "aha moment" takeaways (2-3 per video)
+- Use photoReveal to ground abstract concepts in reality
+- Use timeline sparingly (only if chronology matters)
+- For explainerText, wrap 2-4 key terms in <b>term</b> tags
+- Use REAL data from section content (real numbers, real facts)
+- Write narration as if speaking to a curious friend — no filler phrases
 
 Output ONLY a valid JSON array. No markdown fences, no explanation."#,
         );
