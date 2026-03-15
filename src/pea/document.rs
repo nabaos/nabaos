@@ -2148,11 +2148,17 @@ fn extract_timeline_events(text: &str) -> Vec<(String, String)> {
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() { continue; }
+        // Skip markdown table rows, header separators, and list markers
+        if line.starts_with('|') || line.starts_with("|-") || line.starts_with("| -") {
+            continue;
+        }
         if let Some(caps) = year_re.captures(line) {
             let year = caps.get(1).unwrap().as_str().to_string();
             let year_num: u32 = year.parse().unwrap_or(0);
             if !(1800..=2100).contains(&year_num) { continue; }
-            let desc = caps.get(2).unwrap().as_str().trim().to_string();
+            let desc_raw = caps.get(2).unwrap().as_str().trim().to_string();
+            // Strip markdown formatting from description
+            let desc = strip_markdown(&desc_raw);
             // Clean up description — trim to first sentence or 120 chars
             let desc = if let Some(dot_pos) = desc.find(". ") {
                 if dot_pos > 20 {
@@ -2163,9 +2169,15 @@ fn extract_timeline_events(text: &str) -> Vec<(String, String)> {
             } else {
                 desc[..desc.len().min(120)].to_string()
             };
-            if !desc.is_empty() && !looks_like_slide_noise(&desc) {
-                events.push((year, desc));
+            // Skip descriptions that are too short or look like noise
+            if desc.len() < 15 || looks_like_slide_noise(&desc) {
+                continue;
             }
+            // Skip descriptions that look like year ranges (e.g., "2026; assess...")
+            if desc.starts_with(|c: char| c.is_ascii_digit()) && desc.len() < 30 {
+                continue;
+            }
+            events.push((year, desc));
         }
     }
     // Deduplicate by year (keep first occurrence)
@@ -2186,20 +2198,43 @@ fn extract_key_stats(text: &str) -> Vec<(String, String)> {
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || looks_like_slide_noise(line) { continue; }
-        for mat in stat_re.find_iter(line) {
+        // Skip markdown table rows
+        if line.starts_with('|') || line.starts_with("|-") {
+            continue;
+        }
+        let clean_line = strip_markdown(line);
+        for mat in stat_re.find_iter(&clean_line) {
             let value = mat.as_str().trim().to_string();
             // Try to extract a short label from surrounding context
-            let before = &line[..mat.start()];
+            let before = &clean_line[..mat.start()];
+            // Take the last clause before the number
             let label = before
-                .rsplit(|c: char| c == '.' || c == ',' || c == ';')
+                .rsplit(|c: char| c == '.' || c == ';')
                 .next()
                 .unwrap_or(before)
                 .trim()
                 .to_string();
-            let label = if label.len() > 40 {
-                label[label.len() - 40..].trim_start_matches(|c: char| !c.is_uppercase()).to_string()
-            } else if label.is_empty() {
-                "Stat".to_string()
+            // Clean up the label: remove trailing commas, "with", "over", etc.
+            let label = label
+                .trim_end_matches(|c: char| c == ',' || c == ':')
+                .trim()
+                .to_string();
+            let label = if label.len() > 50 {
+                // Take last meaningful phrase
+                label.rsplitn(2, ", ").next().unwrap_or(&label).trim().to_string()
+            } else if label.is_empty() || label.len() < 3 {
+                // Use text after the stat as label if before is empty
+                let after = &clean_line[mat.end()..];
+                let after_label = after.trim_start_matches(|c: char| c == ' ' || c == ',');
+                let after_label = after_label.split(|c: char| c == '.' || c == ',' || c == ';')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                if after_label.len() >= 3 && after_label.len() <= 40 {
+                    after_label.to_string()
+                } else {
+                    continue; // Skip stats without meaningful labels
+                }
             } else {
                 label
             };
@@ -2428,6 +2463,10 @@ fn extract_slide_bullets(text: &str) -> Vec<String> {
         let line = line.trim();
         if line.is_empty() { continue; }
 
+        // Skip markdown table rows and separators
+        if line.starts_with('|') || line.contains(" | ") || line.starts_with("|-") {
+            continue;
+        }
         // If the whole line is noise, skip early
         if looks_like_slide_noise(line) { continue; }
 
@@ -2791,9 +2830,15 @@ fn generate_remotion_video(
         .map_err(|e| NyayaError::Config(format!("create public dir: {}", e)))?;
 
     // Copy images into public/ and build image refs JSON
+    // Filter out non-renderable files (.tikz is LaTeX code, not an image)
+    let image_extensions = ["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp"];
     let mut image_refs: Vec<serde_json::Value> = Vec::new();
     for (caption, path, attribution) in images {
         if let Some(filename) = path.file_name() {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            if !image_extensions.contains(&ext.as_str()) {
+                continue; // Skip .tikz and other non-image files
+            }
             let dest = public_dir.join(filename);
             if path.exists() {
                 let _ = std::fs::copy(path, &dest);
@@ -4333,36 +4378,34 @@ export const QuoteSlide: React.FC<{
         .map_err(|e| NyayaError::Config(format!("write QuoteSlide.tsx: {}", e)))?;
 
     // --- src/components/FilmGrain.tsx ---
+    // Uses CSS background-image with a tiny inline noise pattern instead of SVG feTurbulence.
+    // feTurbulence is extremely expensive in headless Chrome (~5s/frame).
+    // A static noise tile scrolled with transform is near-free.
     let film_grain = r##"import React from "react";
-import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
+import { AbsoluteFill, useCurrentFrame } from "remotion";
+
+// 4x4 pixel noise tile encoded as base64 PNG — repeats seamlessly
+const NOISE_TILE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAMklEQVQIW2P4z8DwHwMDAwMDIwMDAwOY+J+BgYEBxGJkYGBgYGD4/5+BgYEB5AJGBgYGAH2cDhUAAAAASUVORK5CYII=";
 
 export const FilmGrain: React.FC<{ intensity?: number }> = ({ intensity = 0.06 }) => {
   const frame = useCurrentFrame();
-  // Animate the seed to make grain flicker like real film
-  const seed = frame * 0.7;
-  const freq = 0.65 + Math.sin(frame * 0.1) * 0.05;
+  // Shift the noise tile slightly each frame for flicker effect
+  const offsetX = (frame * 3) % 100;
+  const offsetY = (frame * 7) % 100;
 
   return (
-    <AbsoluteFill style={{ pointerEvents: "none", mixBlendMode: "overlay" }}>
-      <svg width="100%" height="100%" style={{ position: "absolute" }}>
-        <filter id={`grain-${frame % 4}`}>
-          <feTurbulence
-            type="fractalNoise"
-            baseFrequency={freq}
-            numOctaves={3}
-            seed={seed}
-            stitchTiles="stitch"
-          />
-          <feColorMatrix type="saturate" values="0" />
-        </filter>
-        <rect
-          width="100%"
-          height="100%"
-          filter={`url(#grain-${frame % 4})`}
-          opacity={intensity}
-        />
-      </svg>
-    </AbsoluteFill>
+    <AbsoluteFill
+      style={{
+        pointerEvents: "none",
+        mixBlendMode: "overlay",
+        opacity: intensity,
+        backgroundImage: `url(${NOISE_TILE})`,
+        backgroundRepeat: "repeat",
+        backgroundSize: "100px 100px",
+        backgroundPosition: `${offsetX}px ${offsetY}px`,
+        filter: "contrast(200%) brightness(150%)",
+      }}
+    />
   );
 };
 "##;
