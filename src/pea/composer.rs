@@ -478,13 +478,25 @@ impl<'a> DocumentComposer<'a> {
         // Merge stock images + generated charts
         // Video mode: keep stock images for PhotoReveal scenes
         // Other modes: skip stock images for analytical themes only
-        let mut all_images: Vec<ImageEntry> = if style.should_skip_stock_images() {
+        let mut all_images: Vec<ImageEntry> = if style.should_skip_stock_images() && *output_mode != crate::pea::objective::OutputMode::Video {
             eprintln!("[composer] skipping stock images (theme={})", style.theme);
             Vec::new()
         } else {
             images.to_vec()
         };
         all_images.extend(chart_images);
+
+        // Video mode: filter out PRISMA/academic charts that don't work well in video
+        if *output_mode == crate::pea::objective::OutputMode::Video {
+            let before = all_images.len();
+            all_images.retain(|(caption, _path, _attr)| {
+                let c = caption.to_ascii_lowercase();
+                !c.contains("prisma") && !c.contains("source distribution") && !c.contains("methodology")
+            });
+            if all_images.len() < before {
+                eprintln!("[composer] video mode: filtered {} academic charts", before - all_images.len());
+            }
+        }
 
         // Phase 5: Assemble final output
         eprintln!("[composer] assembling final document...");

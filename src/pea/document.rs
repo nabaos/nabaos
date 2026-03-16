@@ -2251,11 +2251,11 @@ pub enum VideoScene {
     DataReveal {
         #[serde(alias = "title")]
         label: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "string_or_number")]
         value: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "string_or_number")]
         suffix: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "string_or_number")]
         context: String,
         #[serde(default)]
         counters: Vec<CounterEntry>,
@@ -5341,34 +5341,19 @@ fn css_to_hex_int(css: &str) -> String {
     format!("0x{}", hex)
 }
 
-fn write_pixi_scene_title_card(dir: &Path, primary: &str, accent: &str) -> Result<()> {
-    let pc = css_to_hex_int(primary);
+fn write_pixi_scene_title_card(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
     let ac = css_to_hex_int(accent);
     let code = format!(r##"import React, {{ useCallback }} from "react";
 import {{ PixiCanvas }} from "../pixi-canvas";
-import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
-import {{ spring }} from "../easing";
+import {{ Application, Text, TextStyle }} from "pixi.js";
 
 interface Props {{ title: string; subtitle: string; }}
 
 export const TitleCardScene: React.FC<Props> = ({{ title, subtitle }}) => {{
-  const particles: {{ x: number; y: number; vx: number; vy: number; r: number }}[] = [];
-
   const setup = useCallback((app: Application) => {{
-    const g = new Graphics();
-    app.stage.addChild(g);
-    for (let i = 0; i < 200; i++) {{
-      const angle = (Math.PI * 2 * i) / 200 + Math.random() * 0.3;
-      particles.push({{
-        x: 960, y: 540,
-        vx: Math.cos(angle) * (2 + Math.random() * 4),
-        vy: Math.sin(angle) * (2 + Math.random() * 4),
-        r: 1 + Math.random() * 3,
-      }});
-    }}
     const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 72, fontWeight: "bold", fill: {ac}, wordWrap: true, wordWrapWidth: 1600, align: "center" }});
     const t = new Text({{ text: title, style: titleStyle }});
-    t.anchor.set(0.5); t.x = 960; t.y = 480; t.label = "title";
+    t.anchor.set(0.5); t.x = 960; t.y = 480; t.label = "title"; t.alpha = 0;
     app.stage.addChild(t);
     const subStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 36, fill: 0xc8c8d2, wordWrap: true, wordWrapWidth: 1400, align: "center" }});
     const s = new Text({{ text: subtitle, style: subStyle }});
@@ -5377,18 +5362,9 @@ export const TitleCardScene: React.FC<Props> = ({{ title, subtitle }}) => {{
   }}, [title, subtitle]);
 
   const update = useCallback((app: Application, progress: number) => {{
-    const g = app.stage.children[0] as Graphics;
-    g.clear();
-    for (const p of particles) {{
-      p.x += p.vx; p.y += p.vy;
-      p.vx *= 0.97; p.vy *= 0.97;
-      g.circle(p.x, p.y, p.r * (1 - progress * 0.5));
-      g.fill({{ color: {pc}, alpha: 0.6 * (1 - progress * 0.7) }});
-    }}
     const titleEl = app.stage.children.find((c: any) => c.label === "title");
     if (titleEl) {{
-      const s = 0.3 + 0.7 * spring(progress * 2);
-      titleEl.scale.set(Math.min(s, 1));
+      titleEl.alpha = Math.min(1, progress / 0.3);
     }}
     const subEl = app.stage.children.find((c: any) => c.label === "subtitle");
     if (subEl) {{
@@ -5408,7 +5384,7 @@ fn write_pixi_scene_explainer_text(dir: &Path, _primary: &str, accent: &str) -> 
     let code = format!(r##"import React, {{ useCallback, useRef }} from "react";
 import {{ PixiCanvas }} from "../pixi-canvas";
 import {{ Application, Text, TextStyle }} from "pixi.js";
-import {{ spring, stagger }} from "../easing";
+import {{ stagger }} from "../easing";
 
 interface Props {{ text: string; layout: string; }}
 
@@ -5448,21 +5424,10 @@ export const ExplainerTextScene: React.FC<Props> = ({{ text, layout }}) => {{
       t.anchor.set(0.5);
       const col = i % cols;
       const row = Math.floor(i / cols);
-      const targetX = 200 + col * (1520 / cols);
-      const targetY = 200 + row * 80;
-      t.x = targetX; t.y = targetY;
-      (t as any).targetX = targetX;
-      (t as any).targetY = targetY;
+      t.x = 200 + col * (1520 / cols);
+      t.y = 200 + row * 80;
+      t.alpha = 0;
       (t as any).wordIndex = i;
-
-      if (layout === "cascade") {{ t.y = -100; }}
-      else if (layout === "converge") {{
-        const edge = i % 4;
-        t.x = edge === 0 ? -200 : edge === 1 ? 2120 : targetX;
-        t.y = edge === 2 ? -200 : edge === 3 ? 1280 : targetY;
-      }}
-      else if (layout === "typewriter") {{ t.alpha = 0; }}
-
       app.stage.addChild(t);
     }});
   }}, [text, layout]);
@@ -5473,18 +5438,7 @@ export const ExplainerTextScene: React.FC<Props> = ({{ text, layout }}) => {{
       if (child.wordIndex === undefined) return;
       const i = child.wordIndex;
       const p = stagger(i, total, progress, 0.4);
-      const s = spring(p);
-
-      if (layout === "cascade") {{
-        child.y = -100 + ((child as any).targetY + 100) * s;
-      }} else if (layout === "converge") {{
-        child.x = child.x + ((child as any).targetX - child.x) * s * 0.3;
-        child.y = child.y + ((child as any).targetY - child.y) * s * 0.3;
-      }} else if (layout === "wave") {{
-        child.scale.set(0.8 + 0.4 * Math.sin(progress * Math.PI * 4 + i * 0.5));
-      }} else if (layout === "typewriter") {{
-        child.alpha = p > 0.1 ? 1 : 0;
-      }}
+      child.alpha = Math.min(1, p * 2);
     }});
   }}, [layout]);
 
@@ -5792,35 +5746,19 @@ export const ComparisonSplitScene: React.FC<Props> = ({{ title, leftLabel, right
         .map_err(|e| NyayaError::Config(format!("write comparison-split.tsx: {}", e)))
 }
 
-fn write_pixi_scene_call_to_action(dir: &Path, primary: &str, accent: &str) -> Result<()> {
-    let pc = css_to_hex_int(primary);
+fn write_pixi_scene_call_to_action(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
     let ac = css_to_hex_int(accent);
-    let code = format!(r##"import React, {{ useCallback, useRef }} from "react";
+    let code = format!(r##"import React, {{ useCallback }} from "react";
 import {{ PixiCanvas }} from "../pixi-canvas";
-import {{ Application, Graphics, Text, TextStyle }} from "pixi.js";
-import {{ spring }} from "../easing";
+import {{ Application, Text, TextStyle }} from "pixi.js";
 
 interface Props {{ title: string; subtitle: string; }}
 
 export const CallToActionScene: React.FC<Props> = ({{ title, subtitle }}) => {{
-  const particlesRef = useRef<{{ x: number; y: number; vx: number; vy: number; r: number }}[]>([]);
-
   const setup = useCallback((app: Application) => {{
-    const parts: {{ x: number; y: number; vx: number; vy: number; r: number }}[] = [];
-    for (let i = 0; i < 150; i++) {{
-      parts.push({{
-        x: Math.random() * 1920, y: Math.random() * 1080,
-        vx: (960 - Math.random() * 1920) * 0.002,
-        vy: (540 - Math.random() * 1080) * 0.002,
-        r: 1 + Math.random() * 3,
-      }});
-    }}
-    particlesRef.current = parts;
-    const g = new Graphics(); g.label = "particles";
-    app.stage.addChild(g);
     const titleStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 64, fontWeight: "bold", fill: {ac}, wordWrap: true, wordWrapWidth: 1600, align: "center" }});
     const t = new Text({{ text: title, style: titleStyle }});
-    t.anchor.set(0.5); t.x = 960; t.y = 460; t.label = "title";
+    t.anchor.set(0.5); t.x = 960; t.y = 460; t.label = "title"; t.alpha = 0;
     app.stage.addChild(t);
     const subStyle = new TextStyle({{ fontFamily: "Arial", fontSize: 32, fill: 0xc8c8d2, wordWrap: true, wordWrapWidth: 1400, align: "center" }});
     const s = new Text({{ text: subtitle, style: subStyle }});
@@ -5829,19 +5767,9 @@ export const CallToActionScene: React.FC<Props> = ({{ title, subtitle }}) => {{
   }}, [title, subtitle]);
 
   const update = useCallback((app: Application, progress: number) => {{
-    const g = app.stage.children.find((c: any) => c.label === "particles") as Graphics;
-    if (g) {{
-      g.clear();
-      for (const p of particlesRef.current) {{
-        p.x += p.vx; p.y += p.vy;
-        g.circle(p.x, p.y, p.r);
-        g.fill({{ color: {pc}, alpha: 0.4 + 0.3 * progress }});
-      }}
-    }}
     const t = app.stage.children.find((c: any) => c.label === "title");
     if (t) {{
-      const s = 0.5 + 0.5 * spring(Math.min(progress * 2, 1));
-      t.scale.set(s);
+      t.alpha = Math.min(1, progress / 0.3);
     }}
     const sub = app.stage.children.find((c: any) => c.label === "subtitle");
     if (sub) {{ sub.alpha = Math.max(0, Math.min(1, (progress - 0.3) * 3)); }}
@@ -6111,7 +6039,7 @@ export const KeyInsightScene: React.FC<Props> = ({{ insight, supportingEvidence,
         .map_err(|e| NyayaError::Config(format!("write key-insight.tsx: {}", e)))
 }
 
-/// NarrationOverlay component — bottom-third subtitle overlay with word-by-word reveal.
+/// NarrationOverlay component — bottom-third subtitle overlay with full sentence display.
 fn write_narration_overlay(dir: &Path) -> Result<()> {
     let code = r##"import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
@@ -6120,17 +6048,8 @@ interface Props { text: string; durationInFrames: number; }
 
 export const NarrationOverlay: React.FC<Props> = ({ text, durationInFrames }) => {
   const frame = useCurrentFrame();
-  const progress = frame / durationInFrames;
 
   if (!text) return null;
-
-  const words = text.split(/\s+/).filter(w => w);
-  const revealFraction = 0.4; // reveal all words in first 40% of scene
-  const wordsToShow = Math.min(
-    words.length,
-    Math.ceil(words.length * Math.min(progress / revealFraction, 1))
-  );
-  const visibleText = words.slice(0, wordsToShow).join(" ");
 
   // Fade in at start, stay, fade out at end
   const fadeIn = Math.min(1, frame / 15);
@@ -6162,7 +6081,7 @@ export const NarrationOverlay: React.FC<Props> = ({ text, durationInFrames }) =>
         textShadow: "0 2px 4px rgba(0,0,0,0.5)",
         maxWidth: 1600,
       }}>
-        {visibleText}
+        {text}
       </p>
     </div>
   );
