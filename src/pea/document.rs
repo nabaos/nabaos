@@ -5381,65 +5381,38 @@ export const TitleCardScene: React.FC<Props> = ({{ title, subtitle }}) => {{
 
 fn write_pixi_scene_explainer_text(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
     let ac = css_to_hex_int(accent);
-    let code = format!(r##"import React, {{ useCallback, useRef }} from "react";
+    let code = format!(r##"import React, {{ useCallback }} from "react";
 import {{ PixiCanvas }} from "../pixi-canvas";
 import {{ Application, Text, TextStyle }} from "pixi.js";
-import {{ stagger }} from "../easing";
 
 interface Props {{ text: string; layout: string; }}
 
-interface WordEntry {{ word: string; bold: boolean; }}
-
 export const ExplainerTextScene: React.FC<Props> = ({{ text, layout }}) => {{
-  const wordsRef = useRef<WordEntry[]>([]);
-
   const setup = useCallback((app: Application) => {{
-    // Parse segments: split by <b> and </b> tags for reliable multi-word bold
-    const segments: Array<{{text: string, bold: boolean}}> = [];
-    let remaining = text;
-    while (remaining.length > 0) {{
-      const bStart = remaining.indexOf("<b>");
-      if (bStart === -1) {{ segments.push({{text: remaining, bold: false}}); break; }}
-      if (bStart > 0) segments.push({{text: remaining.slice(0, bStart), bold: false}});
-      const bEnd = remaining.indexOf("</b>", bStart);
-      if (bEnd === -1) {{ segments.push({{text: remaining.slice(bStart + 3), bold: true}}); break; }}
-      segments.push({{text: remaining.slice(bStart + 3, bEnd), bold: true}});
-      remaining = remaining.slice(bEnd + 4);
-    }}
-    // Flatten to words with bold flags
-    const allWords: WordEntry[] = segments.flatMap(seg =>
-      seg.text.split(/\s+/).filter(w => w).map(w => ({{word: w, bold: seg.bold}}))
-    );
-    wordsRef.current = allWords;
-
-    const cols = Math.ceil(Math.sqrt(allWords.length * 1.5));
-    allWords.forEach((entry, i) => {{
-      const style = new TextStyle({{
-        fontFamily: "Arial",
-        fontSize: entry.bold ? 56 : 40,
-        fontWeight: entry.bold ? "bold" : "normal",
-        fill: entry.bold ? {ac} : 0xc8c8d2,
-      }});
-      const t = new Text({{ text: entry.word, style }});
-      t.anchor.set(0.5);
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      t.x = 200 + col * (1520 / cols);
-      t.y = 200 + row * 80;
-      t.alpha = 0;
-      (t as any).wordIndex = i;
-      app.stage.addChild(t);
+    // Strip <b>/<\/b> tags — render as single wrapped text block
+    const clean = text.replace(/<\/?b>/g, "");
+    const style = new TextStyle({{
+      fontFamily: "Arial",
+      fontSize: 38,
+      fill: 0xc8c8d2,
+      wordWrap: true,
+      wordWrapWidth: 1500,
+      lineHeight: 56,
+      align: "center",
     }});
+    const t = new Text({{ text: clean, style }});
+    t.anchor.set(0.5);
+    t.x = 960; t.y = 540;
+    t.alpha = 0;
+    t.label = "body";
+    app.stage.addChild(t);
   }}, [text, layout]);
 
   const update = useCallback((app: Application, progress: number) => {{
-    const total = wordsRef.current.length;
-    app.stage.children.forEach((child: any) => {{
-      if (child.wordIndex === undefined) return;
-      const i = child.wordIndex;
-      const p = stagger(i, total, progress, 0.4);
-      child.alpha = Math.min(1, p * 2);
-    }});
+    const body = app.stage.children.find((c: any) => c.label === "body");
+    if (body) {{
+      body.alpha = Math.min(1, progress / 0.3);
+    }}
   }}, [layout]);
 
   return <PixiCanvas setup={{setup}} update={{update}} />;
