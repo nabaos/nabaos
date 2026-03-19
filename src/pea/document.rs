@@ -1057,7 +1057,7 @@ pub(crate) fn postprocess_latex(tex: &str, images: &[ImageEntry], output_dir: &P
 
     // Fix image paths: replace any absolute/relative paths with just filenames
     // since we'll copy images to output_dir
-    for (caption, path, _) in images {
+    for (_caption, path, _) in images {
         if let Some(filename) = path.file_name() {
             let filename_str = filename.to_string_lossy();
             // Copy image to output dir
@@ -1084,7 +1084,7 @@ fn wrap_bare_includegraphics(tex: &str, images: &[ImageEntry]) -> String {
     let mut fig_counter = 0;
     let mut in_figure = false;
 
-    for (i, line) in lines.iter().enumerate() {
+    for (_i, line) in lines.iter().enumerate() {
         if line.contains("\\begin{figure}") {
             in_figure = true;
         }
@@ -1479,7 +1479,7 @@ pub(crate) fn lint_latex(tex: &str) -> Vec<LintError> {
         }
 
         // Check for bare URLs not in \url{} or \href{}
-        if (line.contains("http://") || line.contains("https://")) {
+        if line.contains("http://") || line.contains("https://") {
             // Simple heuristic: URL not preceded by \url{ or \href{
             let has_bare_url = {
                 let mut found = false;
@@ -5379,8 +5379,7 @@ export const TitleCardScene: React.FC<Props> = ({{ title, subtitle }}) => {{
         .map_err(|e| NyayaError::Config(format!("write title-card.tsx: {}", e)))
 }
 
-fn write_pixi_scene_explainer_text(dir: &Path, _primary: &str, accent: &str) -> Result<()> {
-    let ac = css_to_hex_int(accent);
+fn write_pixi_scene_explainer_text(dir: &Path, _primary: &str, _accent: &str) -> Result<()> {
     let code = format!(r##"import React, {{ useCallback }} from "react";
 import {{ PixiCanvas }} from "../pixi-canvas";
 import {{ Application, Text, TextStyle }} from "pixi.js";
